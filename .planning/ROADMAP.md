@@ -35,12 +35,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Qdrant container starts via Docker Compose and accepts connections on localhost
   4. Config loader validates `.ia-framework/project.json` against Zod schemas and rejects invalid configs
   5. Structured logging outputs to stderr in a consistent format across all packages
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
-- [ ] 01-03: TBD
+- [ ] 01-01-PLAN.md — Monorepo scaffold (pnpm workspaces, Turborepo, TypeScript/ESLint/Prettier base config)
+- [ ] 01-02-PLAN.md — Core package: shared types, Zod config loader (TDD), pino logger
+- [ ] 01-03-PLAN.md — Docker infrastructure: Qdrant container with named volumes and health check
 
 ### Phase 2: Project Detection & Configuration
 **Goal**: Framework can auto-detect a target project's technology stack and produce a confirmed profile
