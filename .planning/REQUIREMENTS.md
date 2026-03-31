@@ -128,63 +128,63 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INST-01 | — | Pending |
-| INST-02 | — | Pending |
-| INST-03 | — | Pending |
-| INST-04 | — | Pending |
-| INST-05 | — | Pending |
-| INST-06 | — | Pending |
-| INST-07 | — | Pending |
-| INST-08 | — | Pending |
-| INST-09 | — | Pending |
-| INST-10 | — | Pending |
-| INST-11 | — | Pending |
-| ARCH-01 | — | Pending |
-| ARCH-02 | — | Pending |
-| ARCH-03 | — | Pending |
-| INDX-01 | — | Pending |
-| INDX-02 | — | Pending |
-| INDX-03 | — | Pending |
-| INDX-04 | — | Pending |
-| INDX-05 | — | Pending |
-| INDX-06 | — | Pending |
-| INDX-07 | — | Pending |
-| INDX-08 | — | Pending |
-| RETR-01 | — | Pending |
-| RETR-02 | — | Pending |
-| RETR-03 | — | Pending |
-| RETR-04 | — | Pending |
-| RETR-05 | — | Pending |
-| RETR-06 | — | Pending |
-| OBSV-01 | — | Pending |
-| OBSV-02 | — | Pending |
-| OBSV-03 | — | Pending |
-| OBSV-04 | — | Pending |
-| OBSV-05 | — | Pending |
-| BNCH-01 | — | Pending |
-| BNCH-02 | — | Pending |
-| BNCH-03 | — | Pending |
-| BNCH-04 | — | Pending |
-| BNCH-05 | — | Pending |
-| BNCH-06 | — | Pending |
-| BNCH-07 | — | Pending |
-| DASH-01 | — | Pending |
-| DASH-02 | — | Pending |
-| DASH-03 | — | Pending |
-| DASH-04 | — | Pending |
-| DASH-05 | — | Pending |
-| DASH-06 | — | Pending |
-| DBAS-01 | — | Pending |
-| DBAS-02 | — | Pending |
-| DBAS-03 | — | Pending |
-| WKFL-01 | — | Pending |
-| WKFL-02 | — | Pending |
-| WKFL-03 | — | Pending |
+| INST-01 | Phase 5 | Pending |
+| INST-02 | Phase 5 | Pending |
+| INST-03 | Phase 5 | Pending |
+| INST-04 | Phase 5 | Pending |
+| INST-05 | Phase 2 | Pending |
+| INST-06 | Phase 2 | Pending |
+| INST-07 | Phase 2 | Pending |
+| INST-08 | Phase 5 | Pending |
+| INST-09 | Phase 5 | Pending |
+| INST-10 | Phase 5 | Pending |
+| INST-11 | Phase 5 | Pending |
+| ARCH-01 | Phase 1 | Pending |
+| ARCH-02 | Phase 1 | Pending |
+| ARCH-03 | Phase 1 | Pending |
+| INDX-01 | Phase 3 | Pending |
+| INDX-02 | Phase 3 | Pending |
+| INDX-03 | Phase 3 | Pending |
+| INDX-04 | Phase 3 | Pending |
+| INDX-05 | Phase 3 | Pending |
+| INDX-06 | Phase 3 | Pending |
+| INDX-07 | Phase 3 | Pending |
+| INDX-08 | Phase 3 | Pending |
+| RETR-01 | Phase 4 | Pending |
+| RETR-02 | Phase 4 | Pending |
+| RETR-03 | Phase 10 | Pending |
+| RETR-04 | Phase 10 | Pending |
+| RETR-05 | Phase 10 | Pending |
+| RETR-06 | Phase 4 | Pending |
+| OBSV-01 | Phase 6 | Pending |
+| OBSV-02 | Phase 6 | Pending |
+| OBSV-03 | Phase 6 | Pending |
+| OBSV-04 | Phase 6 | Pending |
+| OBSV-05 | Phase 6 | Pending |
+| BNCH-01 | Phase 7 | Pending |
+| BNCH-02 | Phase 7 | Pending |
+| BNCH-03 | Phase 7 | Pending |
+| BNCH-04 | Phase 7 | Pending |
+| BNCH-05 | Phase 7 | Pending |
+| BNCH-06 | Phase 7 | Pending |
+| BNCH-07 | Phase 8 | Pending |
+| DASH-01 | Phase 8 | Pending |
+| DASH-02 | Phase 8 | Pending |
+| DASH-03 | Phase 8 | Pending |
+| DASH-04 | Phase 8 | Pending |
+| DASH-05 | Phase 8 | Pending |
+| DASH-06 | Phase 8 | Pending |
+| DBAS-01 | Phase 9 | Pending |
+| DBAS-02 | Phase 9 | Pending |
+| DBAS-03 | Phase 9 | Pending |
+| WKFL-01 | Phase 10 | Pending |
+| WKFL-02 | Phase 10 | Pending |
+| WKFL-03 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 51 total
-- Mapped to phases: 0
-- Unmapped: 51
+- v1 requirements: 52 total
+- Mapped to phases: 52
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-31*
