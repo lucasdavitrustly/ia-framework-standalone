@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-foundation plans 01-01, 01-02, 01-03 — Phase 1 complete
-last_updated: "2026-04-01T13:19:44.317Z"
+stopped_at: "Completed Phase 2 (02-project-detection): project detector, profile confirmation, persistence — all 19 tests passing"
+last_updated: "2026-04-01T13:29:52.661Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 2
+  total_plans: 5
+  completed_plans: 5
   percent: 0
 ---
 
@@ -54,6 +54,8 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01-foundation P02 | 11min | 3 tasks | 11 files |
 | Phase 01-foundation P03 | 5min | 1 tasks | 4 files |
+| Phase 02-project-detection P01 | 19min | 3 tasks | 11 files |
+| Phase 02-project-detection P02 | 12min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -69,6 +71,9 @@ Recent decisions affecting current work:
 - [Phase 01-foundation]: Logger uses stderr (fd 2) exclusively — MCP server stdout is JSON-RPC 2.0 channel
 - [Phase 01-foundation]: Health check uses /readyz (Qdrant shard-readiness) not /health
 - [Phase 01-foundation]: ProjectProfileSchema defined as proper Zod schema (not z.any()) enabling type-safe profile validation in Phase 2
+- [Phase 02-project-detection]: All 5 sub-detectors run in parallel via Promise.all for performance on large codebases
+- [Phase 02-project-detection]: persistProfile merges into existing config (not replace) — config built incrementally in Phase 5 installer
+- [Phase 02-project-detection]: ProfileOverrides extraLanguages/removeLanguages for additive corrections without losing auto-detected languages
 
 ### Pending Todos
 
@@ -81,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-01T13:19:44.314Z
-Stopped at: Completed 01-foundation plans 01-01, 01-02, 01-03 — Phase 1 complete
+Last session: 2026-04-01T13:29:52.658Z
+Stopped at: Completed Phase 2 (02-project-detection): project detector, profile confirmation, persistence — all 19 tests passing
 Resume file: None

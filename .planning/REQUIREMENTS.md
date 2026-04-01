@@ -13,9 +13,9 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **INST-02**: Installer detects missing prerequisite tools (Docker, OpenCode, Node.js, Ollama) and installs them automatically
 - [ ] **INST-03**: Installer skips tools that are already installed on the developer's machine
 - [ ] **INST-04**: Installer asks the developer for the target project path and configures the framework to point at it
-- [ ] **INST-05**: Installer auto-detects target project's language, framework, package manager, test runner, build/dev commands, and project structure
-- [ ] **INST-06**: Developer can confirm, correct, or extend the detected project profile
-- [ ] **INST-07**: Installer writes framework config to `.ia-framework/project.json` (stored in the framework, not the target project)
+- [x] **INST-05**: Installer auto-detects target project's language, framework, package manager, test runner, build/dev commands, and project structure
+- [x] **INST-06**: Developer can confirm, correct, or extend the detected project profile
+- [x] **INST-07**: Installer writes framework config to `.ia-framework/project.json` (stored in the framework, not the target project)
 - [ ] **INST-08**: Installer spins up Qdrant Docker container with named volumes and correct ulimit settings
 - [ ] **INST-09**: Installer triggers initial codebase indexing after setup completes
 - [ ] **INST-10**: Installer configures OpenCode MCP server integration automatically
@@ -132,9 +132,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INST-02 | Phase 5 | Pending |
 | INST-03 | Phase 5 | Pending |
 | INST-04 | Phase 5 | Pending |
-| INST-05 | Phase 2 | Pending |
-| INST-06 | Phase 2 | Pending |
-| INST-07 | Phase 2 | Pending |
+| INST-05 | Phase 2 | Complete |
+| INST-06 | Phase 2 | Complete |
+| INST-07 | Phase 2 | Complete |
 | INST-08 | Phase 5 | Pending |
 | INST-09 | Phase 5 | Pending |
 | INST-10 | Phase 5 | Pending |

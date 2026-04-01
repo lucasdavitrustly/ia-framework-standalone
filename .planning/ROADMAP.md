@@ -13,7 +13,7 @@ This roadmap delivers a local RAG framework for AI-assisted development in large
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation & Infrastructure** - Monorepo scaffolding, shared types, config system, Docker + Qdrant infrastructure (completed 2026-04-01)
-- [ ] **Phase 2: Project Detection & Configuration** - Auto-detect target project's tech stack and produce confirmed profile
+- [x] **Phase 2: Project Detection & Configuration** - Auto-detect target project's tech stack and produce confirmed profile (completed 2026-04-01)
 - [ ] **Phase 3: Indexing Pipeline** - AST-aware codebase parsing, dual-vector embedding, Qdrant storage
 - [ ] **Phase 4: Retrieval & MCP Server** - Semantic search engine and MCP tools for OpenCode integration
 - [ ] **Phase 5: Installation & CLI** - One-shot installer and CLI commands for frictionless setup
@@ -53,8 +53,8 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [x] 02-01: TBD
+- [x] 02-02: TBD
 
 ### Phase 3: Indexing Pipeline
 **Goal**: Framework can index any codebase into Qdrant with AST-aware chunking and dual-vector embeddings
@@ -195,7 +195,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Infrastructure | 3/3 | Complete   | 2026-04-01 |
-| 2. Project Detection & Configuration | 0/2 | Not started | - |
+| 2. Project Detection & Configuration | 2/2 | Complete   | 2026-04-01 |
 | 3. Indexing Pipeline | 0/4 | Not started | - |
 | 4. Retrieval & MCP Server | 0/3 | Not started | - |
 | 5. Installation & CLI | 0/3 | Not started | - |
