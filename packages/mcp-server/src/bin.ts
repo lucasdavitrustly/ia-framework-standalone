@@ -44,7 +44,11 @@ async function main(): Promise<void> {
 
   logger.info({ metricsDbPath, sessionId }, 'Observability initialized');
 
-  const server = createMcpServer({ searchEngine, metricsStore, tokenCounter, sessionId });
+  // Compute frameworkDir and dbConfigPath
+  const frameworkDir = dirname(configPath);
+  const dbConfigPath = join(frameworkDir, 'db.json');
+
+  const server = createMcpServer({ searchEngine, metricsStore, tokenCounter, sessionId, configPath, dbConfigPath });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

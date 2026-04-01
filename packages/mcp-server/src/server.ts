@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
 import { registerGetFileTool } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
+import { registerQueryDatabaseTool } from './tools/query-database.js';
+import { registerIndexDatabaseSchemaTool } from './tools/index-database-schema.js';
 import type { SearchEngine } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 
@@ -13,6 +15,10 @@ export interface McpServerConfig {
   metricsStore?: MetricsStore | undefined;
   tokenCounter?: TokenCounter | undefined;
   sessionId?: string | undefined;
+  /** Path to .ia-framework/db.json — if provided, DB tools are registered */
+  dbConfigPath?: string | undefined;
+  /** Path to .ia-framework/project.json — needed for index_database_schema */
+  configPath?: string | undefined;
 }
 
 /**
@@ -32,6 +38,13 @@ export function createMcpServer(config: McpServerConfig): McpServer {
   });
   registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);
+
+  if (config.dbConfigPath) {
+    registerQueryDatabaseTool(server, config.dbConfigPath);
+    if (config.configPath) {
+      registerIndexDatabaseSchemaTool(server, config.configPath, config.dbConfigPath);
+    }
+  }
 
   return server;
 }

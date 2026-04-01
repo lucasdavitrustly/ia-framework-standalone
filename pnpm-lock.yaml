@@ -320,9 +320,15 @@ importers:
       '@ia-framework/core':
         specifier: workspace:*
         version: link:../core
+      '@ia-framework/db-context':
+        specifier: workspace:*
+        version: link:../db-context
       '@ia-framework/embedding':
         specifier: workspace:*
         version: link:../embedding
+      '@ia-framework/indexer':
+        specifier: workspace:*
+        version: link:../indexer
       '@ia-framework/observability':
         specifier: workspace:*
         version: link:../observability
