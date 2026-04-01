@@ -12,7 +12,7 @@ export interface ChunkMetadata {
   /** Programming language of the file */
   language: string;
   /** Type of code construct: function, class, interface, module, etc. */
-  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other';
+  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other' | 'table' | 'view';
   /** Name of the construct (function name, class name, etc.) */
   name?: string | undefined;
   /** The actual source code text */
@@ -115,6 +115,18 @@ export interface IndexingConfig {
   maxChunkLines?: number | undefined;
   /** Whether to respect .gitignore (default: true) */
   respectGitignore?: boolean | undefined;
+}
+
+/**
+ * A pluggable context source that produces indexable chunks.
+ * Implement this interface to add new context types (DB schema, docs, etc.)
+ * to the indexing pipeline alongside code chunks.
+ */
+export interface ContextSource {
+  /** Human-readable name for logging (e.g. 'postgres', 'docs') */
+  name: string;
+  /** Produce all chunks from this source for embedding and storage */
+  getChunks(): Promise<ChunkMetadata[]>;
 }
 
 /**

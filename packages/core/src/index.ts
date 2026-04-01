@@ -1,6 +1,7 @@
 // Types
 export type {
   ChunkMetadata,
+  ContextSource,
   ProjectProfile,
   EmbeddingVector,
   SearchResult,
