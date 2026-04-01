@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# init-config.sh — Initialize .ia-framework/project.json if not present
+# Provides: init_config() function
+
+# ──────────────────────────────────────────────────────
+# init_config
+# Creates default .ia-framework/project.json if it doesn't exist.
+# Prompts for target project path.
+# Args: $1 = ia-framework directory (optional, defaults to SCRIPT_DIR or cwd)
+# Exit code: 0 on success, 1 on failure.
+# ──────────────────────────────────────────────────────
+init_config() {
+  local ia_dir="${1:-${SCRIPT_DIR:-$(pwd)}}"
+  local config_dir="${ia_dir}/.ia-framework"
+  local config_file="${config_dir}/project.json"
+
+  # Skip if already configured
+  if [ -f "$config_file" ]; then
+    echo -e "  ${GREEN}✓${NC} Config found: ${config_file}"
+    echo "    (Delete and re-run install.sh to reconfigure)"
+    return 0
+  fi
+
+  echo -e "  ${YELLOW}→${NC} Initializing ia-framework configuration..."
+
+  # Prompt for target project path
+  local target_path=""
+  while true; do
+    printf "  Enter the absolute path to your target project: "
+    read -r target_path
+
+    # Trim whitespace
+    target_path="${target_path#"${target_path%%[![:space:]]*}"}"
+    target_path="${target_path%"${target_path##*[![:space:]]}"}"
+
+    if [ -z "$target_path" ]; then
+      echo -e "  ${RED}✗${NC} Path cannot be empty. Please enter a valid directory path."
+      continue
+    fi
+
+    # Expand ~ if present
+    target_path="${target_path/#\~/$HOME}"
+
+    if [ ! -d "$target_path" ]; then
+      echo -e "  ${RED}✗${NC} Directory not found: ${target_path}"
+      echo "    Please enter an existing directory path."
+      continue
+    fi
+
+    # Convert to absolute path
+    target_path="$(cd "$target_path" && pwd)"
+    break
+  done
+
+  # Create config directory
+  mkdir -p "$config_dir"
+
+  # Write default config
+  cat > "$config_file" <<EOF
+{
+  "targetProjectPath": "${target_path}",
+  "embedding": {
+    "provider": "ollama",
+    "model": "nomic-embed-text",
+    "baseUrl": "http://localhost:11434",
+    "dimensions": 768
+  },
+  "vectorStore": {
+    "host": "localhost",
+    "port": 6333,
+    "collectionName": "codebase"
+  },
+  "indexing": {
+    "includePatterns": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.py",
+      "**/*.go",
+      "**/*.rs",
+      "**/*.java"
+    ],
+    "excludePatterns": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/.git/**",
+      "**/coverage/**",
+      "**/__pycache__/**"
+    ],
+    "respectGitignore": true
+  }
+}
+EOF
+
+  echo -e "  ${GREEN}✓${NC} Config created: ${config_file}"
+  echo "    Target project: ${target_path}"
+  return 0
+}
