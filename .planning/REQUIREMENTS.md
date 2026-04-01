@@ -23,9 +23,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Architecture
 
-- [ ] **ARCH-01**: Framework is a standalone tool that lives outside the target project — it is never installed inside the target codebase
-- [ ] **ARCH-02**: GSD workflows run inside the target project directory, and all GSD-generated artifacts (.planning/, AGENTS.md) belong to the target project
-- [ ] **ARCH-03**: Framework can be pointed at any codebase regardless of language or framework
+- [x] **ARCH-01**: Framework is a standalone tool that lives outside the target project — it is never installed inside the target codebase
+- [x] **ARCH-02**: GSD workflows run inside the target project directory, and all GSD-generated artifacts (.planning/, AGENTS.md) belong to the target project
+- [x] **ARCH-03**: Framework can be pointed at any codebase regardless of language or framework
 
 ### Indexing
 
@@ -139,9 +139,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INST-09 | Phase 5 | Pending |
 | INST-10 | Phase 5 | Pending |
 | INST-11 | Phase 5 | Pending |
-| ARCH-01 | Phase 1 | Pending |
-| ARCH-02 | Phase 1 | Pending |
-| ARCH-03 | Phase 1 | Pending |
+| ARCH-01 | Phase 1 | Complete |
+| ARCH-02 | Phase 1 | Complete |
+| ARCH-03 | Phase 1 | Complete |
 | INDX-01 | Phase 3 | Pending |
 | INDX-02 | Phase 3 | Pending |
 | INDX-03 | Phase 3 | Pending |

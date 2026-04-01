@@ -12,7 +12,7 @@ This roadmap delivers a local RAG framework for AI-assisted development in large
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation & Infrastructure** - Monorepo scaffolding, shared types, config system, Docker + Qdrant infrastructure
+- [x] **Phase 1: Foundation & Infrastructure** - Monorepo scaffolding, shared types, config system, Docker + Qdrant infrastructure (completed 2026-04-01)
 - [ ] **Phase 2: Project Detection & Configuration** - Auto-detect target project's tech stack and produce confirmed profile
 - [ ] **Phase 3: Indexing Pipeline** - AST-aware codebase parsing, dual-vector embedding, Qdrant storage
 - [ ] **Phase 4: Retrieval & MCP Server** - Semantic search engine and MCP tools for OpenCode integration
@@ -38,9 +38,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Monorepo scaffold (pnpm workspaces, Turborepo, TypeScript/ESLint/Prettier base config)
-- [ ] 01-02-PLAN.md — Core package: shared types, Zod config loader (TDD), pino logger
-- [ ] 01-03-PLAN.md — Docker infrastructure: Qdrant container with named volumes and health check
+- [x] 01-01-PLAN.md — Monorepo scaffold (pnpm workspaces, Turborepo, TypeScript/ESLint/Prettier base config)
+- [x] 01-02-PLAN.md — Core package: shared types, Zod config loader (TDD), pino logger
+- [x] 01-03-PLAN.md — Docker infrastructure: Qdrant container with named volumes and health check
 
 ### Phase 2: Project Detection & Configuration
 **Goal**: Framework can auto-detect a target project's technology stack and produce a confirmed profile
@@ -194,7 +194,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Infrastructure | 0/3 | Not started | - |
+| 1. Foundation & Infrastructure | 3/3 | Complete   | 2026-04-01 |
 | 2. Project Detection & Configuration | 0/2 | Not started | - |
 | 3. Indexing Pipeline | 0/4 | Not started | - |
 | 4. Retrieval & MCP Server | 0/3 | Not started | - |
