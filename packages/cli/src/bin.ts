@@ -4,6 +4,7 @@ import { indexCommand } from './commands/index.command.js';
 import { searchCommand } from './commands/search.command.js';
 import { statusCommand } from './commands/status.command.js';
 import { benchmarkCommand } from './commands/benchmark.command.js';
+import { dbCommand } from './commands/db.command.js';
 
 const program = new Command('ia-framework')
   .version('0.1.0')
@@ -13,6 +14,7 @@ program.addCommand(indexCommand());
 program.addCommand(searchCommand());
 program.addCommand(statusCommand());
 program.addCommand(benchmarkCommand());
+program.addCommand(dbCommand());
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   process.stderr.write(`CLI error: ${String(err)}\n`);

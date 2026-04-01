@@ -134,6 +134,9 @@ importers:
       '@ia-framework/core':
         specifier: workspace:*
         version: link:../core
+      '@ia-framework/db-context':
+        specifier: workspace:*
+        version: link:../db-context
       '@ia-framework/embedding':
         specifier: workspace:*
         version: link:../embedding
