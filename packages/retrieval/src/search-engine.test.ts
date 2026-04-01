@@ -104,8 +104,8 @@ describe('SearchEngine', () => {
     const results = await engine.search({ text: 'auth' });
 
     expect(results).toHaveLength(1);
-    expect(results[0].score).toBe(0.9);
-    expect(results[0].matchedVector).toBe('both');
+    expect(results[0]!.score).toBe(0.9);
+    expect(results[0]!.matchedVector).toBe('both');
   });
 
   test('Test 5: results are sorted by score descending', async () => {
@@ -123,9 +123,9 @@ describe('SearchEngine', () => {
 
     const results = await engine.search({ text: 'auth' });
 
-    expect(results[0].score).toBe(0.9);
-    expect(results[1].score).toBe(0.75);
-    expect(results[2].score).toBe(0.6);
+    expect(results[0]!.score).toBe(0.9);
+    expect(results[1]!.score).toBe(0.75);
+    expect(results[2]!.score).toBe(0.6);
   });
 
   test('Test 6: results are capped at the requested limit', async () => {
@@ -153,12 +153,12 @@ describe('SearchEngine', () => {
 
     const searchCalls = (config.vectorStore.search as ReturnType<typeof vi.fn>).mock.calls;
     expect(searchCalls.length).toBeGreaterThan(0);
-    const filterUsed = searchCalls[0][1].filter;
+    const filterUsed = searchCalls[0]![1].filter;
     expect(filterUsed).toBeDefined();
     // Filter should reference relativePath
     expect(JSON.stringify(filterUsed)).toContain('relativePath');
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0].relativePath).toBe('src/auth.ts');
+    expect(results[0]!.relativePath).toBe('src/auth.ts');
   });
 
   test('Test 8: search() with scoreThreshold filters out results below the threshold', async () => {

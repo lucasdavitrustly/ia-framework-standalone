@@ -39,6 +39,8 @@ import { walkFiles } from './file-walker.js';
 // ── Mock factory helpers ─────────────────────────────────────────────────────
 function makeMockEmbeddingProvider(dim = 3) {
   return {
+    name: 'mock',
+    model: 'mock-model',
     dimensions: dim,
     embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
     embedBatch: vi.fn().mockImplementation((texts: string[]) =>
@@ -205,7 +207,8 @@ describe('IndexingPipeline', () => {
 // Cleanup after all tests
 afterAll(async () => {
   try {
-    await rm(tmpDir, { recursive: true, force: true });
+    // tmpDir is scoped inside describe block — cleanup is handled by beforeEach per test
+    // No-op cleanup needed here
   } catch {
     // ignore cleanup errors
   }

@@ -130,10 +130,10 @@ describe('QdrantVectorStore', () => {
       with_payload: true,
     });
     expect(results).toHaveLength(1);
-    expect(results[0].id).toBe('chunk-abc');
-    expect(results[0].score).toBe(0.92);
-    expect(results[0].vectorName).toBe('text');
-    expect(results[0].payload.filePath).toBe('/src/foo.ts');
+    expect(results[0]!.id).toBe('chunk-abc');
+    expect(results[0]!.score).toBe(0.92);
+    expect(results[0]!.vectorName).toBe('text');
+    expect(results[0]!.payload.filePath).toBe('/src/foo.ts');
   });
 
   it('Test 5: getCollectionInfo() returns CollectionInfo with point count and dimensions', async () => {
