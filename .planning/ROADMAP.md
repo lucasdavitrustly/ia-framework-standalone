@@ -123,21 +123,22 @@ Plans:
 - [x] 06-02: Wire into MCP server + CLI (log RagEvent per search, status command shows stats)
 
 ### Phase 7: Benchmarking System
-**Goal**: Developer can measure and compare RAG quality across different configurations
+**Goal**: Developer can measure and compare RAG retrieval quality across different configurations using retrieval precision metrics
 **Depends on**: Phase 4, Phase 6
 **Requirements**: BNCH-01, BNCH-02, BNCH-03, BNCH-04, BNCH-05, BNCH-06
 **Success Criteria** (what must be TRUE):
-  1. Running a benchmark executes coding tasks, sends them through RAG, generates AI output, and measures compile + test pass rate
-  2. Benchmark includes a no-RAG baseline run to prove RAG actually helps
-  3. Results are stored with timestamps and configuration snapshots for historical comparison
-  4. Developer can add custom evaluation queries specific to their codebase to the benchmark suite
-  5. Benchmark uses fixed Top-K and deterministic query sets so results are reproducible across runs
-**Plans**: TBD
+  1. Running `ia-framework benchmark run` measures Hit@K, MRR, and latency for each query in the corpus against the indexed codebase
+  2. Benchmark includes a no-RAG baseline mode (--baseline flag, scoreThreshold=2.0) to prove RAG actually helps
+  3. Results are stored in benchmarks.sqlite with timestamps and config snapshots for historical comparison
+  4. Developer can add custom evaluation queries to .ia-framework/benchmark-queries.json; example file is scaffolded on first run
+  5. Benchmark uses fixed Top-K (default 10) and deterministic query sets so results are reproducible across runs
+  6. Developer can compare two runs side-by-side with `ia-framework benchmark compare <id1> <id2>`
+**Plans**: 3 plans
 
 Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
-- [ ] 07-03: TBD
+- [ ] 07-01-PLAN.md — packages/benchmark core: types, BenchmarkStore (SQLite), BenchmarkRunner (Hit@K + MRR, TDD)
+- [ ] 07-02-PLAN.md — QueryCorpus loader (Zod JSON, scaffold on first run) + CLI benchmark run/list/history commands
+- [ ] 07-03-PLAN.md — benchmark compare subcommand + full workspace integration verification + human checkpoint
 
 ### Phase 8: Monitoring Dashboard
 **Goal**: Developer has browser-based visibility into system health, usage, and benchmark trends
