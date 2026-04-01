@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: in_progress
-stopped_at: Completed 07-benchmarking-03-PLAN.md — Phase 7 complete
-last_updated: "2026-04-01T18:13:53Z"
+status: Phase 8 plans ready — begin with 08-01-PLAN.md
+stopped_at: Completed 08-dashboard-03-PLAN.md, starting 08-04
+last_updated: "2026-04-01T19:02:56.344Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
   completed_phases: 7
-  total_plans: 20
-  completed_plans: 20
+  total_plans: 24
+  completed_plans: 23
   percent: 70
 ---
 
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-03-31)
 
 ## Current Position
 
-Phase: 7 of 10 (Benchmarking System) — COMPLETE
-Plan: 3 of 3 in current phase
-Status: Phase 7 complete — ready to begin Phase 8
+Phase: 8 of 10 (Monitoring Dashboard) — IN PROGRESS
+Plan: 1 of 4 in current phase (plans written, execution not started)
+Status: Phase 8 plans ready — begin with 08-01-PLAN.md
 
 Last activity: 2026-04-01
 
@@ -78,6 +78,7 @@ Progress: [███████░░░] 70%
 | Phase 07-benchmarking P01 | 10min | 2 tasks | 7 files |
 | Phase 07-benchmarking P02 | 12min | 2 tasks | 5 files |
 | Phase 07-benchmarking P03 | 8min | 3 tasks | 1 files |
+| Phase 08-dashboard P03 | 25 | 4 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,17 @@ Recent decisions affecting current work:
 - [Phase 07-benchmarking]: SQLite REAL cannot store Infinity — stored as 1e308, restored via rank >= 1e307 ? Infinity : rank
 - [Phase 07-benchmarking]: isBaseline = scoreThreshold > 1.0 (2.0 used for no-RAG baseline runs)
 - [Phase 07-benchmarking]: Zod v4 added explicitly to @ia-framework/benchmark package.json (workspace uses v4.3.6)
+- [Phase 08-dashboard]: packages/dashboard-api + apps/dashboard — two-package structure, single Docker container
+- [Phase 08-dashboard]: Hono serves both REST API and Vite static build from one container
+- [Phase 08-dashboard]: Re-indexing triggered in-process via IndexingPipeline (direct call, not subprocess)
+- [Phase 08-dashboard]: IndexingPanel polls /api/indexing/status every 2s when running=true (useRef interval)
+- [Phase 08-dashboard]: IA_FRAMEWORK_DIR env var set by install.sh, bind-mounted into dashboard container at /ia-framework-data
+- [Phase 08-dashboard]: ConfigWatcher uses chokidar for live project.json sync (in-memory cache + EventEmitter)
+- [Phase 08-dashboard]: No authentication — localhost-only Docker container (same as Qdrant pattern)
+- [Phase 08-dashboard]: Token charts: daily BarChart (Recharts) + paginated per-query QueryEventTable with expandable rows
+- [Phase 08-dashboard]: MetricsStore extended with getEventsByDay() + listEvents(limit, offset) for dashboard API routes
+- [Phase 08-dashboard]: recharts Formatter type requires ValueType|undefined and NameType|undefined params for TypeScript-strict compatibility
+- [Phase 08-dashboard]: QueryEventTable self-fetches with internal pagination state rather than receiving data as props
 
 ### Pending Todos
 
@@ -127,6 +139,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-01T18:13:53Z
-Stopped at: Completed 07-benchmarking-03-PLAN.md — Phase 7 complete
+Last session: 2026-04-01T19:02:56.340Z
+Stopped at: Completed 08-dashboard-03-PLAN.md, starting 08-04
 Resume file: None

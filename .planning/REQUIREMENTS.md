@@ -63,14 +63,14 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **BNCH-04**: Benchmark includes a no-RAG baseline to prove RAG actually helps
 - [x] **BNCH-05**: Benchmarks use a fixed Top-K and the same deterministic query set every run so results are comparable
 - [x] **BNCH-06**: Developer can add custom evaluation queries to the benchmark suite to check RAG accuracy for their specific codebase
-- [ ] **BNCH-07**: Developer can trigger re-indexing with a different LLM or strategy and benchmark the difference from the dashboard
+- [x] **BNCH-07**: Developer can trigger re-indexing with a different LLM or strategy and benchmark the difference from the dashboard
 
 ### Dashboard
 
 - [ ] **DASH-01**: Monitoring dashboard runs as a Docker container accessible via browser
-- [ ] **DASH-02**: Dashboard shows indexing status (progress, coverage, last update time)
-- [ ] **DASH-03**: Dashboard shows token usage trends (charts over time)
-- [ ] **DASH-04**: Dashboard shows benchmark history with score trend visualization
+- [x] **DASH-02**: Dashboard shows indexing status (progress, coverage, last update time)
+- [x] **DASH-03**: Dashboard shows token usage trends (charts over time)
+- [x] **DASH-04**: Dashboard shows benchmark history with score trend visualization
 - [ ] **DASH-05**: Dashboard shows detected project profile
 - [ ] **DASH-06**: Dashboard syncs with `.ia-framework/project.json` config file
 
@@ -167,11 +167,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BNCH-04 | Phase 7 | Pending |
 | BNCH-05 | Phase 7 | Pending |
 | BNCH-06 | Phase 7 | Pending |
-| BNCH-07 | Phase 8 | Pending |
+| BNCH-07 | Phase 8 | Complete |
 | DASH-01 | Phase 8 | Pending |
-| DASH-02 | Phase 8 | Pending |
-| DASH-03 | Phase 8 | Pending |
-| DASH-04 | Phase 8 | Pending |
+| DASH-02 | Phase 8 | Complete |
+| DASH-03 | Phase 8 | Complete |
+| DASH-04 | Phase 8 | Complete |
 | DASH-05 | Phase 8 | Pending |
 | DASH-06 | Phase 8 | Pending |
 | DBAS-01 | Phase 9 | Pending |
