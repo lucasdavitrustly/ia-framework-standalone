@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Completed Phase 5 (05-installer): one-shot installer, CLI (index/search/status), OpenCode MCP config — all 15 packages build+typecheck+test clean"
-last_updated: "2026-04-01T17:00:00.000Z"
+status: completed
+stopped_at: Completed 06-observability-02-PLAN.md — Phase 6 complete
+last_updated: "2026-04-01T17:17:29.874Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
-  completed_phases: 5
-  total_plans: 15
-  completed_plans: 15
+  completed_phases: 6
+  total_plans: 17
+  completed_plans: 17
   percent: 50
 ---
 
@@ -71,6 +71,7 @@ Progress: [█████░░░░░] 50%
 | Phase 05-installer P01 | 3min | 3 tasks | 8 files |
 | Phase 05-installer P02 | 8min | 3 tasks | 9 files |
 | Phase 05-installer P03 | 14min | 3 tasks | 6 files |
+| Phase 06-observability P02 | 30 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,7 @@ Recent decisions affecting current work:
 - [Phase 05-installer]: configure-opencode.sh uses 'node -e' for JSON merge in bash — avoids jq dependency, keeps installer self-contained
 - [Phase 05-installer]: CLI test file (cli.test.ts) added as smoke tests — Vitest exits code 1 with no test files, breaking pnpm test
 - [Phase 05-installer]: EmbeddingProvider interface requires 'name' and 'model' readonly string fields — test mocks must include these
+- [Phase 06-observability]: MCP and CLI both log RagEvents with strategy='mcp'; graceful degradation via try/catch; MetricsStore co-located with project.json at .ia-framework/metrics.sqlite
 
 ### Pending Todos
 
@@ -114,6 +116,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-01T17:00:00.000Z
-Stopped at: Completed Phase 5 (05-installer): one-shot installer, CLI (index/search/status), OpenCode MCP config — all 15 packages build+typecheck+test clean
+Last session: 2026-04-01T17:17:29.867Z
+Stopped at: Completed 06-observability-02-PLAN.md — Phase 6 complete
 Resume file: None

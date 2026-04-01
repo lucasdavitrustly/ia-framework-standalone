@@ -49,11 +49,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Observability
 
-- [ ] **OBSV-01**: Every RAG interaction (query, retrieval, context injection) is logged with token counts
-- [ ] **OBSV-02**: Token usage is tracked per-query (tokens consumed per retrieval)
-- [ ] **OBSV-03**: Token usage is tracked per-session (total RAG tokens across a coding session)
-- [ ] **OBSV-04**: Token usage is tracked per-strategy (cost comparison between retrieval modes)
-- [ ] **OBSV-05**: RAG interaction logs are stored locally in SQLite for dashboard consumption
+- [x] **OBSV-01**: Every RAG interaction (query, retrieval, context injection) is logged with token counts
+- [x] **OBSV-02**: Token usage is tracked per-query (tokens consumed per retrieval)
+- [x] **OBSV-03**: Token usage is tracked per-session (total RAG tokens across a coding session)
+- [x] **OBSV-04**: Token usage is tracked per-strategy (cost comparison between retrieval modes)
+- [x] **OBSV-05**: RAG interaction logs are stored locally in SQLite for dashboard consumption
 
 ### Benchmarking
 
@@ -156,11 +156,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RETR-04 | Phase 10 | Pending |
 | RETR-05 | Phase 10 | Pending |
 | RETR-06 | Phase 4 | Pending |
-| OBSV-01 | Phase 6 | Pending |
-| OBSV-02 | Phase 6 | Pending |
-| OBSV-03 | Phase 6 | Pending |
-| OBSV-04 | Phase 6 | Pending |
-| OBSV-05 | Phase 6 | Pending |
+| OBSV-01 | Phase 6 | Complete |
+| OBSV-02 | Phase 6 | Complete |
+| OBSV-03 | Phase 6 | Complete |
+| OBSV-04 | Phase 6 | Complete |
+| OBSV-05 | Phase 6 | Complete |
 | BNCH-01 | Phase 7 | Pending |
 | BNCH-02 | Phase 7 | Pending |
 | BNCH-03 | Phase 7 | Pending |

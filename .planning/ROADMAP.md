@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Indexing Pipeline** - AST-aware codebase parsing, dual-vector embedding, Qdrant storage (completed 2026-04-01)
 - [x] **Phase 4: Retrieval & MCP Server** - Semantic search engine and MCP tools for OpenCode integration (completed 2026-04-01)
 - [x] **Phase 5: Installation & CLI** - One-shot installer and CLI commands for frictionless setup (completed 2026-04-01)
-- [ ] **Phase 6: Observability & Metrics** - Token tracking, RAG interaction logging, SQLite metrics storage
+- [x] **Phase 6: Observability & Metrics** - Token tracking, RAG interaction logging, SQLite metrics storage (completed 2026-04-01)
 - [ ] **Phase 7: Benchmarking System** - End-to-end RAG quality measurement with comparison and history
 - [ ] **Phase 8: Monitoring Dashboard** - Browser-based visibility into system health, usage, and benchmarks
 - [ ] **Phase 9: Database Context** - Database schema indexing and query support as additional AI context
@@ -119,8 +119,8 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 06-01: Observability package (@ia-framework/observability — TokenCounter, MetricsStore with SQLite, TDD)
-- [ ] 06-02: Wire into MCP server + CLI (log RagEvent per search, status command shows stats)
+- [x] 06-01: Observability package (@ia-framework/observability — TokenCounter, MetricsStore with SQLite, TDD)
+- [x] 06-02: Wire into MCP server + CLI (log RagEvent per search, status command shows stats)
 
 ### Phase 7: Benchmarking System
 **Goal**: Developer can measure and compare RAG quality across different configurations
@@ -199,7 +199,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. Indexing Pipeline | 4/4 | Complete | 2026-04-01 |
 | 4. Retrieval & MCP Server | 3/3 | Complete | 2026-04-01 |
 | 5. Installation & CLI | 3/3 | Complete | 2026-04-01 |
-| 6. Observability & Metrics | 0/2 | Not started | - |
+| 6. Observability & Metrics | 2/2 | Complete   | 2026-04-01 |
 | 7. Benchmarking System | 0/3 | Not started | - |
 | 8. Monitoring Dashboard | 0/3 | Not started | - |
 | 9. Database Context | 0/2 | Not started | - |
