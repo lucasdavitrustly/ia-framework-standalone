@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -192,6 +193,7 @@ function listSubcommand(): Command {
       const frameworkDir = dirname(configPath);
 
       try {
+        mkdirSync(frameworkDir, { recursive: true });
         const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
         const store = new BenchmarkStore(benchmarksDbPath);
         const limit = parseInt(options.limit, 10);
@@ -249,6 +251,7 @@ function historySubcommand(): Command {
       const frameworkDir = dirname(configPath);
 
       try {
+        mkdirSync(frameworkDir, { recursive: true });
         const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
         const store = new BenchmarkStore(benchmarksDbPath);
         const limit = parseInt(options.limit, 10);
@@ -324,10 +327,9 @@ function compareSubcommand(): Command {
       const frameworkDir = dirname(configPath);
 
       try {
+        mkdirSync(frameworkDir, { recursive: true });
         const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
         const store = new BenchmarkStore(benchmarksDbPath);
-
-        // Resolve run IDs (support short prefix matching)
         const runA = resolveRun(store, runId1);
         const runB = resolveRun(store, runId2);
         store.close();
