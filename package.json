@@ -18,7 +18,9 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "rolldown",
-      "@rolldown/binding-darwin-arm64"
+      "@rolldown/binding-darwin-arm64",
+      "tree-sitter",
+      "tree-sitter-typescript"
     ]
   },
   "devDependencies": {
