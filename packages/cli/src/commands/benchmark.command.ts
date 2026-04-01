@@ -310,9 +310,170 @@ function historySubcommand(): Command {
     });
 }
 
-// ── compare subcommand (added in Plan 07-03) ──────────────────────────────────
-// compareSubcommand() is defined here to co-locate all subcommands in one file.
-// It will be fully implemented in Plan 07-03.
+// ── compare subcommand ────────────────────────────────────────────────────────
+
+function compareSubcommand(): Command {
+  return new Command('compare')
+    .description('Compare two benchmark runs side-by-side')
+    .argument('<runId1>', 'First run ID (full or prefix)')
+    .argument('<runId2>', 'Second run ID (full or prefix)')
+    .option('-c, --config <path>', 'Path to project.json config')
+    .action(async (runId1: string, runId2: string, options: { config?: string }) => {
+      const logger = createLogger('cli:benchmark:compare');
+      const configPath = getConfigPath(options);
+      const frameworkDir = dirname(configPath);
+
+      try {
+        const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
+        const store = new BenchmarkStore(benchmarksDbPath);
+
+        // Resolve run IDs (support short prefix matching)
+        const runA = resolveRun(store, runId1);
+        const runB = resolveRun(store, runId2);
+        store.close();
+
+        if (!runA) {
+          process.stderr.write(`✗ Run not found: ${runId1}\n`);
+          process.exit(1);
+          return;
+        }
+        if (!runB) {
+          process.stderr.write(`✗ Run not found: ${runId2}\n`);
+          process.exit(1);
+          return;
+        }
+
+        printComparison(runA, runB);
+      } catch (error) {
+        process.stderr.write(`✗ benchmark compare failed: ${String(error)}\n`);
+        logger.error({ error }, 'Benchmark compare failed');
+        process.exit(1);
+      }
+    });
+}
+
+function resolveRun(store: BenchmarkStore, runIdOrPrefix: string): BenchmarkRun | null {
+  // First try exact match
+  const exact = store.getRunById(runIdOrPrefix);
+  if (exact) return exact;
+
+  // Then try prefix match via listRuns scan
+  const allRuns = store.listRuns(1000);
+  return allRuns.find((r) => r.runId.startsWith(runIdOrPrefix)) ?? null;
+}
+
+function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
+  const DIVIDER = '═'.repeat(68);
+  const COL_W = 21;
+
+  console.log('\nBenchmark Comparison');
+  console.log(DIVIDER);
+
+  const aShort = runA.runId.slice(0, 8);
+  const bShort = runB.runId.slice(0, 8);
+  const aLabel = runA.label ? ` "${runA.label}"` : '';
+  const bLabel = runB.label ? ` "${runB.label}"` : '';
+
+  console.log(`\nRun A: ${aShort} — ${formatDate(runA.timestamp)}${aLabel}`);
+  console.log(`Run B: ${bShort} — ${formatDate(runB.timestamp)}${bLabel}`);
+
+  // Config + results table
+  const ROW_LABEL_W = 21;
+  const top = `┌${'─'.repeat(ROW_LABEL_W + 2)}┬${'─'.repeat(COL_W + 2)}┬${'─'.repeat(COL_W + 2)}┐`;
+  const divRow = `├${'─'.repeat(ROW_LABEL_W + 2)}┼${'─'.repeat(COL_W + 2)}┼${'─'.repeat(COL_W + 2)}┤`;
+  const bottom = `└${'─'.repeat(ROW_LABEL_W + 2)}┴${'─'.repeat(COL_W + 2)}┴${'─'.repeat(COL_W + 2)}┘`;
+
+  const row = (label: string, a: string, b: string): string =>
+    `│ ${label.padEnd(ROW_LABEL_W)} │ ${a.padEnd(COL_W)} │ ${b.padEnd(COL_W)} │`;
+
+  console.log('');
+  console.log(top);
+  console.log(row('Config', 'Run A', 'Run B'));
+  console.log(divRow);
+
+  const csA = runA.configSnapshot;
+  const csB = runB.configSnapshot;
+  console.log(row('Provider', csA.embeddingProvider, csB.embeddingProvider));
+  console.log(row('Model', truncate(csA.embeddingModel, COL_W), truncate(csB.embeddingModel, COL_W)));
+  console.log(row('Collection', truncate(csA.collectionName, COL_W), truncate(csB.collectionName, COL_W)));
+  console.log(row('Top-K', String(csA.topK), String(csB.topK)));
+
+  const threshA = csA.scoreThreshold.toFixed(2) + (runA.isBaseline ? ' (baseline)' : '');
+  const threshB = csB.scoreThreshold.toFixed(2) + (runB.isBaseline ? ' (baseline)' : '');
+  console.log(row('Threshold', threshA, threshB));
+
+  console.log(divRow);
+  console.log(row('RESULTS', '', ''));
+  console.log(divRow);
+
+  // Hit@K
+  const hitDelta = runA.hitAtK - runB.hitAtK;
+  const hitArrow = hitDelta > 0 ? '↑' : hitDelta < 0 ? '↓' : '=';
+  const hitAStr = `${runA.hitAtK.toFixed(2)}  ${hitArrow} ${hitDelta >= 0 ? '+' : ''}${hitDelta.toFixed(2)}`;
+  console.log(row('Hit@K', hitAStr, runB.hitAtK.toFixed(2)));
+
+  // MRR
+  const mrrDelta = runA.mrr - runB.mrr;
+  const mrrArrow = mrrDelta > 0 ? '↑' : mrrDelta < 0 ? '↓' : '=';
+  const mrrAStr = `${runA.mrr.toFixed(2)}  ${mrrArrow} ${mrrDelta >= 0 ? '+' : ''}${mrrDelta.toFixed(2)}`;
+  console.log(row('MRR', mrrAStr, runB.mrr.toFixed(2)));
+
+  // Avg Latency
+  console.log(row('Avg Latency', `${Math.round(runA.avgLatencyMs)}ms`, `${Math.round(runB.avgLatencyMs)}ms`));
+
+  // Queries run
+  console.log(row('Queries Run', String(runA.queries.length), String(runB.queries.length)));
+  console.log(bottom);
+
+  // Per-query breakdown
+  console.log('\nPer-Query Breakdown');
+  const Q_W = 26;
+  const HIT_W = 12;
+  const qTop = `┌${'─'.repeat(Q_W + 2)}┬${'─'.repeat(HIT_W + 2)}┬${'─'.repeat(HIT_W + 2)}┐`;
+  const qMid = `├${'─'.repeat(Q_W + 2)}┼${'─'.repeat(HIT_W + 2)}┼${'─'.repeat(HIT_W + 2)}┤`;
+  const qBottom = `└${'─'.repeat(Q_W + 2)}┴${'─'.repeat(HIT_W + 2)}┴${'─'.repeat(HIT_W + 2)}┘`;
+  const qRow = (q: string, a: string, b: string): string =>
+    `│ ${q.padEnd(Q_W)} │ ${a.padEnd(HIT_W)} │ ${b.padEnd(HIT_W)} │`;
+
+  console.log(qTop);
+  console.log(qRow('Query', 'Run A Hit', 'Run B Hit'));
+  console.log(qMid);
+
+  // Build unified query list
+  const allQueryIds = new Set([
+    ...runA.queries.map((q) => q.queryId),
+    ...runB.queries.map((q) => q.queryId),
+  ]);
+
+  const aQueryMap = new Map(runA.queries.map((q) => [q.queryId, q]));
+  const bQueryMap = new Map(runB.queries.map((q) => [q.queryId, q]));
+
+  for (const qId of allQueryIds) {
+    const aQ = aQueryMap.get(qId);
+    const bQ = bQueryMap.get(qId);
+
+    const queryText = truncate(aQ?.query ?? bQ?.query ?? qId, Q_W);
+    const aHit = aQ ? (aQ.hit ? `✓ (rank ${aQ.rank})` : '✗') : '—';
+    const bHit = bQ ? (bQ.hit ? `✓ (rank ${bQ.rank})` : '✗') : '—';
+
+    console.log(qRow(queryText, aHit, bHit));
+  }
+
+  console.log(qBottom);
+
+  // Verdict
+  if (hitDelta > 0) {
+    console.log(
+      `\nVerdict: Run A outperforms Run B by +${hitDelta.toFixed(2)} Hit@K (+${mrrDelta.toFixed(2)} MRR)`,
+    );
+  } else if (hitDelta < 0) {
+    console.log(
+      `\nVerdict: Run B outperforms Run A by +${Math.abs(hitDelta).toFixed(2)} Hit@K (+${Math.abs(mrrDelta).toFixed(2)} MRR)`,
+    );
+  } else {
+    console.log('\nVerdict: Runs are equivalent');
+  }
+}
 
 // ── benchmarkCommand ──────────────────────────────────────────────────────────
 
@@ -324,6 +485,7 @@ export function benchmarkCommand(): Command {
   benchmark.addCommand(runSubcommand());
   benchmark.addCommand(listSubcommand());
   benchmark.addCommand(historySubcommand());
+  benchmark.addCommand(compareSubcommand());
 
   return benchmark;
 }
