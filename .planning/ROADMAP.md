@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Retrieval & MCP Server** - Semantic search engine and MCP tools for OpenCode integration (completed 2026-04-01)
 - [x] **Phase 5: Installation & CLI** - One-shot installer and CLI commands for frictionless setup (completed 2026-04-01)
 - [x] **Phase 6: Observability & Metrics** - Token tracking, RAG interaction logging, SQLite metrics storage (completed 2026-04-01)
-- [ ] **Phase 7: Benchmarking System** - End-to-end RAG quality measurement with comparison and history
+- [x] **Phase 7: Benchmarking System** - End-to-end RAG quality measurement with comparison and history (completed 2026-04-01)
 - [ ] **Phase 8: Monitoring Dashboard** - Browser-based visibility into system health, usage, and benchmarks
 - [ ] **Phase 9: Database Context** - Database schema indexing and query support as additional AI context
 - [ ] **Phase 10: Advanced Retrieval & Workflow Integration** - Dependency graph expansion, auto-context injection, GSD integration
@@ -136,9 +136,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 07-01-PLAN.md — packages/benchmark core: types, BenchmarkStore (SQLite), BenchmarkRunner (Hit@K + MRR, TDD)
-- [ ] 07-02-PLAN.md — QueryCorpus loader (Zod JSON, scaffold on first run) + CLI benchmark run/list/history commands
-- [ ] 07-03-PLAN.md — benchmark compare subcommand + full workspace integration verification + human checkpoint
+- [x] 07-01-PLAN.md — packages/benchmark core: types, BenchmarkStore (SQLite), BenchmarkRunner (Hit@K + MRR, TDD)
+- [x] 07-02-PLAN.md — QueryCorpus loader (Zod JSON, scaffold on first run) + CLI benchmark run/list/history commands
+- [x] 07-03-PLAN.md — benchmark compare subcommand + full workspace integration verification + human checkpoint
 
 ### Phase 8: Monitoring Dashboard
 **Goal**: Developer has browser-based visibility into system health, usage, and benchmark trends
@@ -201,7 +201,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. Retrieval & MCP Server | 3/3 | Complete | 2026-04-01 |
 | 5. Installation & CLI | 3/3 | Complete | 2026-04-01 |
 | 6. Observability & Metrics | 2/2 | Complete   | 2026-04-01 |
-| 7. Benchmarking System | 0/3 | Not started | - |
+| 7. Benchmarking System | 3/3 | Complete | 2026-04-01 |
 | 8. Monitoring Dashboard | 0/3 | Not started | - |
 | 9. Database Context | 0/2 | Not started | - |
 | 10. Advanced Retrieval & Workflow Integration | 0/3 | Not started | - |

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 06-observability-02-PLAN.md — Phase 6 complete
-last_updated: "2026-04-01T17:17:29.874Z"
+status: in_progress
+stopped_at: Completed 07-benchmarking-03-PLAN.md — Phase 7 complete
+last_updated: "2026-04-01T18:13:53Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
-  completed_phases: 6
-  total_plans: 17
-  completed_plans: 17
-  percent: 50
+  completed_phases: 7
+  total_plans: 20
+  completed_plans: 20
+  percent: 70
 ---
 
 # Project State
@@ -21,25 +21,25 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 6 — Observability & Metrics
+**Current focus:** Phase 8 — Monitoring Dashboard
 
 ## Current Position
 
-Phase: 5 of 10 (Installation & CLI) — COMPLETE
+Phase: 7 of 10 (Benchmarking System) — COMPLETE
 Plan: 3 of 3 in current phase
-Status: Phase 5 complete — ready to begin Phase 6
+Status: Phase 7 complete — ready to begin Phase 8
 
 Last activity: 2026-04-01
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 12
+- Total plans completed: 20
 - Average duration: ~13 min/plan
-- Total execution time: ~2.5 hours
+- Total execution time: ~4.5 hours
 
 **By Phase:**
 
@@ -50,11 +50,13 @@ Progress: [█████░░░░░] 50%
 | Phase 03-indexing-pipeline | 4 | ~75min | ~19min |
 | Phase 04-mcp-server | 3 | ~37min | ~12min |
 | Phase 05-installer | 3 | ~25min | ~8min |
+| Phase 06-observability | 2 | ~45min | ~22min |
+| Phase 07-benchmarking | 3 | ~30min | ~10min |
 
 **Recent Trend:**
 
-- Last 5 plans: 04-03 (integration), 05-01 (installer), 05-02 (cli), 05-03 (opencode)
-- Trend: ~8min per Phase 5 plan
+- Last 5 plans: 06-01 (observability), 06-02 (wire metrics), 07-01 (benchmark core), 07-02 (corpus + CLI), 07-03 (compare + verify)
+- Trend: ~10min per Phase 7 plan
 
 *Updated after each plan completion*
 | Phase 01-foundation P02 | 11min | 3 tasks | 11 files |
@@ -71,7 +73,11 @@ Progress: [█████░░░░░] 50%
 | Phase 05-installer P01 | 3min | 3 tasks | 8 files |
 | Phase 05-installer P02 | 8min | 3 tasks | 9 files |
 | Phase 05-installer P03 | 14min | 3 tasks | 6 files |
-| Phase 06-observability P02 | 30 | 3 tasks | 8 files |
+| Phase 06-observability P01 | 15min | 3 tasks | 8 files |
+| Phase 06-observability P02 | 30min | 3 tasks | 8 files |
+| Phase 07-benchmarking P01 | 10min | 2 tasks | 7 files |
+| Phase 07-benchmarking P02 | 12min | 2 tasks | 5 files |
+| Phase 07-benchmarking P03 | 8min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -104,6 +110,11 @@ Recent decisions affecting current work:
 - [Phase 05-installer]: CLI test file (cli.test.ts) added as smoke tests — Vitest exits code 1 with no test files, breaking pnpm test
 - [Phase 05-installer]: EmbeddingProvider interface requires 'name' and 'model' readonly string fields — test mocks must include these
 - [Phase 06-observability]: MCP and CLI both log RagEvents with strategy='mcp'; graceful degradation via try/catch; MetricsStore co-located with project.json at .ia-framework/metrics.sqlite
+- [Phase 07-benchmarking]: compare subcommand supports prefix ID matching via listRuns() scan — avoids requiring full UUID input
+- [Phase 07-benchmarking]: All benchmark subcommands extracted to named helpers (runSubcommand/listSubcommand/historySubcommand/compareSubcommand) co-located in one file for readability
+- [Phase 07-benchmarking]: SQLite REAL cannot store Infinity — stored as 1e308, restored via rank >= 1e307 ? Infinity : rank
+- [Phase 07-benchmarking]: isBaseline = scoreThreshold > 1.0 (2.0 used for no-RAG baseline runs)
+- [Phase 07-benchmarking]: Zod v4 added explicitly to @ia-framework/benchmark package.json (workspace uses v4.3.6)
 
 ### Pending Todos
 
@@ -112,10 +123,10 @@ None.
 ### Blockers/Concerns
 
 - Auto-context injection mechanism via OpenCode is unvalidated — research deferred to Phase 10
-- Benchmark task corpus design (what coding tasks to use) needs research during Phase 7 planning
+- Benchmark task corpus design (coding tasks) resolved: used retrieval precision queries (expectedFiles per query) — AI output quality benchmarks deferred (BNCH-01 not yet implemented)
 
 ## Session Continuity
 
-Last session: 2026-04-01T17:17:29.867Z
-Stopped at: Completed 06-observability-02-PLAN.md — Phase 6 complete
+Last session: 2026-04-01T18:13:53Z
+Stopped at: Completed 07-benchmarking-03-PLAN.md — Phase 7 complete
 Resume file: None

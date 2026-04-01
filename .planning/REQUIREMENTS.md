@@ -58,11 +58,11 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Benchmarking
 
 - [ ] **BNCH-01**: Developer can run end-to-end benchmarks that measure AI output quality (compile + test pass rate)
-- [ ] **BNCH-02**: Benchmarks compare across embedding models, chunking strategies, and retrieval modes
-- [ ] **BNCH-03**: Benchmark runs are stored with timestamps and config snapshots for historical comparison
-- [ ] **BNCH-04**: Benchmark includes a no-RAG baseline to prove RAG actually helps
-- [ ] **BNCH-05**: Benchmarks use a fixed Top-K and the same deterministic query set every run so results are comparable
-- [ ] **BNCH-06**: Developer can add custom evaluation queries to the benchmark suite to check RAG accuracy for their specific codebase
+- [x] **BNCH-02**: Benchmarks compare across embedding models, chunking strategies, and retrieval modes
+- [x] **BNCH-03**: Benchmark runs are stored with timestamps and config snapshots for historical comparison
+- [x] **BNCH-04**: Benchmark includes a no-RAG baseline to prove RAG actually helps
+- [x] **BNCH-05**: Benchmarks use a fixed Top-K and the same deterministic query set every run so results are comparable
+- [x] **BNCH-06**: Developer can add custom evaluation queries to the benchmark suite to check RAG accuracy for their specific codebase
 - [ ] **BNCH-07**: Developer can trigger re-indexing with a different LLM or strategy and benchmark the difference from the dashboard
 
 ### Dashboard
