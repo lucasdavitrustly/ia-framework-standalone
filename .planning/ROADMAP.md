@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: Observability & Metrics** - Token tracking, RAG interaction logging, SQLite metrics storage (completed 2026-04-01)
 - [x] **Phase 7: Benchmarking System** - End-to-end RAG quality measurement with comparison and history (completed 2026-04-01)
 - [x] **Phase 8: Monitoring Dashboard** - Browser-based visibility into system health, usage, and benchmarks (completed 2026-04-01)
-- [ ] **Phase 9: Database Context** - Database schema indexing and query support as additional AI context
+- [x] **Phase 9: Database Context** - Database schema indexing and query support as additional AI context (completed 2026-04-01)
 - [ ] **Phase 10: Advanced Retrieval & Workflow Integration** - Dependency graph expansion, auto-context injection, GSD integration
 
 ## Phase Details
@@ -169,8 +169,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — db-context package (ContextSource interface in core, PostgresSource, DatabaseConfig Zod schema, db.json loader, IndexingPipeline contextSources extension — full TDD)
-- [ ] 09-02-PLAN.md — MCP tools (query_database + index_database_schema) + CLI db subcommand (configure/connect/index/status) + dashboard /api/db/status + Overview DB status card
+- [x] 09-01-PLAN.md — db-context package (ContextSource interface in core, PostgresSource, DatabaseConfig Zod schema, db.json loader, IndexingPipeline contextSources extension — full TDD)
+- [x] 09-02-PLAN.md — MCP tools (query_database + index_database_schema) + CLI db subcommand (configure/connect/index/status) + dashboard /api/db/status + Overview DB status card
 
 ### Phase 10: Advanced Retrieval & Workflow Integration
 **Goal**: RAG results are enhanced with dependency context and automatically injected into developer workflows
@@ -204,5 +204,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Observability & Metrics | 2/2 | Complete   | 2026-04-01 |
 | 7. Benchmarking System | 3/3 | Complete | 2026-04-01 |
 | 8. Monitoring Dashboard | 4/4 | Complete   | 2026-04-01 |
-| 9. Database Context | 0/2 | Not started | - |
+| 9. Database Context | 2/2 | Complete   | 2026-04-01 |
 | 10. Advanced Retrieval & Workflow Integration | 0/3 | Not started | - |
