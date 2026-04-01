@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Completed Phase 4 (04-mcp-server): retrieval SearchEngine + mcp-server with 3 tools + stdio binary — 16/16 tests passing, typecheck clean"
-last_updated: "2026-04-01T13:20:00.000Z"
+stopped_at: "Completed Phase 5 (05-installer): one-shot installer, CLI (index/search/status), OpenCode MCP config — all 15 packages build+typecheck+test clean"
+last_updated: "2026-04-01T17:00:00.000Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
-  completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
-  percent: 40
+  completed_phases: 5
+  total_plans: 15
+  completed_plans: 15
+  percent: 50
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 5 — Installer
+**Current focus:** Phase 6 — Observability & Metrics
 
 ## Current Position
 
-Phase: 4 of 10 (MCP Server) — COMPLETE
+Phase: 5 of 10 (Installation & CLI) — COMPLETE
 Plan: 3 of 3 in current phase
-Status: Phase 4 complete — ready to begin Phase 5
+Status: Phase 5 complete — ready to begin Phase 6
 
 Last activity: 2026-04-01
 
-Progress: [████░░░░░░] 40%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -49,11 +49,12 @@ Progress: [████░░░░░░] 40%
 | Phase 02-project-detection | 2 | ~31min | ~15min |
 | Phase 03-indexing-pipeline | 4 | ~75min | ~19min |
 | Phase 04-mcp-server | 3 | ~37min | ~12min |
+| Phase 05-installer | 3 | ~25min | ~8min |
 
 **Recent Trend:**
 
-- Last 5 plans: 03-04 (indexer), 04-01 (retrieval), 04-02 (mcp-server), 04-03 (integration)
-- Trend: ~12min per Phase 4 plan
+- Last 5 plans: 04-03 (integration), 05-01 (installer), 05-02 (cli), 05-03 (opencode)
+- Trend: ~8min per Phase 5 plan
 
 *Updated after each plan completion*
 | Phase 01-foundation P02 | 11min | 3 tasks | 11 files |
@@ -67,6 +68,9 @@ Progress: [████░░░░░░] 40%
 | Phase 04-mcp-server P01 | 12min | 3 tasks | 7 files |
 | Phase 04-mcp-server P02 | 15min | 3 tasks | 10 files |
 | Phase 04-mcp-server P03 | 10min | 2 tasks | 0 files |
+| Phase 05-installer P01 | 3min | 3 tasks | 8 files |
+| Phase 05-installer P02 | 8min | 3 tasks | 9 files |
+| Phase 05-installer P03 | 14min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -94,6 +98,10 @@ Recent decisions affecting current work:
 - [Phase 04-mcp-server]: Max-score merge strategy for dual-vector results — when same chunkId appears in both vectors, keep higher score and set matchedVector='both'
 - [Phase 04-mcp-server]: Use CallToolResult type from MCP SDK instead of custom ToolOutput interface — required index signature [x: string]: unknown
 - [Phase 04-mcp-server]: bin.ts uses IA_FRAMEWORK_CONFIG env var fallback to .ia-framework/project.json — supports both custom paths and convention discovery
+- [Phase 05-installer]: Ollama and OpenCode are soft-fail installs (non-fatal) — Docker and Node.js are hard-fail (framework cannot run without them)
+- [Phase 05-installer]: configure-opencode.sh uses 'node -e' for JSON merge in bash — avoids jq dependency, keeps installer self-contained
+- [Phase 05-installer]: CLI test file (cli.test.ts) added as smoke tests — Vitest exits code 1 with no test files, breaking pnpm test
+- [Phase 05-installer]: EmbeddingProvider interface requires 'name' and 'model' readonly string fields — test mocks must include these
 
 ### Pending Todos
 
@@ -106,6 +114,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-01T13:20:00.000Z
-Stopped at: Completed Phase 4 (04-mcp-server): retrieval SearchEngine + mcp-server with 3 tools + stdio binary — 16/16 tests passing, typecheck clean
+Last session: 2026-04-01T17:00:00.000Z
+Stopped at: Completed Phase 5 (05-installer): one-shot installer, CLI (index/search/status), OpenCode MCP config — all 15 packages build+typecheck+test clean
 Resume file: None

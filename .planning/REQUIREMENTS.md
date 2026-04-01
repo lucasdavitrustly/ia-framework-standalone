@@ -9,17 +9,17 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Installation
 
-- [ ] **INST-01**: Developer can clone the framework repo anywhere and run `./install.sh` to start setup
-- [ ] **INST-02**: Installer detects missing prerequisite tools (Docker, OpenCode, Node.js, Ollama) and installs them automatically
-- [ ] **INST-03**: Installer skips tools that are already installed on the developer's machine
-- [ ] **INST-04**: Installer asks the developer for the target project path and configures the framework to point at it
+- [x] **INST-01**: Developer can clone the framework repo anywhere and run `./install.sh` to start setup
+- [x] **INST-02**: Installer detects missing prerequisite tools (Docker, OpenCode, Node.js, Ollama) and installs them automatically
+- [x] **INST-03**: Installer skips tools that are already installed on the developer's machine
+- [x] **INST-04**: Installer asks the developer for the target project path and configures the framework to point at it
 - [x] **INST-05**: Installer auto-detects target project's language, framework, package manager, test runner, build/dev commands, and project structure
 - [x] **INST-06**: Developer can confirm, correct, or extend the detected project profile
 - [x] **INST-07**: Installer writes framework config to `.ia-framework/project.json` (stored in the framework, not the target project)
-- [ ] **INST-08**: Installer spins up Qdrant Docker container with named volumes and correct ulimit settings
-- [ ] **INST-09**: Installer triggers initial codebase indexing after setup completes
-- [ ] **INST-10**: Installer configures OpenCode MCP server integration automatically
-- [ ] **INST-11**: If framework is already installed, developer can run individual components (dashboard, re-indexing, benchmarks) without re-running full installer
+- [x] **INST-08**: Installer spins up Qdrant Docker container with named volumes and correct ulimit settings
+- [x] **INST-09**: Installer triggers initial codebase indexing after setup completes
+- [x] **INST-10**: Installer configures OpenCode MCP server integration automatically
+- [x] **INST-11**: If framework is already installed, developer can run individual components (dashboard, re-indexing, benchmarks) without re-running full installer
 
 ### Architecture
 
@@ -29,23 +29,23 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Indexing
 
-- [ ] **INDX-01**: Framework indexes codebase into Qdrant vector storage
-- [ ] **INDX-02**: Indexing uses AST-aware chunking via tree-sitter (function/class/interface boundaries)
-- [ ] **INDX-03**: Indexing supports provider-agnostic local embeddings (Ollama, local models)
-- [ ] **INDX-04**: Indexing uses dual-vector storage (text embedding + code embedding per point)
+- [x] **INDX-01**: Framework indexes codebase into Qdrant vector storage
+- [x] **INDX-02**: Indexing uses AST-aware chunking via tree-sitter (function/class/interface boundaries)
+- [x] **INDX-03**: Indexing supports provider-agnostic local embeddings (Ollama, local models)
+- [x] **INDX-04**: Indexing uses dual-vector storage (text embedding + code embedding per point)
 - [ ] **INDX-05**: Indexing builds a dependency graph (imports, type references, function calls) during parsing
-- [ ] **INDX-06**: Incremental re-indexing detects changed files via git diff and only re-indexes those
-- [ ] **INDX-07**: Indexing respects .gitignore and skips irrelevant files (node_modules, build output, etc.)
-- [ ] **INDX-08**: All indexing runs fully locally — no codebase data is sent to external services
+- [x] **INDX-06**: Incremental re-indexing detects changed files via git diff and only re-indexes those
+- [x] **INDX-07**: Indexing respects .gitignore and skips irrelevant files (node_modules, build output, etc.)
+- [x] **INDX-08**: All indexing runs fully locally — no codebase data is sent to external services
 
 ### Retrieval
 
-- [ ] **RETR-01**: Developer can query indexed codebase via semantic search and get relevant code results
-- [ ] **RETR-02**: MCP server exposes RAG tools (search_codebase, get_file, get_dependencies) for OpenCode
+- [x] **RETR-01**: Developer can query indexed codebase via semantic search and get relevant code results
+- [x] **RETR-02**: MCP server exposes RAG tools (search_codebase, get_file, get_dependencies) for OpenCode
 - [ ] **RETR-03**: Retrieval expands results 1-2 hops along the dependency graph to include types, interfaces, and utilities
 - [ ] **RETR-04**: Auto-context mode prepends relevant codebase context to prompts automatically
 - [ ] **RETR-05**: Developer can configure retrieval mode: MCP-only, auto-context, or both
-- [ ] **RETR-06**: All retrieval runs fully locally — queries and results never leave the developer's machine
+- [x] **RETR-06**: All retrieval runs fully locally — queries and results never leave the developer's machine
 
 ### Observability
 

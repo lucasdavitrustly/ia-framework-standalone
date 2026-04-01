@@ -14,9 +14,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation & Infrastructure** - Monorepo scaffolding, shared types, config system, Docker + Qdrant infrastructure (completed 2026-04-01)
 - [x] **Phase 2: Project Detection & Configuration** - Auto-detect target project's tech stack and produce confirmed profile (completed 2026-04-01)
-- [ ] **Phase 3: Indexing Pipeline** - AST-aware codebase parsing, dual-vector embedding, Qdrant storage
-- [ ] **Phase 4: Retrieval & MCP Server** - Semantic search engine and MCP tools for OpenCode integration
-- [ ] **Phase 5: Installation & CLI** - One-shot installer and CLI commands for frictionless setup
+- [x] **Phase 3: Indexing Pipeline** - AST-aware codebase parsing, dual-vector embedding, Qdrant storage (completed 2026-04-01)
+- [x] **Phase 4: Retrieval & MCP Server** - Semantic search engine and MCP tools for OpenCode integration (completed 2026-04-01)
+- [x] **Phase 5: Installation & CLI** - One-shot installer and CLI commands for frictionless setup (completed 2026-04-01)
 - [ ] **Phase 6: Observability & Metrics** - Token tracking, RAG interaction logging, SQLite metrics storage
 - [ ] **Phase 7: Benchmarking System** - End-to-end RAG quality measurement with comparison and history
 - [ ] **Phase 8: Monitoring Dashboard** - Browser-based visibility into system health, usage, and benchmarks
@@ -69,10 +69,10 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
-- [ ] 03-04: TBD
+- [x] 03-01: AST Parser package (web-tree-sitter, TypeScript/Python grammars, chunk extraction)
+- [x] 03-02: Embedding package (provider interface, Ollama + OpenAI adapters)
+- [x] 03-03: Vector store package (QdrantVectorStore with dual named vectors)
+- [x] 03-04: Indexing pipeline (FileWalker, incremental indexing via git diff)
 
 ### Phase 4: Retrieval & MCP Server
 **Goal**: Developer can search the indexed codebase from OpenCode and get relevant code context
@@ -86,9 +86,9 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
-- [ ] 04-03: TBD
+- [x] 04-01: SearchEngine (semantic search, dual-vector merge, score filtering)
+- [x] 04-02: MCP Server (@ia-framework/mcp-server with search_codebase, get_file, get_dependencies tools)
+- [x] 04-03: Integration verification (all packages build + typecheck + test clean)
 
 ### Phase 5: Installation & CLI
 **Goal**: Developer can go from git clone to a fully working RAG pipeline in one command
@@ -103,9 +103,9 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
-- [ ] 05-03: TBD
+- [x] 05-01: Shell installer (install.sh, prerequisite detection, service startup, config init)
+- [x] 05-02: CLI package (@ia-framework/cli with index, search, status commands)
+- [x] 05-03: Integration & OpenCode config (configure-opencode.sh, MCP wiring, smoke tests)
 
 ### Phase 6: Observability & Metrics
 **Goal**: Every RAG interaction is tracked with token counts for cost visibility and optimization decisions
@@ -196,9 +196,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Foundation & Infrastructure | 3/3 | Complete   | 2026-04-01 |
 | 2. Project Detection & Configuration | 2/2 | Complete   | 2026-04-01 |
-| 3. Indexing Pipeline | 0/4 | Not started | - |
-| 4. Retrieval & MCP Server | 0/3 | Not started | - |
-| 5. Installation & CLI | 0/3 | Not started | - |
+| 3. Indexing Pipeline | 4/4 | Complete | 2026-04-01 |
+| 4. Retrieval & MCP Server | 3/3 | Complete | 2026-04-01 |
+| 5. Installation & CLI | 3/3 | Complete | 2026-04-01 |
 | 6. Observability & Metrics | 0/2 | Not started | - |
 | 7. Benchmarking System | 0/3 | Not started | - |
 | 8. Monitoring Dashboard | 0/3 | Not started | - |
