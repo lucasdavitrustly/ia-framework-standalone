@@ -141,6 +141,93 @@ describe('MetricsStore', () => {
     });
   });
 
+  describe('getEventsByDay()', () => {
+    it('returns empty array when no events', () => {
+      store = new MetricsStore(':memory:');
+      expect(store.getEventsByDay()).toEqual([]);
+    });
+
+    it('groups token counts by day', () => {
+      store = new MetricsStore(':memory:');
+      store.logEvent(makeEvent({ tokenCount: 100, timestamp: '2026-04-01T10:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 200, timestamp: '2026-04-01T18:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 50,  timestamp: '2026-04-02T09:00:00Z' }));
+
+      const days = store.getEventsByDay();
+      expect(days).toHaveLength(2);
+
+      const day1 = days.find(d => d.date === '2026-04-01');
+      expect(day1).toBeDefined();
+      expect(day1!.totalTokens).toBe(300);
+      expect(day1!.totalQueries).toBe(2);
+
+      const day2 = days.find(d => d.date === '2026-04-02');
+      expect(day2).toBeDefined();
+      expect(day2!.totalTokens).toBe(50);
+      expect(day2!.totalQueries).toBe(1);
+    });
+  });
+
+  describe('listEvents()', () => {
+    it('returns empty page when no events', () => {
+      store = new MetricsStore(':memory:');
+      const page = store.listEvents(10, 0);
+      expect(page.events).toEqual([]);
+      expect(page.total).toBe(0);
+    });
+
+    it('returns paginated events ordered by timestamp DESC', () => {
+      store = new MetricsStore(':memory:');
+      store.logEvent(makeEvent({ tokenCount: 100, timestamp: '2026-04-01T08:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 200, timestamp: '2026-04-01T10:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 300, timestamp: '2026-04-01T12:00:00Z' }));
+
+      const page = store.listEvents(2, 0);
+      expect(page.total).toBe(3);
+      expect(page.events).toHaveLength(2);
+      // Newest first
+      expect(page.events[0]!.tokenCount).toBe(300);
+      expect(page.events[1]!.tokenCount).toBe(200);
+    });
+
+    it('respects offset for pagination', () => {
+      store = new MetricsStore(':memory:');
+      store.logEvent(makeEvent({ tokenCount: 100, timestamp: '2026-04-01T08:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 200, timestamp: '2026-04-01T10:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 300, timestamp: '2026-04-01T12:00:00Z' }));
+
+      const page = store.listEvents(2, 2);
+      expect(page.total).toBe(3);
+      expect(page.events).toHaveLength(1);
+      expect(page.events[0]!.tokenCount).toBe(100);
+    });
+
+    it('round-trips event fields correctly', () => {
+      store = new MetricsStore(':memory:');
+      const original = makeEvent({
+        sessionId: 'sess-xyz',
+        query: 'find user auth',
+        chunksRetrieved: 5,
+        chunkIds: ['a', 'b', 'c'],
+        tokenCount: 123,
+        strategy: 'auto-context',
+        latencyMs: 77,
+      });
+      store.logEvent(original);
+
+      const page = store.listEvents(10, 0);
+      expect(page.events).toHaveLength(1);
+      const evt = page.events[0]!;
+      expect(evt.sessionId).toBe('sess-xyz');
+      expect(evt.query).toBe('find user auth');
+      expect(evt.chunksRetrieved).toBe(5);
+      expect(evt.chunkIds).toEqual(['a', 'b', 'c']);
+      expect(evt.tokenCount).toBe(123);
+      expect(evt.strategy).toBe('auto-context');
+      expect(evt.latencyMs).toBe(77);
+    });
+  });
+
   describe('close()', () => {
     it('closes the database without error', () => {
       store = new MetricsStore(':memory:');

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { RagEvent, SessionStats, StrategyStats, TotalStats } from './types.js';
+import type { RagEvent, SessionStats, StrategyStats, TotalStats, DailyTokenUsage, EventsPage } from './types.js';
 
 /**
  * SQLite-backed store for RAG interaction events.
@@ -152,5 +152,64 @@ export class MetricsStore {
   /** Close the database connection */
   close(): void {
     this.db.close();
+  }
+
+  /** Get daily token usage grouped by date (for dashboard charts) */
+  getEventsByDay(): DailyTokenUsage[] {
+    const rows = this.db
+      .prepare(`
+        SELECT
+          DATE(timestamp) AS date,
+          SUM(token_count) AS totalTokens,
+          COUNT(*) AS totalQueries
+        FROM rag_events
+        GROUP BY DATE(timestamp)
+        ORDER BY date ASC
+      `)
+      .all() as Array<{ date: string; totalTokens: number; totalQueries: number }>;
+
+    return rows.map((r) => ({
+      date: r.date,
+      totalTokens: r.totalTokens,
+      totalQueries: r.totalQueries,
+    }));
+  }
+
+  /** List paginated RAG events ordered by timestamp DESC */
+  listEvents(limit: number, offset: number): EventsPage {
+    const events = this.db
+      .prepare(`
+        SELECT * FROM rag_events ORDER BY timestamp DESC LIMIT ? OFFSET ?
+      `)
+      .all(limit, offset) as Array<{
+      id: string;
+      session_id: string;
+      query: string;
+      chunks_retrieved: number;
+      chunk_ids: string;
+      token_count: number;
+      strategy: string;
+      timestamp: string;
+      latency_ms: number;
+    }>;
+
+    const { total } = this.db
+      .prepare('SELECT COUNT(*) AS total FROM rag_events')
+      .get() as { total: number };
+
+    return {
+      events: events.map((r) => ({
+        id: r.id,
+        sessionId: r.session_id,
+        query: r.query,
+        chunksRetrieved: r.chunks_retrieved,
+        chunkIds: JSON.parse(r.chunk_ids) as string[],
+        tokenCount: r.token_count,
+        strategy: r.strategy as RagEvent['strategy'],
+        timestamp: r.timestamp,
+        latencyMs: r.latency_ms,
+      })),
+      total,
+    };
   }
 }

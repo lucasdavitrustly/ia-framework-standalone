@@ -56,3 +56,21 @@ export interface TotalStats {
   totalSessions: number;
   avgTokensPerQuery: number;
 }
+
+/**
+ * Daily token usage aggregation for dashboard charts.
+ */
+export interface DailyTokenUsage {
+  /** Date in YYYY-MM-DD format */
+  date: string;
+  totalTokens: number;
+  totalQueries: number;
+}
+
+/**
+ * Paginated list of RAG events.
+ */
+export interface EventsPage {
+  events: RagEvent[];
+  total: number;
+}

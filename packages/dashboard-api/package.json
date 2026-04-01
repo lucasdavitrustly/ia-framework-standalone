@@ -1,0 +1,41 @@
+{
+  "name": "@ia-framework/dashboard-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.12",
+    "@ia-framework/benchmark": "workspace:*",
+    "@ia-framework/core": "workspace:*",
+    "@ia-framework/embedding": "workspace:*",
+    "@ia-framework/indexer": "workspace:*",
+    "@ia-framework/observability": "workspace:*",
+    "@ia-framework/vector-store": "workspace:*",
+    "chokidar": "^4.0.0",
+    "hono": "^4.12.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "vitest": "^4.1.2",
+    "typescript": "^5.9.0"
+  }
+}
