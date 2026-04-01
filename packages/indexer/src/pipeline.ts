@@ -2,6 +2,7 @@ import { parseFile } from '@ia-framework/ast-parser';
 import type { EmbeddingProvider } from '@ia-framework/embedding';
 import type { VectorStore, VectorPoint, ChunkPayload } from '@ia-framework/vector-store';
 import type { CodeChunk } from '@ia-framework/ast-parser';
+import type { ContextSource } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
 import { walkFiles } from './file-walker.js';
 import {
@@ -34,6 +35,8 @@ export interface IndexingConfig {
   embeddingBatchSize?: number | undefined;
   /** Use incremental indexing based on git diff (default: false) */
   incremental?: boolean | undefined;
+  /** Optional additional context sources (DB schema, docs, etc.) */
+  contextSources?: ContextSource[] | undefined;
 }
 
 export interface IndexingProgress {
@@ -63,6 +66,7 @@ export class IndexingPipeline {
       maxChunkLines = 200,
       embeddingBatchSize = 50,
       incremental = false,
+      contextSources,
     } = config;
 
     // Initialize vector store collection
@@ -171,6 +175,55 @@ export class IndexingPipeline {
       }
       progress.chunksIndexed += batch.length;
       onProgress?.({ ...progress });
+    }
+
+    // Process additional context sources
+    if (contextSources && contextSources.length > 0) {
+      for (const source of contextSources) {
+        logger.info({ source: source.name }, 'Processing context source');
+        try {
+          const sourceChunks = await source.getChunks();
+          logger.info({ source: source.name, count: sourceChunks.length }, 'Got chunks from context source');
+
+          progress.chunksTotal += sourceChunks.length;
+
+          // Embed source chunks in batches using same pipeline
+          for (let i = 0; i < sourceChunks.length; i += embeddingBatchSize) {
+            const batch = sourceChunks.slice(i, i + embeddingBatchSize);
+            const texts = batch.map((c) => c.content);
+            const vectors = await embeddingProvider.embedBatch(texts);
+
+            for (let j = 0; j < batch.length; j++) {
+              const chunk = batch[j]!;
+              const vector = vectors[j]!;
+              const payload: ChunkPayload = {
+                chunkId: chunk.id,
+                filePath: chunk.filePath,
+                relativePath: chunk.relativePath,
+                language: chunk.language,
+                chunkType: chunk.chunkType,
+                name: chunk.name,
+                content: chunk.content,
+                startLine: chunk.startLine,
+                endLine: chunk.endLine,
+                imports: chunk.imports,
+                exports: chunk.exports,
+                indexedAt: chunk.indexedAt,
+              };
+              vectorPoints.push({
+                id: chunk.id,
+                textVector: vector,
+                codeVector: vector,
+                payload,
+              });
+            }
+            progress.chunksIndexed += batch.length;
+            onProgress?.({ ...progress });
+          }
+        } catch (err) {
+          logger.error({ source: source.name, err }, 'Context source failed — skipping');
+        }
+      }
     }
 
     // Store in Qdrant in batches

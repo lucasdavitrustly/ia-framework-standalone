@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import type { ChunkMetadata } from '@ia-framework/core';
 
 // ── Hoist mock variables so they are available in vi.mock factories ──────────
 const { mockParseFile } = vi.hoisted(() => ({ mockParseFile: vi.fn() }));
@@ -201,6 +202,128 @@ describe('IndexingPipeline', () => {
     expect(hasTsFile).toBe(true);
     expect(hasJsonFile).toBe(false);
     expect(hasMdFile).toBe(false);
+  });
+});
+
+// ── Helper factory for contextSources tests ──────────────────────────────────
+function makeContextSource(name: string, chunks: ChunkMetadata[]) {
+  return { name, getChunks: vi.fn().mockResolvedValue(chunks) };
+}
+
+function makeTableChunk(tableName: string): ChunkMetadata {
+  return {
+    id: `db-${tableName}`,
+    filePath: '__db__',
+    relativePath: tableName,
+    language: 'sql',
+    chunkType: 'table',
+    name: tableName,
+    content: `Table: ${tableName}\nColumns:\n  id: integer`,
+    startLine: 0,
+    endLine: 0,
+    imports: [],
+    exports: [],
+    indexedAt: new Date().toISOString(),
+  };
+}
+
+describe('IndexingPipeline — contextSources', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `indexer-ctx-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'foo.ts'), 'export function foo() {}');
+
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    // No file chunks from parser — we focus on contextSources
+    mockParseFile.mockResolvedValue([]);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  // Test 1: Embeds and upserts chunks from a single ContextSource when provided
+  it('embeds and upserts chunks from a single ContextSource when provided', async () => {
+    const tableChunk = makeTableChunk('users');
+    const source = makeContextSource('postgres', [tableChunk]);
+
+    const result = await pipeline.run(makeConfig({ contextSources: [source] }));
+
+    expect(source.getChunks).toHaveBeenCalledOnce();
+    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith([tableChunk.content]);
+    expect(vectorStore.upsertBatch).toHaveBeenCalled();
+    expect(result.chunksIndexed).toBe(1);
+  });
+
+  // Test 2: Handles multiple ContextSources sequentially
+  it('handles multiple ContextSources sequentially', async () => {
+    const source1 = makeContextSource('postgres', [makeTableChunk('users'), makeTableChunk('orders')]);
+    const source2 = makeContextSource('docs', [makeTableChunk('products')]);
+
+    const result = await pipeline.run(makeConfig({ contextSources: [source1, source2] }));
+
+    expect(source1.getChunks).toHaveBeenCalledOnce();
+    expect(source2.getChunks).toHaveBeenCalledOnce();
+    expect(result.chunksIndexed).toBe(3);
+  });
+
+  // Test 3: Skips a ContextSource that throws (logs error, continues with next)
+  it('skips a ContextSource that throws and continues with next', async () => {
+    const failingSource = { name: 'broken', getChunks: vi.fn().mockRejectedValue(new Error('connection failed')) };
+    const workingSource = makeContextSource('postgres', [makeTableChunk('users')]);
+
+    const result = await pipeline.run(makeConfig({ contextSources: [failingSource, workingSource] }));
+
+    expect(result.chunksIndexed).toBe(1); // only from workingSource
+  });
+
+  // Test 4: Returns correct chunksIndexed count including context source chunks
+  it('returns correct chunksIndexed count including context source chunks', async () => {
+    mockParseFile.mockResolvedValue([{
+      id: 'file-chunk-1',
+      filePath: join(tmpDir, 'foo.ts'),
+      relativePath: 'foo.ts',
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'foo',
+      content: 'function foo() {}',
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: ['foo'],
+    }]);
+
+    const source = makeContextSource('postgres', [makeTableChunk('users'), makeTableChunk('orders')]);
+    const result = await pipeline.run(makeConfig({ contextSources: [source] }));
+
+    // 1 file chunk + 2 DB chunks = 3 total
+    expect(result.chunksIndexed).toBe(3);
+  });
+
+  // Test 5: Does not call getChunks when contextSources is undefined
+  it('does not call getChunks when contextSources is undefined (baseline)', async () => {
+    const source = makeContextSource('postgres', [makeTableChunk('users')]);
+
+    await pipeline.run(makeConfig()); // no contextSources
+
+    expect(source.getChunks).not.toHaveBeenCalled();
   });
 });
 
