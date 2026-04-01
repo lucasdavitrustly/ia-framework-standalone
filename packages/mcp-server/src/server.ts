@@ -3,11 +3,16 @@ import { registerSearchCodebaseTool } from './tools/search-codebase.js';
 import { registerGetFileTool } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
 import type { SearchEngine } from '@ia-framework/retrieval';
+import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 
 export interface McpServerConfig {
   searchEngine: SearchEngine;
   serverName?: string | undefined;
   serverVersion?: string | undefined;
+  /** Optional observability — if provided, every search_codebase call is logged */
+  metricsStore?: MetricsStore | undefined;
+  tokenCounter?: TokenCounter | undefined;
+  sessionId?: string | undefined;
 }
 
 /**
@@ -20,7 +25,11 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     version: config.serverVersion ?? '0.0.1',
   });
 
-  registerSearchCodebaseTool(server, config.searchEngine);
+  registerSearchCodebaseTool(server, config.searchEngine, {
+    metricsStore: config.metricsStore,
+    tokenCounter: config.tokenCounter,
+    sessionId: config.sessionId,
+  });
   registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);
 

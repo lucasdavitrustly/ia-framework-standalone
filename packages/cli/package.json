@@ -27,6 +27,7 @@
     "@ia-framework/core": "workspace:*",
     "@ia-framework/embedding": "workspace:*",
     "@ia-framework/indexer": "workspace:*",
+    "@ia-framework/observability": "workspace:*",
     "@ia-framework/retrieval": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
     "commander": "^13.0.0"

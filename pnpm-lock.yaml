@@ -72,6 +72,9 @@ importers:
       '@ia-framework/indexer':
         specifier: workspace:*
         version: link:../indexer
+      '@ia-framework/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@ia-framework/retrieval':
         specifier: workspace:*
         version: link:../retrieval
@@ -178,6 +181,9 @@ importers:
       '@ia-framework/embedding':
         specifier: workspace:*
         version: link:../embedding
+      '@ia-framework/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@ia-framework/retrieval':
         specifier: workspace:*
         version: link:../retrieval

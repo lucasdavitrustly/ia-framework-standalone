@@ -1,10 +1,11 @@
 import { Command } from 'commander';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { SearchEngine } from '@ia-framework/retrieval';
 import type { RetrievalResult } from '@ia-framework/retrieval';
+import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 
 export function searchCommand(): Command {
   return new Command('search')
@@ -37,11 +38,36 @@ export function searchCommand(): Command {
 
         console.log(`Searching for: "${query}"\n`);
 
+        const startTime = Date.now();
         const results = await searchEngine.search({
           text: query,
           limit: isNaN(limit) ? 10 : limit,
           scoreThreshold: isNaN(scoreThreshold) ? 0.5 : scoreThreshold,
         });
+        const latencyMs = Date.now() - startTime;
+
+        // Log RAG event — graceful degradation on failure
+        try {
+          const metricsDbPath = join(dirname(configPath), 'metrics.sqlite');
+          const metricsStore = new MetricsStore(metricsDbPath);
+          const tokenCounter = new TokenCounter();
+          const sessionId = generateSessionId();
+
+          metricsStore.logEvent({
+            id: crypto.randomUUID(),
+            sessionId,
+            query,
+            chunksRetrieved: results.length,
+            chunkIds: results.map((r) => r.chunkId),
+            tokenCount: tokenCounter.countRagEvent(query, results.map((r) => r.content)),
+            strategy: 'mcp',
+            timestamp: new Date().toISOString(),
+            latencyMs,
+          });
+          metricsStore.close();
+        } catch {
+          // Observability failure must never break search output
+        }
 
         if (results.length === 0) {
           console.log('No results found.');

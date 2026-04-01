@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * MCP server binary — wires config, SearchEngine, and StdioTransport.
+ * MCP server binary — wires config, SearchEngine, MetricsStore, and StdioTransport.
  * Run via: node dist/bin.js
  * OpenCode configures this as an MCP server in its config.
  *
  * Config is loaded from .ia-framework/project.json relative to cwd,
  * or from the IA_FRAMEWORK_CONFIG environment variable if set.
  */
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { SearchEngine } from '@ia-framework/retrieval';
+import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 import { createMcpServer } from './server.js';
 
 const logger = createLogger('mcp-server');
@@ -34,7 +35,16 @@ async function main(): Promise<void> {
   });
 
   const searchEngine = new SearchEngine({ embeddingProvider, vectorStore });
-  const server = createMcpServer({ searchEngine });
+
+  // Set up observability — metrics stored in .ia-framework/metrics.sqlite
+  const metricsDbPath = join(dirname(configPath), 'metrics.sqlite');
+  const metricsStore = new MetricsStore(metricsDbPath);
+  const tokenCounter = new TokenCounter();
+  const sessionId = generateSessionId();
+
+  logger.info({ metricsDbPath, sessionId }, 'Observability initialized');
+
+  const server = createMcpServer({ searchEngine, metricsStore, tokenCounter, sessionId });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
