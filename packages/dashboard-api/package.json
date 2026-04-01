@@ -24,6 +24,7 @@
     "@hono/node-server": "^1.19.12",
     "@ia-framework/benchmark": "workspace:*",
     "@ia-framework/core": "workspace:*",
+    "@ia-framework/db-context": "workspace:*",
     "@ia-framework/embedding": "workspace:*",
     "@ia-framework/indexer": "workspace:*",
     "@ia-framework/observability": "workspace:*",

@@ -9,6 +9,7 @@ import { configRouter } from './routes/config.js';
 import { metricsRouter } from './routes/metrics.js';
 import { benchmarksRouter } from './routes/benchmarks.js';
 import { indexingRouter } from './routes/indexing.js';
+import { dbRouter } from './routes/db.js';
 
 export interface MetricsStoreDep {
   getTotalStats(): TotalStats;
@@ -61,6 +62,7 @@ export function createApp(deps: AppDependencies): Hono {
   app.route('/api/metrics', metricsApp);
   app.route('/api/benchmarks', benchmarksApp);
   app.route('/api/indexing', indexingApp);
+  app.route('/api/db', dbRouter({ frameworkDir: deps.frameworkDir }));
 
   return app;
 }
