@@ -166,11 +166,11 @@ Plans:
   1. Developer provides database connection details and the framework connects and validates the connection
   2. Database schema (tables, columns, types, relationships) is indexed as searchable context alongside code
   3. Framework can execute read-write queries against the connected database for AI to understand data patterns
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
+- [ ] 09-01-PLAN.md — db-context package (ContextSource interface in core, PostgresSource, DatabaseConfig Zod schema, db.json loader, IndexingPipeline contextSources extension — full TDD)
+- [ ] 09-02-PLAN.md — MCP tools (query_database + index_database_schema) + CLI db subcommand (configure/connect/index/status) + dashboard /api/db/status + Overview DB status card
 
 ### Phase 10: Advanced Retrieval & Workflow Integration
 **Goal**: RAG results are enhanced with dependency context and automatically injected into developer workflows
