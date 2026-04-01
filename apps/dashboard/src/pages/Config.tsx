@@ -26,7 +26,18 @@ export default function Config() {
   }, []);
 
   if (loading) return <div className="p-8 text-gray-500 text-sm">Loading config…</div>;
-  if (error) return <div className="p-8 text-red-400 text-sm">Failed to load config: {error}</div>;
+  if (error) return (
+    <div className="p-8 max-w-2xl">
+      <h2 className="text-xl font-semibold text-gray-100 mb-6">Project Config</h2>
+      <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 text-center">
+        <p className="text-gray-400 text-sm mb-2">No project configured yet</p>
+        <p className="text-gray-600 text-xs">
+          Run <code className="bg-gray-800 px-1 rounded">./install.sh</code> in your target project to generate{' '}
+          <code className="bg-gray-800 px-1 rounded">project.json</code>
+        </p>
+      </div>
+    </div>
+  );
   if (!config) return null;
 
   const profile = config.profile;

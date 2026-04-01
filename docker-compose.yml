@@ -15,12 +15,38 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: packages/dashboard-api/Dockerfile
+    image: ia-framework-dashboard:latest
+    container_name: ia-framework-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    volumes:
+      # Bind-mount the ia-framework .ia-framework/ directory into the container.
+      # IA_FRAMEWORK_DIR must be set in the shell environment or .env file.
+      # Example: IA_FRAMEWORK_DIR=/path/to/ia-framework/.ia-framework
+      - "${IA_FRAMEWORK_DIR}:/ia-framework-data"
+    environment:
+      DASHBOARD_PORT: "3000"
+      IA_FRAMEWORK_DIR: "/ia-framework-data"
+      QDRANT_HOST: "qdrant"
+      QDRANT_PORT: "6333"
+      # NOTE: If project.json sets vectorStore.host=localhost, the dashboard container
+      # cannot reach Qdrant at localhost (different container). Update project.json to
+      # set vectorStore.host=qdrant (Docker service name) to enable the re-index trigger.
+    depends_on:
+      - qdrant
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:6333/readyz || exit 1"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/status').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 10s
+      retries: 3
+      start_period: 15s
 
 volumes:
   qdrant_data:

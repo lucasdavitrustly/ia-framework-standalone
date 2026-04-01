@@ -17,11 +17,34 @@ export class ConfigWatcher extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    // Initial load
-    this.config = await loadConfig(this.configPath);
+    // Initial load — tolerate missing config (dashboard runs in "unconfigured" mode)
+    try {
+      this.config = await loadConfig(this.configPath);
+    } catch (err: unknown) {
+      const isNotFound =
+        err instanceof Error && err.constructor.name === 'ConfigNotFoundError';
+      if (isNotFound) {
+        logger.warn(
+          { path: this.configPath },
+          'project.json not found — dashboard running in unconfigured mode',
+        );
+        this.config = null;
+      } else {
+        throw err;
+      }
+    }
 
-    // Watch for changes
-    this.watcher = watch(this.configPath, WATCH_OPTIONS);
+    // Watch for changes (and for the file to be created)
+    this.watcher = watch(this.configPath, { ...WATCH_OPTIONS, ignoreInitial: true });
+    this.watcher.on('add', async () => {
+      try {
+        this.config = await loadConfig(this.configPath);
+        this.emit('updated', this.config);
+        logger.info({ path: this.configPath }, 'project.json created — config loaded');
+      } catch (err) {
+        logger.warn({ err }, 'Failed to load config on add');
+      }
+    });
     this.watcher.on('change', async () => {
       try {
         this.config = await loadConfig(this.configPath);

@@ -26,20 +26,22 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const configWatcher = new ConfigWatcher(configPath);
   await configWatcher.start();
 
-  const config = configWatcher.getConfig()!;
+  const config = configWatcher.getConfig();
 
   // Initialize stores
   const metricsStore = new MetricsStore(join(frameworkDir, 'metrics.sqlite'));
   const benchmarkStore = new BenchmarkStore(join(frameworkDir, 'benchmarks.sqlite'));
   const indexingState = new IndexingStateManager();
 
-  // Initialize embedding provider and vector store
-  const embeddingProvider = createEmbeddingProvider(config.embedding);
-  const vectorStore = new QdrantVectorStore({
-    host: config.vectorStore.host,
-    port: config.vectorStore.port,
-    collectionName: config.vectorStore.collectionName,
-  });
+  // Initialize embedding provider and vector store only when config is available
+  const embeddingProvider = config ? createEmbeddingProvider(config.embedding) : null;
+  const vectorStore = config
+    ? new QdrantVectorStore({
+        host: config.vectorStore.host,
+        port: config.vectorStore.port,
+        collectionName: config.vectorStore.collectionName,
+      })
+    : null;
 
   const indexingPipeline = new IndexingPipeline();
 
@@ -48,12 +50,24 @@ export async function startServer(options: ServerOptions): Promise<void> {
     onProgress: (progress: import('@ia-framework/indexer').IndexingProgress) => void,
   ): Promise<{ filesIndexed: number; chunksIndexed: number }> => {
     const currentConfig = configWatcher.getConfig() ?? config;
+    if (!currentConfig) {
+      throw new Error('No project.json config found — cannot trigger indexing');
+    }
+    const currentEmbeddingProvider =
+      embeddingProvider ?? createEmbeddingProvider(currentConfig.embedding);
+    const currentVectorStore =
+      vectorStore ??
+      new QdrantVectorStore({
+        host: currentConfig.vectorStore.host,
+        port: currentConfig.vectorStore.port,
+        collectionName: currentConfig.vectorStore.collectionName,
+      });
     const indexingConfig: IndexingConfig = {
       targetProjectPath: currentConfig.targetProjectPath,
       frameworkDir,
       collectionName: currentConfig.vectorStore.collectionName,
-      embeddingProvider,
-      vectorStore,
+      embeddingProvider: currentEmbeddingProvider,
+      vectorStore: currentVectorStore,
       includePatterns: currentConfig.indexing?.includePatterns,
       excludePatterns: currentConfig.indexing?.excludePatterns,
       incremental: false,
@@ -69,8 +83,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
     indexingState,
     triggerIndexing,
     frameworkDir,
-    qdrantHost: config.vectorStore.host,
-    qdrantPort: config.vectorStore.port,
+    qdrantHost: config?.vectorStore.host ?? process.env['QDRANT_HOST'] ?? 'localhost',
+    qdrantPort: config?.vectorStore.port ?? parseInt(process.env['QDRANT_PORT'] ?? '6333', 10),
   });
 
   // Serve static files for React build
