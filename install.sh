@@ -135,13 +135,53 @@ echo -e "${BOLD}Step 4: Configure${NC}"
 init_config "${SCRIPT_DIR}"
 echo ""
 
+# Derive IA_FRAMEWORK_DIR and write .env for docker-compose
+IA_FRAMEWORK_DIR="${SCRIPT_DIR}/.ia-framework"
+export IA_FRAMEWORK_DIR
+{
+  echo "IA_FRAMEWORK_DIR=${IA_FRAMEWORK_DIR}"
+  echo "DASHBOARD_PORT=${DASHBOARD_PORT:-3000}"
+  echo "QDRANT_HTTP_PORT=${QDRANT_HTTP_PORT:-6333}"
+  echo "QDRANT_GRPC_PORT=${QDRANT_GRPC_PORT:-6334}"
+} > "${SCRIPT_DIR}/.env"
+echo -e "  ${GREEN}✓${NC} Environment written to ${SCRIPT_DIR}/.env"
+echo ""
+
 # ──────────────────────────────────────────────────────
-# Step 5: Start services (Qdrant)
+# Step 5: Start services (Qdrant + Dashboard)
 # ──────────────────────────────────────────────────────
 echo -e "${BOLD}Step 5: Start services${NC}"
 if ! start_qdrant "${SCRIPT_DIR}"; then
   echo -e "  ${RED}✗${NC} Failed to start Qdrant. Check Docker is running."
   exit 1
+fi
+
+# Start the monitoring dashboard
+echo -e "  ${YELLOW}→${NC} Starting monitoring dashboard..."
+if command -v "docker" &>/dev/null && docker compose version &>/dev/null 2>&1; then
+  docker compose -f "${SCRIPT_DIR}/docker-compose.yml" up -d --build dashboard 2>&1 | tail -3
+elif command -v docker-compose &>/dev/null; then
+  docker-compose -f "${SCRIPT_DIR}/docker-compose.yml" up -d --build dashboard 2>&1 | tail -3
+else
+  echo -e "  ${YELLOW}⚠${NC} docker compose not found — dashboard start skipped"
+fi
+
+# Wait up to 60s for dashboard to respond
+echo -n "  Waiting for dashboard"
+_dash_retries=0
+until curl -sf "http://localhost:${DASHBOARD_PORT:-3000}/api/status" > /dev/null 2>&1; do
+  if [ $_dash_retries -ge 30 ]; then
+    echo ""
+    echo -e "  ${YELLOW}⚠${NC} Dashboard did not start within 60s — check: docker compose logs dashboard"
+    break
+  fi
+  sleep 2
+  _dash_retries=$((_dash_retries + 1))
+  printf "."
+done
+if curl -sf "http://localhost:${DASHBOARD_PORT:-3000}/api/status" > /dev/null 2>&1; then
+  echo ""
+  echo -e "  ${GREEN}✓${NC} Dashboard running at http://localhost:${DASHBOARD_PORT:-3000}"
 fi
 echo ""
 
@@ -193,6 +233,6 @@ echo "  node packages/cli/dist/bin.js search   — Search your codebase"
 echo "  node packages/cli/dist/bin.js status   — Check indexing status"
 echo ""
 echo "OpenCode MCP: Restart OpenCode to load the ia-framework tools"
-echo "Dashboard:    Coming in Phase 8"
+echo "Dashboard:    http://localhost:${DASHBOARD_PORT:-3000}"
 echo ""
 echo -e "Config: ${BLUE}${SCRIPT_DIR}/.ia-framework/project.json${NC}"
