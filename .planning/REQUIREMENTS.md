@@ -67,7 +67,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Dashboard
 
-- [ ] **DASH-01**: Monitoring dashboard runs as a Docker container accessible via browser
+- [x] **DASH-01**: Monitoring dashboard runs as a Docker container accessible via browser
 - [x] **DASH-02**: Dashboard shows indexing status (progress, coverage, last update time)
 - [x] **DASH-03**: Dashboard shows token usage trends (charts over time)
 - [x] **DASH-04**: Dashboard shows benchmark history with score trend visualization
@@ -168,7 +168,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BNCH-05 | Phase 7 | Pending |
 | BNCH-06 | Phase 7 | Pending |
 | BNCH-07 | Phase 8 | Complete |
-| DASH-01 | Phase 8 | Pending |
+| DASH-01 | Phase 8 | Complete |
 | DASH-02 | Phase 8 | Complete |
 | DASH-03 | Phase 8 | Complete |
 | DASH-04 | Phase 8 | Complete |

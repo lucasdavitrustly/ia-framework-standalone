@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Phase 8 plans ready — begin with 08-01-PLAN.md
-stopped_at: Completed 08-dashboard-03-PLAN.md, starting 08-04
-last_updated: "2026-04-01T19:02:56.344Z"
+stopped_at: Completed 08-dashboard-04-PLAN.md — awaiting human verification checkpoint
+last_updated: "2026-04-01T19:20:54.130Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 24
-  completed_plans: 23
+  completed_plans: 24
   percent: 70
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-03-31)
 ## Current Position
 
 Phase: 8 of 10 (Monitoring Dashboard) — IN PROGRESS
-Plan: 1 of 4 in current phase (plans written, execution not started)
+Plan: 2 of 4 in current phase (plans written, execution not started)
 Status: Phase 8 plans ready — begin with 08-01-PLAN.md
 
 Last activity: 2026-04-01
@@ -79,6 +79,7 @@ Progress: [███████░░░] 70%
 | Phase 07-benchmarking P02 | 12min | 2 tasks | 5 files |
 | Phase 07-benchmarking P03 | 8min | 3 tasks | 1 files |
 | Phase 08-dashboard P03 | 25 | 4 tasks | 7 files |
+| Phase 08-dashboard P04 | 35 | 4 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -127,6 +128,9 @@ Recent decisions affecting current work:
 - [Phase 08-dashboard]: MetricsStore extended with getEventsByDay() + listEvents(limit, offset) for dashboard API routes
 - [Phase 08-dashboard]: recharts Formatter type requires ValueType|undefined and NameType|undefined params for TypeScript-strict compatibility
 - [Phase 08-dashboard]: QueryEventTable self-fetches with internal pagination state rather than receiving data as props
+- [Phase 08-dashboard]: tsup split into two configs for server entry to ensure import.meta.url guard works correctly (splitting:false)
+- [Phase 08-dashboard]: Dockerfile requires python3/make/g++ in both stages for tree-sitter native module compilation
+- [Phase 08-dashboard]: tsconfig.base.json must be copied in Docker build stage alongside workspace manifest files
 
 ### Pending Todos
 
@@ -139,6 +143,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-01T19:02:56.340Z
-Stopped at: Completed 08-dashboard-03-PLAN.md, starting 08-04
+Last session: 2026-04-01T19:20:54.127Z
+Stopped at: Completed 08-dashboard-04-PLAN.md — awaiting human verification checkpoint
 Resume file: None
