@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 8 plans ready — begin with 08-01-PLAN.md
-stopped_at: Completed 08-dashboard-04-PLAN.md — awaiting human verification checkpoint
-last_updated: "2026-04-01T19:20:54.130Z"
+status: Phase 8 complete — human verified, all fixes committed
+stopped_at: Completed Phase 8 — verified dashboard accessible at http://localhost:3000
+last_updated: "2026-04-01T19:50:00.000Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 24
   completed_plans: 24
-  percent: 70
+  percent: 80
 ---
 
 # Project State
@@ -21,25 +21,25 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 8 — Monitoring Dashboard
+**Current focus:** Phase 9 — Database Context
 
 ## Current Position
 
-Phase: 8 of 10 (Monitoring Dashboard) — IN PROGRESS
-Plan: 2 of 4 in current phase (plans written, execution not started)
-Status: Phase 8 plans ready — begin with 08-01-PLAN.md
+Phase: 8 of 10 (Monitoring Dashboard) — COMPLETE
+Plan: 4 of 4 — all plans executed and human-verified
+Status: Phase 8 complete — ready to begin Phase 9
 
 Last activity: 2026-04-01
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 20
+- Total plans completed: 24
 - Average duration: ~13 min/plan
-- Total execution time: ~4.5 hours
+- Total execution time: ~5 hours
 
 **By Phase:**
 
@@ -52,11 +52,12 @@ Progress: [███████░░░] 70%
 | Phase 05-installer | 3 | ~25min | ~8min |
 | Phase 06-observability | 2 | ~45min | ~22min |
 | Phase 07-benchmarking | 3 | ~30min | ~10min |
+| Phase 08-dashboard | 4 | ~95min | ~24min |
 
 **Recent Trend:**
 
-- Last 5 plans: 06-01 (observability), 06-02 (wire metrics), 07-01 (benchmark core), 07-02 (corpus + CLI), 07-03 (compare + verify)
-- Trend: ~10min per Phase 7 plan
+- Last 5 plans: 07-03 (compare + verify), 08-01 (API), 08-02 (frontend), 08-03 (charts), 08-04 (Docker)
+- Trend: ~24min per Phase 8 plan (more complex — React + Docker)
 
 *Updated after each plan completion*
 | Phase 01-foundation P02 | 11min | 3 tasks | 11 files |
@@ -78,8 +79,10 @@ Progress: [███████░░░] 70%
 | Phase 07-benchmarking P01 | 10min | 2 tasks | 7 files |
 | Phase 07-benchmarking P02 | 12min | 2 tasks | 5 files |
 | Phase 07-benchmarking P03 | 8min | 3 tasks | 1 files |
-| Phase 08-dashboard P03 | 25 | 4 tasks | 7 files |
-| Phase 08-dashboard P04 | 35 | 4 tasks | 5 files |
+| Phase 08-dashboard P01 | 20min | 4 tasks | 8 files |
+| Phase 08-dashboard P02 | 25min | 4 tasks | 6 files |
+| Phase 08-dashboard P03 | 25min | 4 tasks | 7 files |
+| Phase 08-dashboard P04 | 35min | 4 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -131,6 +134,10 @@ Recent decisions affecting current work:
 - [Phase 08-dashboard]: tsup split into two configs for server entry to ensure import.meta.url guard works correctly (splitting:false)
 - [Phase 08-dashboard]: Dockerfile requires python3/make/g++ in both stages for tree-sitter native module compilation
 - [Phase 08-dashboard]: tsconfig.base.json must be copied in Docker build stage alongside workspace manifest files
+- [Phase 08-dashboard]: Qdrant image (qdrant/qdrant:latest) has no curl, wget, nc, or /dev/tcp — healthcheck removed entirely; depends_on uses service_started
+- [Phase 08-dashboard]: QDRANT_HOST env var in docker-compose dashboard service set to "qdrant" (Docker service name) — without project.json, server.ts falls back to this env var so /api/status can reach Qdrant inside the container network
+- [Phase 08-dashboard]: ConfigWatcher.start() catches ConfigNotFoundError and runs in unconfigured mode (config=null) rather than crashing — watches for project.json creation via chokidar 'add' event for hot-reload
+- [Phase 08-dashboard]: Config page shows friendly "No project configured yet" UI (with install.sh hint) when /api/config returns 503 — no red error state
 
 ### Pending Todos
 
@@ -143,6 +150,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-01T19:20:54.127Z
-Stopped at: Completed 08-dashboard-04-PLAN.md — awaiting human verification checkpoint
+Last session: 2026-04-01T19:50:00.000Z
+Stopped at: Phase 8 complete — human-verified dashboard at http://localhost:3000, all fixes committed (78e46ff)
 Resume file: None

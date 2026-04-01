@@ -153,9 +153,10 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [x] 08-01: TBD
-- [x] 08-02: TBD
-- [x] 08-03: TBD
+- [x] 08-01: Hono REST API (8 endpoints, MetricsStore/BenchmarkStore/IndexingState wiring, 15 unit tests)
+- [x] 08-02: React frontend scaffold (Vite + Tailwind, routing, Overview + Config pages)
+- [x] 08-03: Charts and interactive components (TokenUsage BarChart, Benchmarks LineChart, IndexingPanel)
+- [x] 08-04: Docker container (multi-stage Dockerfile, docker-compose update, install.sh integration, graceful unconfigured mode)
 
 ### Phase 9: Database Context
 **Goal**: Framework can index database schema and data as additional context for AI understanding
