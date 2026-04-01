@@ -122,6 +122,13 @@ export interface ApiTriggerResponse {
   startedAt: string;
 }
 
+export interface ApiDbStatus {
+  configured: boolean;
+  connected: boolean;
+  tableCount: number | null;
+  error?: string;
+}
+
 // Base URL — same origin via Vite proxy in dev; relative path in production
 const BASE = '';
 
@@ -161,4 +168,5 @@ export const DashboardClient = {
   getIndexingStatus: () => get<ApiIndexingStatus>('/api/indexing/status'),
   triggerIndexing: (body?: { incremental?: boolean; label?: string }) =>
     post<ApiTriggerResponse>('/api/indexing/trigger', body),
+  getDbStatus: () => get<ApiDbStatus>('/api/db/status'),
 };

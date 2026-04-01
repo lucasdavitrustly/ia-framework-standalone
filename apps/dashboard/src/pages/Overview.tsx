@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import StatCard from '../components/StatCard.tsx';
 import { DashboardClient } from '../api/client.ts';
-import type { ApiStatus, ApiMetrics, ApiBenchmarks } from '../api/client.ts';
+import type { ApiStatus, ApiMetrics, ApiBenchmarks, ApiDbStatus } from '../api/client.ts';
 
 export default function Overview() {
   const [status, setStatus] = useState<ApiStatus | null>(null);
   const [metrics, setMetrics] = useState<ApiMetrics | null>(null);
   const [benchmarks, setBenchmarks] = useState<ApiBenchmarks | null>(null);
+  const [dbStatus, setDbStatus] = useState<ApiDbStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -15,11 +16,13 @@ export default function Overview() {
       DashboardClient.getStatus(),
       DashboardClient.getMetrics(),
       DashboardClient.getBenchmarks(1),
+      DashboardClient.getDbStatus(),
     ])
-      .then(([s, m, b]) => {
+      .then(([s, m, b, db]) => {
         setStatus(s);
         setMetrics(m);
         setBenchmarks(b);
+        setDbStatus(db);
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
@@ -85,6 +88,36 @@ export default function Overview() {
             {status.lastIndexedCommit && (
               <span className="text-xs text-gray-500 ml-auto">
                 Last commit: {status.lastIndexedCommit.slice(0, 8)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Database connection status */}
+      {!loading && dbStatus && (
+        <div className="mt-4 p-4 bg-gray-900 rounded-xl border border-gray-800">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Database</p>
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                !dbStatus.configured
+                  ? 'bg-gray-500'
+                  : dbStatus.connected
+                    ? 'bg-green-500'
+                    : 'bg-red-500'
+              }`}
+            />
+            <span className="text-sm text-gray-300">
+              {!dbStatus.configured
+                ? 'Not configured'
+                : dbStatus.connected
+                  ? `Connected${dbStatus.tableCount !== null ? ` · ${dbStatus.tableCount} tables` : ''}`
+                  : 'Disconnected'}
+            </span>
+            {dbStatus.error && (
+              <span className="text-xs text-red-400 ml-auto truncate max-w-xs" title={dbStatus.error}>
+                {dbStatus.error}
               </span>
             )}
           </div>
