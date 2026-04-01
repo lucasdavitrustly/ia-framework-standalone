@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
-    "@ia-framework/retrieval": "workspace:*"
+    "@ia-framework/retrieval": "workspace:*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

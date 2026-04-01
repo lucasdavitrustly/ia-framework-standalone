@@ -69,6 +69,9 @@ importers:
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.0
@@ -88,6 +91,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@ia-framework/benchmark':
+        specifier: workspace:*
+        version: link:../benchmark
       '@ia-framework/core':
         specifier: workspace:*
         version: link:../core

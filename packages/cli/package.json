@@ -24,6 +24,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@ia-framework/benchmark": "workspace:*",
     "@ia-framework/core": "workspace:*",
     "@ia-framework/embedding": "workspace:*",
     "@ia-framework/indexer": "workspace:*",
