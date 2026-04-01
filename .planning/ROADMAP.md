@@ -119,8 +119,8 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
+- [ ] 06-01: Observability package (@ia-framework/observability — TokenCounter, MetricsStore with SQLite, TDD)
+- [ ] 06-02: Wire into MCP server + CLI (log RagEvent per search, status command shows stats)
 
 ### Phase 7: Benchmarking System
 **Goal**: Developer can measure and compare RAG quality across different configurations
