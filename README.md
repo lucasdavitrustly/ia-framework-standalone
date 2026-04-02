@@ -64,7 +64,7 @@ The installer (`install.sh`) auto-detects and installs missing tools. If a **req
 | **Docker** | Latest | macOS: `brew install --cask docker` / Linux: `apt-get install docker.io` or `dnf install docker` | **Yes** — hard fail | Runs Qdrant and the dashboard. On macOS, starts Docker Desktop and waits up to 60s for daemon. On Linux, enables + starts systemd service and adds user to `docker` group. |
 | **Node.js** | >= 22.0.0 | macOS: `brew install node@22` / Linux: NodeSource `setup_22.x` script | **Yes** — hard fail | Upgrades existing Node.js if below v22. |
 | **pnpm** | >= 10.0.0 | `npm install -g pnpm` | **Yes** — hard fail | Installed in Step 2 after Node.js is confirmed. |
-| **Ollama** | Latest | macOS: `brew install ollama` / Linux: `ollama.com/install.sh` | **No** — soft fail | Also starts the Ollama service and pulls `nomic-embed-text` embedding model. If install or model pull fails, prints warning and continues. |
+| **Ollama** | Latest | macOS: `brew install ollama` / Linux: `ollama.com/install.sh` | **No** — soft fail | Also starts the Ollama service and presents an interactive model selection menu (see [Embedding Models](#embedding-models)). If install or model pull fails, prints warning and continues. Browse available models at [ollama.com/search](https://ollama.com/search). |
 | **OpenCode** | Latest | `npm install -g @opencode-sh/opencode` | **No** — soft fail | AI coding assistant that consumes MCP tools. If install fails, prints warning and continues — you can install manually later. |
 
 > If you skip Ollama, set `OPENAI_API_KEY` and change `embedding.provider` to `"openai"` in `project.json` for cloud embeddings.
@@ -85,11 +85,12 @@ The installer will:
 1. **Check and install prerequisites** — Docker and Node.js 22+ are required (installer exits if they fail). Ollama and OpenCode are optional (installer warns and continues if they fail).
 2. Install **pnpm** if missing (`npm install -g pnpm`)
 3. Build all 14 packages (`pnpm install && pnpm build`)
-4. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
-5. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
-6. Configure **OpenCode's MCP server** to connect to ia-framework
-7. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
-8. Run the **initial codebase indexing** (parses + embeds + stores in Qdrant)
+4. **Select an embedding model** — shows your locally available Ollama models (with `[embed]` hints for known embedding models), lets you pick one or enter a custom name, and auto-pulls it if needed
+5. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
+6. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
+7. Configure **OpenCode's MCP server** to connect to ia-framework
+8. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
+9. Run the **initial codebase indexing** (parses + embeds + stores in Qdrant)
 
 After it completes:
 
@@ -129,10 +130,14 @@ Qdrant will be available at `http://localhost:6333`. Data persists in a named Do
 ```bash
 # Install Ollama if you haven't: https://ollama.ai
 ollama serve &          # Start Ollama in the background
-ollama pull nomic-embed-text   # Download the embedding model
+ollama pull nomic-embed-text   # Download an embedding model (or any model you prefer)
 ```
 
-Or skip this and use OpenAI embeddings by setting `OPENAI_API_KEY` and updating the config (see Step 4).
+> **Tip:** Browse all available models at [ollama.com/search](https://ollama.com/search). Popular embedding models include `nomic-embed-text` (768d), `mxbai-embed-large` (1024d), and `all-minilm` (384d).
+
+You can skip specifying a model in the config — the `index` command will present an interactive model selection if none is configured (see [Embedding Models](#embedding-models)).
+
+Or skip Ollama entirely and use OpenAI embeddings by setting `OPENAI_API_KEY` and updating the config (see Step 4).
 
 ### Step 4: Create the Configuration
 
@@ -284,6 +289,8 @@ ia-framework <command>
 Commands:
   index                          Index target project codebase into Qdrant
     --force                      Re-index all files (skip incremental detection)
+    --model <name>               Override embedding model (auto-pulls if not installed,
+                                   auto-discovers dimensions, detects mismatches)
     --config <path>              Path to project.json
 
   search <query>                 Semantic search with dependency graph expansion
@@ -379,6 +386,77 @@ Executes SQL against a configured PostgreSQL database. Only available if `db.jso
 
 Triggers indexing of the PostgreSQL schema into Qdrant so `search_codebase` can find table/column information.
 
+## Extending with MCP Servers
+
+ia-framework's MCP server provides codebase search tools, but OpenCode supports multiple MCP servers simultaneously. You can plug in additional MCP servers to give your AI assistant broader context — database schemas, documentation, structured reasoning, message queues, and more.
+
+### Recommended MCP Integrations
+
+These MCP servers work well alongside ia-framework:
+
+| MCP Server | Purpose | What it adds |
+|------------|---------|--------------|
+| **[Context7](https://github.com/upstash/context7)** | Documentation retrieval | Up-to-date docs for any library — no more hallucinated APIs |
+| **[Sequential Thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** | Structured reasoning | Multi-step problem decomposition for complex tasks |
+| **PostgreSQL** (built-in) | Database context | Schema-aware SQL queries via ia-framework's `query_database` and `index_database_schema` tools |
+
+### Configuring Additional MCP Servers
+
+Add MCP servers to OpenCode's config at `~/.config/opencode/config.json`. Each server runs as a separate process and its tools become available alongside ia-framework's tools.
+
+**Example — adding Context7 and Sequential Thinking alongside ia-framework:**
+
+```json
+{
+  "mcpServers": {
+    "ia-framework": {
+      "command": "node",
+      "args": ["/path/to/ia-framework/packages/mcp-server/dist/bin.js"],
+      "env": {
+        "IA_FRAMEWORK_CONFIG": "/path/to/ia-framework/.ia-framework/project.json"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    }
+  }
+}
+```
+
+**Example — adding a PostgreSQL MCP server for direct database access:**
+
+```json
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "postgresql://user:pass@localhost:5432/mydb"
+      }
+    }
+  }
+}
+```
+
+> **Note:** ia-framework already includes PostgreSQL support via the `db-context` package (`db configure`, `db index`, `query_database` MCP tool). A separate Postgres MCP server is only needed if you want the general-purpose MCP Postgres tools in addition to ia-framework's schema-indexed approach.
+
+### Pluggable Architecture
+
+The MCP protocol is standardized, so any MCP-compatible server works with OpenCode. Common additions:
+
+- **Redis** — cache inspection and key-value context
+- **RabbitMQ** — queue status and message routing context
+- **GitHub** — issue and PR context
+- **Filesystem** — direct file access outside the indexed project
+
+Each server you add gives the AI assistant more context to work with. ia-framework's codebase search + other MCP servers = comprehensive project understanding.
+
 ## Configuration
 
 The main config file is `.ia-framework/project.json`:
@@ -422,6 +500,64 @@ The main config file is `.ia-framework/project.json`:
 | `OPENAI_API_KEY` | OpenAI API key (if using cloud embeddings) | — |
 
 Copy `.env.example` to `.env` and fill in values as needed. The installer (`install.sh`) generates `.env` automatically — manual setup only needs this for custom overrides.
+
+## Embedding Models
+
+ia-framework supports any Ollama embedding model. You can switch models at any time — the framework handles dimension discovery and collection migration automatically.
+
+### Selecting a Model
+
+**During install:** The installer shows an interactive menu of your locally available Ollama models. Known embedding models are marked with `[embed]` hints. You can also enter a custom model name, which will be auto-pulled.
+
+```
+  Select an embedding model:
+    1. nomic-embed-text:latest [embed]
+    2. mxbai-embed-large:latest [embed]
+    3. llama3:latest
+    4. Enter a custom model name
+  Select [1]:
+```
+
+**At index time:** Use the `--model` flag to switch models:
+
+```bash
+# Switch to a different embedding model
+node packages/cli/dist/bin.js index --model mxbai-embed-large
+
+# Use any Ollama model — auto-pulls if not installed locally
+node packages/cli/dist/bin.js index --model nomic-embed-text
+```
+
+If no model is configured in `project.json` and no `--model` flag is given, the `index` command presents the same interactive selection menu.
+
+> **Browse models:** [ollama.com/search](https://ollama.com/search) — search for embedding models to find one that fits your use case.
+
+### Dimension Discovery
+
+When you select a model, ia-framework automatically discovers its embedding dimensions using a 3-tier strategy:
+
+| Priority | Method | How it works |
+|----------|--------|--------------|
+| 1 | **Known model map** | Instant lookup for popular models (`nomic-embed-text`→768, `mxbai-embed-large`→1024, `all-minilm`→384, etc.) |
+| 2 | **Ollama `/api/show`** | Queries the model metadata for `embedding_length` — works for any model with published dimensions |
+| 3 | **Embed probe** | Sends a test string to `/api/embed` and measures the returned vector length — universal fallback |
+
+This means you never need to manually specify `dimensions` in `project.json` — it's always auto-detected.
+
+### Model Mismatch Detection
+
+When you switch to a different embedding model, existing vectors in Qdrant become incompatible (different models produce different-dimensional vectors). The `index` command detects this automatically:
+
+```
+  ⚠ Embedding model mismatch detected!
+    Previous model: nomic-embed-text (768d vectors)
+    New model:      mxbai-embed-large (1024d vectors)
+    Existing vectors are incompatible with the new model.
+
+  Delete existing collection and re-index? (y/N):
+```
+
+If you confirm, the old collection is deleted and a full re-index runs with the new model. If you decline, no changes are made.
 
 ## Benchmarking
 
@@ -546,6 +682,13 @@ ollama serve &                   # Ensure Ollama is running
 ollama pull nomic-embed-text     # Ensure model is downloaded
 curl http://localhost:11434/     # Check Ollama is responding
 ```
+
+**Switched models and search quality dropped:**
+```bash
+# The old vectors are incompatible with the new model — re-index to fix
+node packages/cli/dist/bin.js index --model <your-new-model> --force
+```
+If you see "Embedding model mismatch detected" during indexing, confirm the collection delete to start fresh with the new model.
 
 **Dashboard not loading:**
 ```bash
