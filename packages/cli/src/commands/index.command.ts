@@ -1,11 +1,12 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline/promises';
 import { loadConfig, createLogger } from '@ia-framework/core';
-import { createEmbeddingProvider } from '@ia-framework/embedding';
+import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { IndexingPipeline } from '@ia-framework/indexer';
 import type { IndexingProgress } from '@ia-framework/indexer';
+import { getLastEmbeddingModel, saveLastIndexedCommit, getCurrentCommit } from '@ia-framework/indexer';
 import { DependencyGraph } from '@ia-framework/retrieval';
 
 function resolveFrameworkDir(configPath: string): string {
@@ -13,12 +14,99 @@ function resolveFrameworkDir(configPath: string): string {
   return dirname(configPath);
 }
 
+/**
+ * Check if a model is locally available in Ollama.
+ */
+async function isModelAvailable(model: string, baseUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${baseUrl}/api/tags`);
+    if (!res.ok) return false;
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    const names = (data.models ?? []).map((m) => m.name);
+    return names.includes(model) || names.includes(`${model}:latest`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pull a model from the Ollama registry.
+ */
+async function pullModel(model: string, baseUrl: string): Promise<void> {
+  console.log(`  Pulling model: ${model}...`);
+  console.log('    (This may take a few minutes...)');
+  const res = await fetch(`${baseUrl}/api/pull`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, stream: false }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to pull model "${model}": HTTP ${res.status}`);
+  }
+}
+
+/**
+ * Prompt user to select a model interactively when none is configured.
+ */
+async function promptModelSelection(baseUrl: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    // Try to get locally available models
+    let models: string[] = [];
+    try {
+      const res = await fetch(`${baseUrl}/api/tags`);
+      if (res.ok) {
+        const data = (await res.json()) as { models?: Array<{ name: string }> };
+        models = (data.models ?? []).map((m) => m.name);
+      }
+    } catch {
+      /* Ollama may not be running */
+    }
+
+    console.log('');
+    console.log('  No embedding model configured.');
+
+    if (models.length === 0) {
+      console.log('  Popular embedding models: nomic-embed-text, mxbai-embed-large, all-minilm');
+      const answer = await rl.question('  Enter a model name [nomic-embed-text]: ');
+      return answer.trim() || 'nomic-embed-text';
+    }
+
+    const knownEmbed = ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'];
+    console.log('  Available models:');
+    for (let i = 0; i < models.length; i++) {
+      const shortName = models[i]!.replace(/:latest$/, '');
+      const hint = knownEmbed.includes(shortName) ? ' [embed]' : '';
+      console.log(`    ${i + 1}. ${models[i]}${hint}`);
+    }
+    console.log(`    ${models.length + 1}. Enter a custom model name`);
+
+    const answer = await rl.question(`  Select [1]: `);
+    const choice = parseInt(answer.trim() || '1', 10);
+
+    if (choice === models.length + 1) {
+      const custom = await rl.question('  Enter model name: ');
+      return custom.trim() || 'nomic-embed-text';
+    }
+
+    if (choice >= 1 && choice <= models.length) {
+      return models[choice - 1]!;
+    }
+
+    return models[0]!;
+  } finally {
+    rl.close();
+  }
+}
+
 export function indexCommand(): Command {
   return new Command('index')
     .description('Index the configured target project codebase into Qdrant')
     .option('-f, --force', 'Force re-index all files regardless of changes', false)
     .option('-c, --config <path>', 'Path to project.json config', '')
-    .action(async (options: { force: boolean; config: string }) => {
+    .option('-m, --model <name>', 'Override embedding model (auto-pulls if not installed)')
+    .action(async (options: { force: boolean; config: string; model?: string }) => {
       const logger = createLogger('cli:index');
       const configPath =
         options.config ||
@@ -28,6 +116,36 @@ export function indexCommand(): Command {
       try {
         const config = await loadConfig(configPath);
         const frameworkDir = resolveFrameworkDir(configPath);
+        const baseUrl = config.embedding.baseUrl ?? 'http://localhost:11434';
+
+        // Handle --model override or missing model
+        if (options.model) {
+          // Check if model is locally available, auto-pull if not
+          const available = await isModelAvailable(options.model, baseUrl);
+          if (!available) {
+            await pullModel(options.model, baseUrl);
+          }
+
+          // Discover dimensions for the override model
+          const dims = await discoverDimensions(options.model, baseUrl);
+          config.embedding.model = options.model;
+          config.embedding.dimensions = dims;
+          console.log(`  Using model: ${options.model} (${dims}d vectors)`);
+        } else if (!config.embedding.model) {
+          // No model configured — prompt interactively
+          const selectedModel = await promptModelSelection(baseUrl);
+
+          // Check availability and pull if needed
+          const available = await isModelAvailable(selectedModel, baseUrl);
+          if (!available) {
+            await pullModel(selectedModel, baseUrl);
+          }
+
+          const dims = await discoverDimensions(selectedModel, baseUrl);
+          config.embedding.model = selectedModel;
+          config.embedding.dimensions = dims;
+          console.log(`  Using model: ${selectedModel} (${dims}d vectors)`);
+        }
 
         const embeddingProvider = createEmbeddingProvider(config.embedding);
         const vectorStore = new QdrantVectorStore({
@@ -36,6 +154,44 @@ export function indexCommand(): Command {
           collectionName: config.vectorStore.collectionName,
           apiKey: config.vectorStore.apiKey,
         });
+
+        // Mismatch detection: check existing collection vs configured model
+        try {
+          const collectionInfo = await vectorStore.getCollectionInfo();
+          if (collectionInfo.pointCount > 0) {
+            const existingDimensions = collectionInfo.vectorDimensions.text;
+            const configuredDimensions = embeddingProvider.dimensions;
+            const lastModel = await getLastEmbeddingModel(frameworkDir);
+            const currentModel = config.embedding.model;
+
+            const dimensionMismatch = existingDimensions !== configuredDimensions;
+            const modelMismatch = lastModel !== null && lastModel !== currentModel;
+
+            if (dimensionMismatch || modelMismatch) {
+              console.log('');
+              console.log('  \u26a0 Embedding model mismatch detected!');
+              console.log(`    Previous model: ${lastModel ?? 'unknown'} (${existingDimensions}d vectors)`);
+              console.log(`    New model:      ${currentModel} (${configuredDimensions}d vectors)`);
+              console.log('    Existing vectors are incompatible with the new model.');
+              console.log('');
+
+              const rl = createInterface({ input: process.stdin, output: process.stdout });
+              const answer = await rl.question('  Delete existing collection and re-index? (y/N): ');
+              rl.close();
+
+              if (answer.trim().toLowerCase() === 'y') {
+                await vectorStore.deleteCollection();
+                console.log('  \u2713 Collection deleted \u2014 starting fresh index');
+                options.force = true;
+              } else {
+                console.log('  Aborted \u2014 no changes made');
+                process.exit(0);
+              }
+            }
+          }
+        } catch {
+          // Collection may not exist yet — no mismatch possible
+        }
 
         // Set up dependency graph for building import adjacency during indexing
         const graphDbPath = join(frameworkDir, 'graph.sqlite');
@@ -50,9 +206,11 @@ export function indexCommand(): Command {
         }
 
         const pipeline = new IndexingPipeline();
+        const collectionName = config.vectorStore.collectionName;
 
         console.log(`Indexing: ${config.targetProjectPath}`);
-        console.log(`Collection: ${config.vectorStore.collectionName}`);
+        console.log(`Collection: ${collectionName}`);
+        console.log(`Model: ${config.embedding.model}`);
         console.log('');
 
         let lastFile = '';
@@ -60,7 +218,7 @@ export function indexCommand(): Command {
           {
             targetProjectPath: config.targetProjectPath,
             frameworkDir,
-            collectionName: config.vectorStore.collectionName,
+            collectionName,
             embeddingProvider,
             vectorStore,
             includePatterns: config.indexing?.includePatterns,
@@ -79,9 +237,18 @@ export function indexCommand(): Command {
         );
 
         process.stdout.write('\n');
-        console.log(`\n✓ Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files`);
+        console.log(`\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files`);
+
+        // Save embedding model to indexing state for mismatch detection
+        const currentCommit = await getCurrentCommit(config.targetProjectPath);
+        await saveLastIndexedCommit(
+          frameworkDir,
+          currentCommit ?? '',
+          collectionName,
+          config.embedding.model,
+        );
       } catch (error) {
-        console.error(`\n✗ Indexing failed: ${String(error)}`);
+        console.error(`\n\u2717 Indexing failed: ${String(error)}`);
         logger.error({ error }, 'Indexing failed');
         process.exit(1);
       }
