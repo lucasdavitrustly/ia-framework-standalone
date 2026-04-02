@@ -20,6 +20,7 @@
       "rolldown",
       "@rolldown/binding-darwin-arm64",
       "tree-sitter",
+      "tree-sitter-java",
       "tree-sitter-typescript",
       "better-sqlite3"
     ]

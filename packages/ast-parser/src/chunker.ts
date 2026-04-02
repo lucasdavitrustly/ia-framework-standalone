@@ -3,6 +3,7 @@ import { extname, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { CodeChunk, ChunkerConfig } from './types.js';
 import { parseTypeScript } from './parsers/typescript.js';
+import { parseJava } from './parsers/java.js';
 
 const LANGUAGE_MAP: Record<string, string> = {
   '.ts': 'typescript',
@@ -11,6 +12,7 @@ const LANGUAGE_MAP: Record<string, string> = {
   '.jsx': 'jsx',
   '.mjs': 'javascript',
   '.cjs': 'javascript',
+  '.java': 'java',
 };
 
 export type { CodeChunk, ChunkerConfig };
@@ -51,6 +53,10 @@ export async function parseFile(
   }
 
   const content = await readFile(filePath, 'utf-8');
+
+  if (language === 'java') {
+    return parseJava(content, filePath, relativePath);
+  }
 
   return parseTypeScript(content, filePath, relativePath, language);
 }

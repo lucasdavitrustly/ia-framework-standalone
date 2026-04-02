@@ -137,3 +137,115 @@ export function add(a, b) {
     ).rejects.toThrow();
   });
 });
+
+describe('parseFile — Java', () => {
+  it('detects class declarations with correct chunkType and name', async () => {
+    const filePath = await makeFile('UserService.java', `
+public class UserService {
+    private String name;
+
+    public UserService(String name) {
+        this.name = name;
+    }
+
+    public String getName() {
+        return this.name;
+    }
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'UserService');
+    expect(cls).toBeDefined();
+    expect(cls!.language).toBe('java');
+  });
+
+  it('detects method declarations inside classes', async () => {
+    const filePath = await makeFile('Calculator.java', `
+public class Calculator {
+    public int add(int a, int b) {
+        return a + b;
+    }
+
+    public int subtract(int a, int b) {
+        return a - b;
+    }
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(2);
+    const names = methods.map((m) => m.name);
+    expect(names).toContain('add');
+    expect(names).toContain('subtract');
+  });
+
+  it('detects interface declarations', async () => {
+    const filePath = await makeFile('Repository.java', `
+public interface Repository {
+    void save(Object entity);
+    Object findById(String id);
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const iface = chunks.find((c) => c.chunkType === 'interface' && c.name === 'Repository');
+    expect(iface).toBeDefined();
+  });
+
+  it('detects enum declarations', async () => {
+    const filePath = await makeFile('Status.java', `
+public enum Status {
+    ACTIVE,
+    INACTIVE,
+    PENDING
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const en = chunks.find((c) => c.chunkType === 'enum' && c.name === 'Status');
+    expect(en).toBeDefined();
+  });
+
+  it('extracts import statements', async () => {
+    const filePath = await makeFile('App.java', `
+import java.util.List;
+import java.util.Map;
+
+public class App {
+    public List<String> getItems() {
+        return List.of("a", "b");
+    }
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const withImports = chunks.filter((c) => c.imports.length > 0);
+    expect(withImports.length).toBeGreaterThan(0);
+    const allImports = withImports.flatMap((c) => c.imports);
+    expect(allImports).toContain('java.util.List');
+    expect(allImports).toContain('java.util.Map');
+  });
+
+  it('returns a module chunk for an empty Java file', async () => {
+    const filePath = await makeFile('Empty.java', `
+// just a comment
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    expect(chunks.length).toBe(1);
+    expect(chunks[0]!.chunkType).toBe('module');
+    expect(chunks[0]!.language).toBe('java');
+  });
+
+  it('sets relativePath correctly when projectRoot is provided', async () => {
+    const filePath = await makeFile('Foo.java', `
+public class Foo {}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+    expect(chunks[0]!.relativePath).toBe('Foo.java');
+  });
+});
