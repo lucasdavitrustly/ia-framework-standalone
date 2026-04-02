@@ -202,7 +202,7 @@ Or set the API key via environment variable: `export OPENAI_API_KEY=sk-...`
 ### Step 5: Index Your Codebase
 
 ```bash
-node packages/cli/dist/bin.js index
+ia-framework index
 ```
 
 This walks your project, parses files with tree-sitter into AST-aware chunks, generates embeddings, and stores them in Qdrant. It also builds a file-level dependency graph (`graph.sqlite`) for hop expansion.
@@ -213,11 +213,11 @@ Subsequent runs are incremental — only modified files (detected via `git diff`
 
 ```bash
 # Check status (Qdrant connection, chunk count, config)
-node packages/cli/dist/bin.js status
+ia-framework status
 
 # Search your codebase
-node packages/cli/dist/bin.js search "authentication middleware"
-node packages/cli/dist/bin.js search "database connection pool" --limit 5
+ia-framework search "authentication middleware"
+ia-framework search "database connection pool" --limit 5
 ```
 
 ### Step 7: Connect to OpenCode
@@ -270,13 +270,13 @@ This adds documentation to your target project telling AI assistants how to use 
 
 ```bash
 # Auto-detects AGENTS.md or CLAUDE.md in your target project
-node packages/cli/dist/bin.js agents inject
+ia-framework agents inject
 
 # Or target a specific file
-node packages/cli/dist/bin.js agents inject --file /path/to/project/CLAUDE.md
+ia-framework agents inject --file /path/to/project/CLAUDE.md
 
 # Check injection status
-node packages/cli/dist/bin.js agents check
+ia-framework agents check
 ```
 
 ## CLI Reference
@@ -522,10 +522,10 @@ ia-framework supports any Ollama embedding model. You can switch models at any t
 
 ```bash
 # Switch to a different embedding model
-node packages/cli/dist/bin.js index --model mxbai-embed-large
+ia-framework index --model mxbai-embed-large
 
 # Use any Ollama model — auto-pulls if not installed locally
-node packages/cli/dist/bin.js index --model nomic-embed-text
+ia-framework index --model nomic-embed-text
 ```
 
 If no model is configured in `project.json` and no `--model` flag is given, the `index` command presents the same interactive selection menu.
@@ -566,35 +566,101 @@ Measure whether RAG actually helps by running retrieval benchmarks:
 ```bash
 # Create a benchmark query corpus
 # (scaffolded automatically on first run at .ia-framework/benchmark-queries.json)
-node packages/cli/dist/bin.js benchmark run
+ia-framework benchmark run
 
 # Run a no-RAG baseline for comparison
-node packages/cli/dist/bin.js benchmark run --baseline
+ia-framework benchmark run --baseline
 
 # Compare runs
-node packages/cli/dist/bin.js benchmark list
-node packages/cli/dist/bin.js benchmark compare <run-id-1> <run-id-2>
+ia-framework benchmark list
+ia-framework benchmark compare <run-id-1> <run-id-2>
 
 # View trend over time
-node packages/cli/dist/bin.js benchmark history
+ia-framework benchmark history
 ```
 
 The benchmark corpus is a JSON file with queries and expected files:
 
 ```json
-[
-  {
-    "query": "authentication middleware",
-    "expectedFiles": ["src/auth/middleware.ts", "src/auth/types.ts"]
-  },
-  {
-    "query": "database connection pool",
-    "expectedFiles": ["src/db/pool.ts"]
-  }
-]
+{
+  "queries": [
+    {
+      "id": "auth-middleware",
+      "query": "authentication middleware",
+      "expectedFiles": ["src/auth/middleware.ts", "src/auth/types.ts"]
+    },
+    {
+      "id": "db-pool",
+      "query": "database connection pool",
+      "expectedFiles": ["src/db/pool.ts"]
+    }
+  ]
+}
 ```
 
-Results are stored in `benchmarks.sqlite` with timestamps and config snapshots.
+Results are stored in `benchmarks.sqlite` with timestamps and config snapshots. See [Benchmark Corpus](#benchmark-corpus) for a complete guide on writing effective queries.
+
+## Benchmark Corpus
+
+The benchmark corpus defines what "correct retrieval" means for your project — a set of natural language queries paired with the files that should appear in results.
+
+### Auto-Scaffolding
+
+On the first `benchmark run`, if no corpus file exists, the CLI auto-creates an example at `.ia-framework/benchmark-queries.json` and exits without running. Edit this file to match your codebase, then re-run.
+
+### File Format
+
+The corpus is a JSON file with a `queries` array. Each entry has:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier (e.g. `"user-service"`) |
+| `query` | Yes | Natural language search text — what a developer would type |
+| `expectedFiles` | Yes | Array of relative file paths that *should* appear in results (min 1) |
+| `description` | No | Human-readable note about what this query tests |
+
+Validated by Zod on load — malformed files produce clear error messages.
+
+### Example
+
+```json
+{
+  "queries": [
+    {
+      "id": "db-connection",
+      "query": "database connection pool setup",
+      "expectedFiles": ["src/db/pool.ts", "src/db/connection.ts"],
+      "description": "Should find database connection and pooling logic"
+    },
+    {
+      "id": "error-handling",
+      "query": "global error handler middleware",
+      "expectedFiles": ["src/middleware/error-handler.ts"]
+    },
+    {
+      "id": "user-model",
+      "query": "user data model schema definition",
+      "expectedFiles": ["src/models/user.ts"]
+    },
+    {
+      "id": "api-routes",
+      "query": "REST API route registration",
+      "expectedFiles": ["src/routes/index.ts", "src/routes/users.ts"]
+    }
+  ]
+}
+```
+
+### Writing Effective Queries
+
+- **Diverse coverage** — spread queries across different areas of the codebase (auth, config, models, routes, utils)
+- **Realistic phrasing** — use how a developer would actually search (`"how do we handle auth"` rather than exact function names)
+- **Correct expectedFiles** — these are the ground truth; if the expected file is wrong, the metric is meaningless
+- **Sufficient volume** — 3 queries gives noisy metrics; aim for 15–30 for stable signal
+
+### Limitations
+
+The corpus is fully manual. There is no automatic generation from the codebase — you need to know your project well enough to write queries and their expected answers. This is intentional: the corpus defines what "correct retrieval" means for *your* project, which requires human judgment.
 
 ## Database Context (Optional)
 
@@ -602,16 +668,16 @@ If your project uses PostgreSQL, ia-framework can index the database schema as a
 
 ```bash
 # Interactive setup — prompts for host, port, database, user, password
-node packages/cli/dist/bin.js db configure
+ia-framework db configure
 
 # Test connection
-node packages/cli/dist/bin.js db connect
+ia-framework db connect
 
 # Index schema into Qdrant
-node packages/cli/dist/bin.js db index
+ia-framework db index
 
 # Check status
-node packages/cli/dist/bin.js db status
+ia-framework db status
 ```
 
 After indexing, `search_codebase` queries will also match table names, column types, and relationships. The `query_database` MCP tool lets the AI run SQL directly.
@@ -665,8 +731,8 @@ Currently supported: TypeScript, TSX, JavaScript, JSX, Python, Java.
 3. Restart OpenCode completely
 
 **Search returns no results:**
-1. Run `node packages/cli/dist/bin.js status` to check Qdrant connection and chunk count
-2. Re-index: `node packages/cli/dist/bin.js index --force`
+1. Run `ia-framework status` to check Qdrant connection and chunk count
+2. Re-index: `ia-framework index --force`
 3. Lower the threshold: `--threshold 0.3`
 
 **Qdrant not reachable:**
@@ -686,7 +752,7 @@ curl http://localhost:11434/     # Check Ollama is responding
 **Switched models and search quality dropped:**
 ```bash
 # The old vectors are incompatible with the new model — re-index to fix
-node packages/cli/dist/bin.js index --model <your-new-model> --force
+ia-framework index --model <your-new-model> --force
 ```
 If you see "Embedding model mismatch detected" during indexing, confirm the collection delete to start fresh with the new model.
 
