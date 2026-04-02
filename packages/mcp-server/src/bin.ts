@@ -12,7 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
-import { SearchEngine } from '@ia-framework/retrieval';
+import { SearchEngine, DependencyGraph } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 import { createMcpServer } from './server.js';
 
@@ -34,21 +34,48 @@ async function main(): Promise<void> {
     apiKey: config.vectorStore.apiKey,
   });
 
-  const searchEngine = new SearchEngine({ embeddingProvider, vectorStore });
+  // Set up dependency graph for search expansion (if graph.sqlite exists)
+  const frameworkDir = dirname(configPath);
+  const graphDbPath = join(frameworkDir, 'graph.sqlite');
+  let dependencyGraph: { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> } | undefined;
+
+  try {
+    const graph = new DependencyGraph({ dbPath: graphDbPath });
+    graph.initialize();
+    // Wrap sync getNeighborFiles as async to match SearchEngineConfig interface
+    dependencyGraph = {
+      getNeighborFiles: async (filePaths: string[], hops: 1 | 2) =>
+        graph.getNeighborFiles(filePaths, hops),
+    };
+    logger.info({ graphDbPath }, 'Dependency graph loaded for search expansion');
+  } catch {
+    logger.info({ graphDbPath }, 'Dependency graph not available — expansion disabled');
+  }
+
+  const searchEngine = new SearchEngine({ embeddingProvider, vectorStore, dependencyGraph });
 
   // Set up observability — metrics stored in .ia-framework/metrics.sqlite
-  const metricsDbPath = join(dirname(configPath), 'metrics.sqlite');
+  const metricsDbPath = join(frameworkDir, 'metrics.sqlite');
   const metricsStore = new MetricsStore(metricsDbPath);
   const tokenCounter = new TokenCounter();
   const sessionId = generateSessionId();
 
   logger.info({ metricsDbPath, sessionId }, 'Observability initialized');
 
-  // Compute frameworkDir and dbConfigPath
-  const frameworkDir = dirname(configPath);
   const dbConfigPath = join(frameworkDir, 'db.json');
 
-  const server = createMcpServer({ searchEngine, metricsStore, tokenCounter, sessionId, configPath, dbConfigPath });
+  // Read expansion hops from config (default: 1)
+  const expansionHops = config.retrieval?.expansionHops ?? 1;
+
+  const server = createMcpServer({
+    searchEngine,
+    metricsStore,
+    tokenCounter,
+    sessionId,
+    configPath,
+    dbConfigPath,
+    defaultExpansionHops: expansionHops,
+  });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

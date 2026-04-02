@@ -179,3 +179,163 @@ describe('SearchEngine', () => {
     expect(textCall![1].scoreThreshold).toBe(0.5);
   });
 });
+
+describe('SearchEngine.searchWithExpansion', () => {
+  const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+  const mockSearch = vi.fn().mockResolvedValue([]);
+  const mockGetNeighborFiles = vi.fn().mockResolvedValue([]);
+
+  function makeExpandConfig(opts: { withGraph?: boolean } = {}): SearchEngineConfig {
+    return {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch },
+      ...(opts.withGraph
+        ? { dependencyGraph: { getNeighborFiles: mockGetNeighborFiles } }
+        : {}),
+    };
+  }
+
+  beforeEach(() => {
+    mockEmbed.mockReset().mockResolvedValue([0.1, 0.2, 0.3]);
+    mockSearch.mockReset().mockResolvedValue([]);
+    mockGetNeighborFiles.mockReset().mockResolvedValue([]);
+  });
+
+  test('with no dependency graph configured, falls back to search()', async () => {
+    const cfg = makeExpandConfig({ withGraph: false });
+    const eng = new SearchEngine(cfg);
+
+    const baseResult = makeMockResult('chunk-1', 0.9, 'text');
+    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([]);
+
+    const results = await eng.searchWithExpansion({ text: 'auth' });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.chunkId).toBe('chunk-1');
+    // getNeighborFiles should NOT have been called
+    expect(mockGetNeighborFiles).not.toHaveBeenCalled();
+  });
+
+  test('1-hop expansion adds chunks from imported files', async () => {
+    const cfg = makeExpandConfig({ withGraph: true });
+    const eng = new SearchEngine(cfg);
+
+    const baseResult = makeMockResult('chunk-base', 0.9, 'text', {
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+    });
+    const expandedResult = makeMockResult('chunk-dep', 0.0, 'text', {
+      filePath: '/project/src/types.ts',
+      relativePath: 'src/types.ts',
+    });
+
+    // First search call returns base results (text), second (code) empty
+    mockSearch
+      .mockResolvedValueOnce([baseResult])
+      .mockResolvedValueOnce([])
+      // Expansion: search for files from graph (text vector with filePath filter)
+      .mockResolvedValueOnce([expandedResult]);
+
+    mockGetNeighborFiles.mockResolvedValue(['/project/src/types.ts']);
+
+    const results = await eng.searchWithExpansion({ text: 'auth' }, { hops: 1 });
+
+    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['/project/src/auth.ts'], 1);
+    expect(results).toHaveLength(2);
+    expect(results[0]!.chunkId).toBe('chunk-base');
+    expect(results[0]!.score).toBe(0.9);
+    expect(results[1]!.chunkId).toBe('chunk-dep');
+    expect(results[1]!.score).toBe(0);
+  });
+
+  test('2-hop expansion adds chunks from imported-imports', async () => {
+    const cfg = makeExpandConfig({ withGraph: true });
+    const eng = new SearchEngine(cfg);
+
+    const baseResult = makeMockResult('chunk-base', 0.85, 'text', {
+      filePath: '/project/src/handler.ts',
+      relativePath: 'src/handler.ts',
+    });
+    const expandedResult = makeMockResult('chunk-transitive', 0.0, 'text', {
+      filePath: '/project/src/utils.ts',
+      relativePath: 'src/utils.ts',
+    });
+
+    mockSearch
+      .mockResolvedValueOnce([baseResult])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([expandedResult]);
+
+    mockGetNeighborFiles.mockResolvedValue(['/project/src/utils.ts']);
+
+    const results = await eng.searchWithExpansion({ text: 'handler' }, { hops: 2 });
+
+    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['/project/src/handler.ts'], 2);
+    expect(results).toHaveLength(2);
+  });
+
+  test('base results are not duplicated in expansion', async () => {
+    const cfg = makeExpandConfig({ withGraph: true });
+    const eng = new SearchEngine(cfg);
+
+    const baseResult = makeMockResult('chunk-base', 0.9, 'text', {
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+    });
+
+    mockSearch
+      .mockResolvedValueOnce([baseResult])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    // Graph returns a file that already has a base result
+    mockGetNeighborFiles.mockResolvedValue(['/project/src/auth.ts']);
+
+    const results = await eng.searchWithExpansion({ text: 'auth' });
+
+    // Should still be 1 result, not duplicated
+    expect(results).toHaveLength(1);
+    expect(results[0]!.chunkId).toBe('chunk-base');
+    expect(results[0]!.score).toBe(0.9);
+  });
+
+  test('base results retain original scores; expanded results get score=0', async () => {
+    const cfg = makeExpandConfig({ withGraph: true });
+    const eng = new SearchEngine(cfg);
+
+    const baseResult = makeMockResult('chunk-base', 0.85, 'text', {
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+    });
+    const expandedResult = makeMockResult('chunk-expanded', 0.7, 'text', {
+      filePath: '/project/src/types.ts',
+      relativePath: 'src/types.ts',
+    });
+
+    mockSearch
+      .mockResolvedValueOnce([baseResult])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([expandedResult]);
+
+    mockGetNeighborFiles.mockResolvedValue(['/project/src/types.ts']);
+
+    const results = await eng.searchWithExpansion({ text: 'auth' });
+
+    expect(results[0]!.score).toBe(0.85);
+    // Expanded results have their score overridden to 0
+    expect(results[1]!.score).toBe(0);
+  });
+
+  test('expansion with hops=0 skips graph expansion', async () => {
+    const cfg = makeExpandConfig({ withGraph: true });
+    const eng = new SearchEngine(cfg);
+
+    const baseResult = makeMockResult('chunk-base', 0.9, 'text');
+    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([]);
+
+    const results = await eng.searchWithExpansion({ text: 'auth' }, { hops: 0 });
+
+    expect(mockGetNeighborFiles).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+  });
+});

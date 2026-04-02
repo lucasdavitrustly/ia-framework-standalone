@@ -37,6 +37,12 @@ export interface IndexingConfig {
   incremental?: boolean | undefined;
   /** Optional additional context sources (DB schema, docs, etc.) */
   contextSources?: ContextSource[] | undefined;
+  /** Optional dependency graph for building file-level import adjacency */
+  dependencyGraph?: {
+    initialize(): void;
+    upsertEdges(sourceFilePath: string, imports: string[], projectRoot: string): void;
+    deleteEdgesForFile(filePath: string): void;
+  } | undefined;
 }
 
 export interface IndexingProgress {
@@ -67,6 +73,7 @@ export class IndexingPipeline {
       embeddingBatchSize = 50,
       incremental = false,
       contextSources,
+      dependencyGraph,
     } = config;
 
     // Initialize vector store collection
@@ -74,6 +81,11 @@ export class IndexingPipeline {
       textDimensions: embeddingProvider.dimensions,
       codeDimensions: embeddingProvider.dimensions,
     });
+
+    // Initialize dependency graph if configured
+    if (dependencyGraph) {
+      dependencyGraph.initialize();
+    }
 
     // Determine which files to process
     let filesToProcess: string[];
@@ -93,6 +105,9 @@ export class IndexingPipeline {
         // Delete old chunks for changed files before re-indexing
         for (const filePath of changedFiles) {
           await vectorStore.deleteByFilter({ filePath });
+          if (dependencyGraph) {
+            dependencyGraph.deleteEdgesForFile(filePath);
+          }
         }
         filesToProcess = changedFiles;
       } else {
@@ -130,6 +145,14 @@ export class IndexingPipeline {
           maxChunkLines,
         });
         allChunks.push(...chunks);
+
+        // Build dependency graph edges from parsed imports
+        if (dependencyGraph) {
+          const fileImports = chunks.flatMap((c) => c.imports);
+          if (fileImports.length > 0) {
+            dependencyGraph.upsertEdges(filePath, fileImports, targetProjectPath);
+          }
+        }
       } catch (err) {
         logger.error({ filePath, err }, 'Failed to parse file — skipping');
       }

@@ -31,10 +31,22 @@ export const ProjectProfileSchema = z.object({
   devCommand: z.string().optional(),
 });
 
+export const RetrievalModeSchema = z.enum(['mcp-only', 'auto-context', 'combined']);
+
+export const RetrievalConfigSchema = z.object({
+  /** Retrieval mode: mcp-only (default), auto-context (v2), combined (v2) */
+  mode: RetrievalModeSchema.default('mcp-only'),
+  /** Number of dependency graph hops to expand results: 0 = off, 1 = direct imports, 2 = transitive */
+  expansionHops: z.union([z.literal(0), z.literal(1), z.literal(2)]).default(1),
+  /** Top-K results for auto-context injection (v2) */
+  autoContextTopK: z.number().int().min(1).max(20).default(5),
+});
+
 export const ProjectConfigSchema = z.object({
   targetProjectPath: z.string().min(1),
   embedding: EmbeddingProviderConfigSchema,
   vectorStore: VectorStoreConfigSchema,
   indexing: IndexingConfigSchema.optional(),
   profile: ProjectProfileSchema.optional(),
+  retrieval: RetrievalConfigSchema.optional(),
 });

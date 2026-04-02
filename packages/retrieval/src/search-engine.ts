@@ -112,6 +112,86 @@ export class SearchEngine {
   }
 
   /**
+   * Search with optional dependency-graph expansion.
+   * 1. Runs base search() to get top results.
+   * 2. If a dependencyGraph is configured and hops > 0, resolves neighbor files
+   *    via BFS and fetches their chunks from the vector store.
+   * 3. Merges expansion chunks (score overridden to 0) after base results,
+   *    deduplicating by chunkId.
+   *
+   * Falls back to plain search() when no dependency graph is configured or hops=0.
+   */
+  async searchWithExpansion(
+    query: RetrievalQuery,
+    options?: { hops?: 0 | 1 | 2 },
+  ): Promise<RetrievalResult[]> {
+    const hops = options?.hops ?? 1;
+    const baseResults = await this.search(query);
+
+    // Fall back to plain search when graph is unavailable or hops=0
+    if (!this.config.dependencyGraph || hops === 0) {
+      return baseResults;
+    }
+
+    // Collect unique file paths from base results
+    const baseFilePaths = [...new Set(baseResults.map((r) => r.filePath))];
+    const baseChunkIds = new Set(baseResults.map((r) => r.chunkId));
+
+    // Get neighbor files from the dependency graph
+    const neighborFiles = await this.config.dependencyGraph.getNeighborFiles(
+      baseFilePaths,
+      hops as 1 | 2,
+    );
+
+    // Filter out files that are already represented in base results
+    const baseFileSet = new Set(baseFilePaths);
+    const newFiles = neighborFiles.filter((f) => !baseFileSet.has(f));
+
+    if (newFiles.length === 0) {
+      return baseResults;
+    }
+
+    // Fetch chunks for neighbor files using filePath filter
+    const expansionChunks = await this.fetchChunksForFiles(newFiles);
+
+    // Deduplicate against base results and set score=0 for expansion chunks
+    const expandedResults: RetrievalResult[] = [];
+    for (const chunk of expansionChunks) {
+      if (!baseChunkIds.has(chunk.chunkId)) {
+        baseChunkIds.add(chunk.chunkId);
+        expandedResults.push({ ...chunk, score: 0 });
+      }
+    }
+
+    return [...baseResults, ...expandedResults];
+  }
+
+  /**
+   * Fetch all chunks for the given file paths from the vector store.
+   * Uses a Qdrant filter matching filePath against the provided list.
+   */
+  private async fetchChunksForFiles(filePaths: string[]): Promise<RetrievalResult[]> {
+    const { embeddingProvider, vectorStore } = this.config;
+
+    const filter = {
+      should: filePaths.map((fp) => ({
+        key: 'filePath',
+        match: { value: fp },
+      })),
+    };
+
+    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
+
+    const results = await vectorStore.search(zeroVector, {
+      vectorName: 'text',
+      limit: filePaths.length * 50, // generous limit for multi-file fetch
+      filter,
+    });
+
+    return results.map((raw) => toRetrievalResult(raw, 'text'));
+  }
+
+  /**
    * Retrieve all chunks for a specific file by relative path.
    * Uses a Qdrant filter on relativePath — returns all matching chunks.
    */

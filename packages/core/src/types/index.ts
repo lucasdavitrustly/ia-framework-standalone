@@ -130,6 +130,18 @@ export interface ContextSource {
 }
 
 /**
+ * Retrieval configuration — controls how search results are expanded and served.
+ */
+export interface RetrievalConfig {
+  /** Retrieval mode: mcp-only (v1), auto-context (v2), combined (v2) */
+  mode: 'mcp-only' | 'auto-context' | 'combined';
+  /** Number of dependency graph hops: 0 = off, 1 = direct imports, 2 = transitive */
+  expansionHops: 0 | 1 | 2;
+  /** Top-K results for auto-context injection (v2) */
+  autoContextTopK: number;
+}
+
+/**
  * Top-level project configuration loaded from .ia-framework/project.json
  */
 export interface ProjectConfig {
@@ -143,4 +155,6 @@ export interface ProjectConfig {
   indexing?: IndexingConfig | undefined;
   /** Last detected project profile (set after project detection) */
   profile?: ProjectProfile | undefined;
+  /** Retrieval configuration (graph expansion, mode) */
+  retrieval?: RetrievalConfig | undefined;
 }

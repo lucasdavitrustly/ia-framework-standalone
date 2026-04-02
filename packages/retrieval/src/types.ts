@@ -90,4 +90,8 @@ export interface SearchEngineConfig {
   defaultLimit?: number | undefined;
   /** Default score threshold (default: 0.5) */
   defaultScoreThreshold?: number | undefined;
+  /** Optional dependency graph for expanding results along import edges */
+  dependencyGraph?: {
+    getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]>;
+  } | undefined;
 }

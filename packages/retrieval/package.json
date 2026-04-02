@@ -23,9 +23,11 @@
   "dependencies": {
     "@ia-framework/core": "workspace:*",
     "@ia-framework/embedding": "workspace:*",
-    "@ia-framework/vector-store": "workspace:*"
+    "@ia-framework/vector-store": "workspace:*",
+    "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "vitest": "^4.1.2",

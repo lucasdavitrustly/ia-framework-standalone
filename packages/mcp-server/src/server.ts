@@ -19,6 +19,8 @@ export interface McpServerConfig {
   dbConfigPath?: string | undefined;
   /** Path to .ia-framework/project.json — needed for index_database_schema */
   configPath?: string | undefined;
+  /** Default dependency graph expansion hops for search_codebase (0=off, 1=direct, 2=transitive) */
+  defaultExpansionHops?: 0 | 1 | 2 | undefined;
 }
 
 /**
@@ -35,6 +37,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     metricsStore: config.metricsStore,
     tokenCounter: config.tokenCounter,
     sessionId: config.sessionId,
+    defaultExpansionHops: config.defaultExpansionHops,
   });
   registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);

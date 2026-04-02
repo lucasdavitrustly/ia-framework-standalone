@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Benchmarking System** - End-to-end RAG quality measurement with comparison and history (completed 2026-04-01)
 - [x] **Phase 8: Monitoring Dashboard** - Browser-based visibility into system health, usage, and benchmarks (completed 2026-04-01)
 - [x] **Phase 9: Database Context** - Database schema indexing and query support as additional AI context (completed 2026-04-01)
-- [ ] **Phase 10: Advanced Retrieval & Workflow Integration** - Dependency graph expansion, auto-context injection, GSD integration
+- [x] **Phase 10: Advanced Retrieval & Workflow Integration** - Dependency graph expansion, auto-context injection, GSD integration (completed 2026-04-02)
 
 ## Phase Details
 
@@ -175,19 +175,20 @@ Plans:
 ### Phase 10: Advanced Retrieval & Workflow Integration
 **Goal**: RAG results are enhanced with dependency context and automatically injected into developer workflows
 **Depends on**: Phase 4, Phase 7
-**Requirements**: RETR-03, RETR-04, RETR-05, WKFL-01, WKFL-02, WKFL-03
+**Requirements**: INDX-05, RETR-03, RETR-04, RETR-05, WKFL-01, WKFL-02, WKFL-03
 **Success Criteria** (what must be TRUE):
   1. Retrieval results expand 1-2 hops along the dependency graph to include referenced types, interfaces, and utilities
-  2. Auto-context mode automatically prepends relevant codebase context to prompts without explicit developer queries
+  2. Auto-context mode automatically prepends relevant codebase context to prompts without explicit developer queries (documented as v2 — OpenCode doesn't support MCP Resources/Prompts or plugin hooks for injection)
   3. Developer can switch between MCP-only, auto-context, and combined retrieval modes via configuration
-  4. GSD planning and execution phases automatically receive relevant architectural and code context from RAG
-  5. GSD workflows can leverage online LLMs for reasoning while RAG provides local codebase context
-**Plans**: TBD
+  4. GSD planning and execution phases automatically receive relevant architectural and code context from RAG (via `ia-framework agents inject` into target project AGENTS.md/CLAUDE.md)
+  5. GSD workflows can leverage online LLMs for reasoning while RAG provides local codebase context (satisfied by OpenCode's 75+ provider model config)
+**Plans**: 4 plans
 
 Plans:
-- [ ] 10-01: TBD
-- [ ] 10-02: TBD
-- [ ] 10-03: TBD
+- [x] 10-01-PLAN.md — DependencyGraph barrel export + IndexingPipeline upsertEdges wiring
+- [x] 10-02-PLAN.md — Graph-expanded retrieval (searchWithExpansion) + retrieval.mode config + auto-context v2 deferral (TDD)
+- [x] 10-03-PLAN.md — GSD-RAG integration (MCP approach), agents inject/check CLI commands, install.sh wiring, WKFL-03 verification
+- [x] 10-04-PLAN.md — Full workspace verification (build/typecheck/test), success criteria validation, ROADMAP + STATE update
 
 ## Progress
 
@@ -205,4 +206,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Benchmarking System | 3/3 | Complete | 2026-04-01 |
 | 8. Monitoring Dashboard | 4/4 | Complete   | 2026-04-01 |
 | 9. Database Context | 2/2 | Complete   | 2026-04-01 |
-| 10. Advanced Retrieval & Workflow Integration | 0/3 | Not started | - |
+| 10. Advanced Retrieval & Workflow Integration | 4/4 | Complete | 2026-04-02 |

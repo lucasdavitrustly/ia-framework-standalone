@@ -194,7 +194,12 @@ Use these entry points:
 Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
 <!-- GSD:workflow-end -->
 
+## GSD + RAG Integration
 
+RAG tools guidance is injected into the target project's agent documentation
+via `ia-framework agents inject`. See the target project's AGENTS.md/CLAUDE.md
+for available tools and usage patterns. Use `ia-framework agents check` to
+verify injection status.
 
 <!-- GSD:profile-start -->
 ## Developer Profile

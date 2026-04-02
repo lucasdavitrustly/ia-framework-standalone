@@ -8,6 +8,7 @@ export type {
   EmbeddingProviderConfig,
   VectorStoreConfig,
   IndexingConfig,
+  RetrievalConfig,
   ProjectConfig,
 } from './types/index.js';
 
@@ -18,6 +19,8 @@ export {
   EmbeddingProviderConfigSchema,
   VectorStoreConfigSchema,
   IndexingConfigSchema,
+  RetrievalConfigSchema,
+  RetrievalModeSchema,
 } from './config/schema.js';
 
 // Logger

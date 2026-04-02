@@ -37,17 +37,19 @@ function makeResult(
 function makeMockEngine(searchResults: RetrievalResult[] = [], fileResults: RetrievalResult[] = []) {
   return {
     search: vi.fn().mockResolvedValue(searchResults),
+    searchWithExpansion: vi.fn().mockResolvedValue(searchResults),
     getFile: vi.fn().mockResolvedValue(fileResults),
   };
 }
 
 describe('MCP Server Tools', () => {
   describe('search_codebase handler', () => {
-    test('Test 1: calls searchEngine.search() with the query text', async () => {
+    test('Test 1: calls searchEngine.searchWithExpansion() with the query text', async () => {
       const engine = makeMockEngine([]);
       await searchCodebaseHandler(engine, { query: 'authentication middleware' });
-      expect(engine.search).toHaveBeenCalledWith(
+      expect(engine.searchWithExpansion).toHaveBeenCalledWith(
         expect.objectContaining({ text: 'authentication middleware' }),
+        expect.objectContaining({ hops: expect.any(Number) }),
       );
     });
 
@@ -61,11 +63,12 @@ describe('MCP Server Tools', () => {
       expect(text).toContain('0.92');
     });
 
-    test('Test 3: passes limit to searchEngine.search()', async () => {
+    test('Test 3: passes limit to searchEngine.searchWithExpansion()', async () => {
       const engine = makeMockEngine([]);
       await searchCodebaseHandler(engine, { query: 'auth', limit: 3 });
-      expect(engine.search).toHaveBeenCalledWith(
+      expect(engine.searchWithExpansion).toHaveBeenCalledWith(
         expect.objectContaining({ limit: 3 }),
+        expect.objectContaining({ hops: expect.any(Number) }),
       );
     });
 

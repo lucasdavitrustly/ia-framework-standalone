@@ -202,6 +202,23 @@ fi
 echo ""
 
 # ──────────────────────────────────────────────────────
+# Step 6.5: Agent documentation injection
+# ──────────────────────────────────────────────────────
+echo -e "${BOLD}Step 6.5: Agent documentation${NC}"
+CONFIG_FILE="${SCRIPT_DIR}/.ia-framework/project.json"
+if [ -f "${SCRIPT_DIR}/packages/cli/dist/bin.js" ] && [ -f "$CONFIG_FILE" ]; then
+  echo -e "  ${YELLOW}→${NC} Injecting RAG tools guidance into target project..."
+  if node "${SCRIPT_DIR}/packages/cli/dist/bin.js" agents inject --config "$CONFIG_FILE"; then
+    echo -e "  ${GREEN}✓${NC} Agent documentation updated"
+  else
+    echo -e "  ${YELLOW}⚠${NC} Run 'ia-framework agents inject' later to add RAG guidance"
+  fi
+else
+  echo -e "  ${YELLOW}⚠${NC} Agent docs injection deferred — run 'ia-framework agents inject' after setup"
+fi
+echo ""
+
+# ──────────────────────────────────────────────────────
 # Step 7: Run initial codebase indexing
 # ──────────────────────────────────────────────────────
 echo -e "${BOLD}Step 7: Initial indexing${NC}"

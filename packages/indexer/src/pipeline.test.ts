@@ -336,3 +336,146 @@ afterAll(async () => {
     // ignore cleanup errors
   }
 });
+
+// ── DependencyGraph wiring tests ──────────────────────────────────────────────
+describe('IndexingPipeline — dependencyGraph', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `indexer-depgraph-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'foo.ts'), 'export function foo() {}');
+
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  it('calls dependencyGraph.upsertEdges for chunks with imports', async () => {
+    const chunk = {
+      id: 'chunk-1',
+      filePath: join(tmpDir, 'foo.ts'),
+      relativePath: 'foo.ts',
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'foo',
+      content: 'import { bar } from "./bar";\nfunction foo() {}',
+      startLine: 1,
+      endLine: 2,
+      imports: ['./bar'],
+      exports: ['foo'],
+    };
+    mockParseFile.mockResolvedValue([chunk]);
+
+    const mockGraph = {
+      initialize: vi.fn(),
+      upsertEdges: vi.fn(),
+      deleteEdgesForFile: vi.fn(),
+      close: vi.fn(),
+    };
+
+    await pipeline.run(makeConfig({ dependencyGraph: mockGraph }));
+
+    expect(mockGraph.initialize).toHaveBeenCalledOnce();
+    expect(mockGraph.upsertEdges).toHaveBeenCalledWith(
+      join(tmpDir, 'foo.ts'),
+      ['./bar'],
+      tmpDir,
+    );
+  });
+
+  it('does not call upsertEdges for chunks with empty imports', async () => {
+    const chunk = {
+      id: 'chunk-1',
+      filePath: join(tmpDir, 'foo.ts'),
+      relativePath: 'foo.ts',
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'foo',
+      content: 'function foo() {}',
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: ['foo'],
+    };
+    mockParseFile.mockResolvedValue([chunk]);
+
+    const mockGraph = {
+      initialize: vi.fn(),
+      upsertEdges: vi.fn(),
+      deleteEdgesForFile: vi.fn(),
+      close: vi.fn(),
+    };
+
+    await pipeline.run(makeConfig({ dependencyGraph: mockGraph }));
+
+    expect(mockGraph.initialize).toHaveBeenCalledOnce();
+    expect(mockGraph.upsertEdges).not.toHaveBeenCalled();
+  });
+
+  it('calls deleteEdgesForFile during incremental indexing before re-indexing', async () => {
+    const changedFile = join(tmpDir, 'foo.ts');
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit');
+    mockGetChangedFiles.mockResolvedValue([changedFile]);
+    mockParseFile.mockResolvedValue([{
+      id: 'chunk-1',
+      filePath: changedFile,
+      relativePath: 'foo.ts',
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'foo',
+      content: 'function foo() {}',
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: ['foo'],
+    }]);
+
+    const mockGraph = {
+      initialize: vi.fn(),
+      upsertEdges: vi.fn(),
+      deleteEdgesForFile: vi.fn(),
+      close: vi.fn(),
+    };
+
+    await pipeline.run(makeConfig({ incremental: true, dependencyGraph: mockGraph }));
+
+    expect(mockGraph.deleteEdgesForFile).toHaveBeenCalledWith(changedFile);
+  });
+
+  it('does not call graph methods when dependencyGraph is undefined', async () => {
+    mockParseFile.mockResolvedValue([{
+      id: 'chunk-1',
+      filePath: join(tmpDir, 'foo.ts'),
+      relativePath: 'foo.ts',
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'foo',
+      content: 'import { bar } from "./bar";\nfunction foo() {}',
+      startLine: 1,
+      endLine: 2,
+      imports: ['./bar'],
+      exports: ['foo'],
+    }]);
+
+    // No dependencyGraph in config — should not throw
+    await expect(pipeline.run(makeConfig())).resolves.toBeDefined();
+  });
+});

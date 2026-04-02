@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 09-02-PLAN.md — Phase 9 Database Context fully done
-last_updated: "2026-04-01T20:43:06.674Z"
-last_activity: 2026-04-01
+status: complete
+stopped_at: Completed Phase 10 — Advanced Retrieval & Workflow Integration — v1.0 COMPLETE
+last_updated: "2026-04-02T13:00:00.000Z"
+last_activity: 2026-04-02
 progress:
   total_phases: 10
-  completed_phases: 9
-  total_plans: 26
-  completed_plans: 26
-  percent: 80
+  completed_phases: 10
+  total_plans: 30
+  completed_plans: 30
+  percent: 100
 ---
 
 # Project State
@@ -21,25 +21,25 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 9 — Database Context
+**Current focus:** v1.0 COMPLETE — all 10 phases delivered
 
 ## Current Position
 
-Phase: 9 of 10 (Database Context) — IN PROGRESS
-Plan: 2 of 2 — plans written, ready to execute 09-01
-Status: Phase 9 plans written — ready to execute
+Phase: 10 of 10 (Advanced Retrieval & Workflow Integration) — COMPLETE
+Plan: 4 of 4 — all plans executed
+Status: v1.0 milestone complete
 
-Last activity: 2026-04-01
+Last activity: 2026-04-02
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 24
-- Average duration: ~13 min/plan
-- Total execution time: ~5 hours
+- Total plans completed: 30
+- Average duration: ~14 min/plan
+- Total execution time: ~7 hours
 
 **By Phase:**
 
@@ -53,11 +53,13 @@ Progress: [████████░░] 80%
 | Phase 06-observability | 2 | ~45min | ~22min |
 | Phase 07-benchmarking | 3 | ~30min | ~10min |
 | Phase 08-dashboard | 4 | ~95min | ~24min |
+| Phase 09-database-context | 2 | ~31min | ~16min |
+| Phase 10-advanced-retrieval | 4 | ~45min | ~11min |
 
 **Recent Trend:**
 
-- Last 5 plans: 07-03 (compare + verify), 08-01 (API), 08-02 (frontend), 08-03 (charts), 08-04 (Docker)
-- Trend: ~24min per Phase 8 plan (more complex — React + Docker)
+- Last 6 plans: 10-01 (DependencyGraph wiring), 10-02 (searchWithExpansion), 10-03 (GSD-RAG + agents CLI), 10-04 (verification)
+- Trend: ~11min per Phase 10 plan (lightweight — research done upfront, partial pre-implementation)
 
 *Updated after each plan completion*
 | Phase 01-foundation P02 | 11min | 3 tasks | 11 files |
@@ -85,6 +87,10 @@ Progress: [████████░░] 80%
 | Phase 08-dashboard P04 | 35min | 4 tasks | 5 files |
 | Phase 09 P01 | 6min | 4 tasks | 12 files |
 | Phase 09 P02 | 25 | 4 tasks | 12 files |
+| Phase 10 P01 | 8min | 2 tasks | 3 files |
+| Phase 10 P02 | 15min | 5 tasks | 8 files |
+| Phase 10 P03 | 12min | 6 tasks | 5 files |
+| Phase 10 P04 | 10min | 5 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -144,18 +150,34 @@ Recent decisions affecting current work:
 - [Phase 09]: FK query runs once for all tables for efficiency; contextSources processed after file chunks
 - [Phase 09]: Used class mock pattern instead of vi.fn().mockReturnValue() for PostgresSource constructor — vi.fn with new does not return mocked value in Vitest
 - [Phase 09]: dbRouter accepts injectable loadDbConfigFn + PostgresSourceCtor for testability without vi.mock()
+- [Phase 10]: RETR-04 (auto-context) deferred to v2 — OpenCode doesn't support MCP Resources/Prompts or prompt.before plugin hooks; tool-based search is more token-efficient
+- [Phase 10]: GSD-RAG integration via MCP tools (won 11-1-0 over CLI subprocess in research spike)
+- [Phase 10]: WKFL-03 (online LLMs) satisfied by OpenCode's 75+ provider model config — no implementation needed
+- [Phase 10]: Agent docs injection targets the target project's AGENTS.md/CLAUDE.md, not the framework's own docs
+- [Phase 10]: Marker-based idempotency for agent docs injection (<!-- ia-framework:rag-start/end -->)
+- [Phase 10]: DependencyGraph.getNeighborFiles() is sync but wrapped in async lambda in bin.ts to match SearchEngineConfig interface
+- [Phase 10]: mockReset() required instead of mockClear() — mockClear does NOT clear mockResolvedValueOnce queue
 
 ### Pending Todos
 
-None.
+None — v1.0 milestone complete.
+
+### Phase 10 Design Decisions (from /gsd:discuss-phase 10)
+
+- [Phase 10]: Auto-context (RETR-04) — research first; spike in 10-02 before implementation; outcome may defer to v2
+- [Phase 10]: GSD-RAG integration — dedicated spike (10-03) comparing CLI subprocess vs MCP tool; key criteria: token cost, call count, latency, context quality; MCP expected to win
+- [Phase 10]: WKFL-03 (online LLMs) expected to already be satisfied by OpenCode model config — verification only
+- [Phase 10]: DependencyGraph in packages/retrieval (file-level adjacency, SQLite graph.sqlite, BFS for hop expansion)
+- [Phase 10]: 4 plans instead of 3 — GSD-RAG spike gets its own dedicated plan (10-03)
 
 ### Blockers/Concerns
 
-- Auto-context injection mechanism via OpenCode is unvalidated — research deferred to Phase 10
-- Benchmark task corpus design (coding tasks) resolved: used retrieval precision queries (expectedFiles per query) — AI output quality benchmarks deferred (BNCH-01 not yet implemented)
+None — all blockers resolved:
+- Auto-context injection mechanism: researched, deferred to v2 with rationale documented
+- Benchmark task corpus design: resolved in Phase 7 (retrieval precision queries)
 
 ## Session Continuity
 
-Last session: 2026-04-01T20:43:06.671Z
-Stopped at: Completed 09-02-PLAN.md — Phase 9 Database Context fully done
+Last session: 2026-04-02T13:00:00.000Z
+Stopped at: v1.0 COMPLETE — all 10 phases, 30 plans executed and verified
 Resume file: None
