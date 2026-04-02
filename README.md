@@ -84,7 +84,7 @@ The installer will:
 1. **Check and install prerequisites** — Docker and Node.js 22+ are required (installer exits if they fail). Ollama and OpenCode are optional (installer warns and continues if they fail).
 2. Install **pnpm** if missing (`npm install -g pnpm`)
 3. Build all 14 packages (`pnpm install && pnpm build`)
-4. Prompt for your **target project path** and create `.ia-framework/project.json`
+4. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
 5. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
 6. Configure **OpenCode's MCP server** to connect to ia-framework
 7. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
@@ -111,7 +111,7 @@ pnpm install
 pnpm build
 
 # Verify everything works
-pnpm test        # 194 tests across 14 packages
+pnpm test        # 201 tests across 14 packages
 pnpm typecheck   # Type-check all packages
 ```
 
@@ -283,9 +283,10 @@ Commands:
     --force                      Re-index all files (skip incremental detection)
     --config <path>              Path to project.json
 
-  search <query>                 Semantic search across indexed codebase
+  search <query>                 Semantic search with dependency graph expansion
     --limit <n>                  Max results (default: 10)
     --threshold <n>              Min similarity score 0-1 (default: 0.5)
+                                 Uses retrieval.expansionHops from config (0=off, 1=direct, 2=transitive)
 
   status                         Show config, Qdrant connection, chunk count
 
@@ -481,7 +482,7 @@ After indexing, `search_codebase` queries will also match table names, column ty
 ### Running Tests
 
 ```bash
-pnpm test           # All 194 tests (Turborepo-cached)
+pnpm test           # All 201 tests (Turborepo-cached)
 pnpm typecheck      # Type-check all packages
 pnpm build          # Build all 14 packages
 pnpm lint           # ESLint + Prettier
@@ -492,7 +493,7 @@ pnpm lint           # ESLint + Prettier
 | Package | Tests | Purpose |
 |---------|-------|---------|
 | `@ia-framework/core` | 7 | Config loader, schemas, logger, shared types |
-| `@ia-framework/ast-parser` | 8 | tree-sitter chunking (functions, classes, interfaces) |
+| `@ia-framework/ast-parser` | 15 | tree-sitter chunking (functions, classes, interfaces) |
 | `@ia-framework/embedding` | 8 | Ollama + OpenAI embedding adapters |
 | `@ia-framework/vector-store` | 8 | Qdrant dual-vector storage |
 | `@ia-framework/indexer` | 17 | File walker, incremental indexing, context sources |
@@ -515,7 +516,7 @@ ia-framework uses tree-sitter WASM grammars. To add support for a new language:
 3. Register chunk extraction rules for the language's node types
 4. Add include patterns in your `project.json`
 
-Currently supported: TypeScript, TSX, JavaScript, JSX, Python.
+Currently supported: TypeScript, TSX, JavaScript, JSX, Python, Java.
 
 ## Troubleshooting
 
