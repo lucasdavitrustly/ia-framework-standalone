@@ -49,7 +49,8 @@ ia-framework/
 │   └── dashboard/          # React 19 + Recharts + Tailwind monitoring UI
 ├── scripts/                # Installer helper scripts
 ├── install.sh              # One-shot installer
-└── docker-compose.yml      # Qdrant + Dashboard containers
+├── docker-compose.yml      # Qdrant + Dashboard containers
+└── docker-compose.override.yml.example  # Dev overrides template (copied by install.sh)
 ```
 
 **Stack:** TypeScript, pnpm workspaces, Turborepo, Vitest, Qdrant, tree-sitter (WASM), Hono, React 19, Zod, better-sqlite3.
@@ -72,7 +73,7 @@ The installer (`install.sh`) auto-detects and installs missing tools. If a **req
 
 ```bash
 # 1. Clone the framework
-git clone https://github.com/your-org/ia-framework.git
+git clone <your-repo-url>/ia-framework.git
 cd ia-framework
 
 # 2. Run the installer
@@ -103,7 +104,7 @@ If you prefer to set things up manually or the installer doesn't fit your enviro
 ### Step 1: Install Dependencies and Build
 
 ```bash
-git clone https://github.com/your-org/ia-framework.git
+git clone <your-repo-url>/ia-framework.git
 cd ia-framework
 
 # Install and build
@@ -111,7 +112,7 @@ pnpm install
 pnpm build
 
 # Verify everything works
-pnpm test        # 201 tests across 14 packages
+pnpm test        # 218 tests across 13 packages
 pnpm typecheck   # Type-check all packages
 ```
 
@@ -247,6 +248,8 @@ Restart OpenCode. The following tools are now available to your AI assistant:
 ```bash
 docker compose up -d dashboard
 ```
+
+> **Note:** Docker Compose auto-loads `docker-compose.override.yml` if present. The installer copies `docker-compose.override.yml.example` (dev defaults) for you. Edit the override file locally to customize ports, log levels, or add services — it's gitignored.
 
 Open http://localhost:3000 to see:
 
@@ -418,7 +421,7 @@ The main config file is `.ia-framework/project.json`:
 | `QDRANT_GRPC_PORT` | Qdrant gRPC port | `6334` |
 | `OPENAI_API_KEY` | OpenAI API key (if using cloud embeddings) | — |
 
-Copy `.env.example` to `.env` and fill in values as needed.
+Copy `.env.example` to `.env` and fill in values as needed. The installer (`install.sh`) generates `.env` automatically — manual setup only needs this for custom overrides.
 
 ## Benchmarking
 
@@ -482,7 +485,7 @@ After indexing, `search_codebase` queries will also match table names, column ty
 ### Running Tests
 
 ```bash
-pnpm test           # All 201 tests (Turborepo-cached)
+pnpm test           # All 218 tests (Turborepo-cached)
 pnpm typecheck      # Type-check all packages
 pnpm build          # Build all 14 packages
 pnpm lint           # ESLint + Prettier
