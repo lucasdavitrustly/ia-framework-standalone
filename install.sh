@@ -145,6 +145,12 @@ export IA_FRAMEWORK_DIR
   echo "QDRANT_GRPC_PORT=${QDRANT_GRPC_PORT:-6334}"
 } > "${SCRIPT_DIR}/.env"
 echo -e "  ${GREEN}✓${NC} Environment written to ${SCRIPT_DIR}/.env"
+
+# Copy docker-compose override defaults if not present
+if [ ! -f "${SCRIPT_DIR}/docker-compose.override.yml" ] && [ -f "${SCRIPT_DIR}/docker-compose.override.yml.example" ]; then
+  cp "${SCRIPT_DIR}/docker-compose.override.yml.example" "${SCRIPT_DIR}/docker-compose.override.yml"
+  echo -e "  ${GREEN}✓${NC} Docker Compose overrides initialized from .example"
+fi
 echo ""
 
 # ──────────────────────────────────────────────────────

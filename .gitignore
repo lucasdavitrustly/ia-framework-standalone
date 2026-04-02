@@ -17,6 +17,9 @@ coverage/
 .env
 # .env.example is committed
 
+# Docker Compose local overrides (generated from .example by install.sh)
+docker-compose.override.yml
+
 # macOS
 .DS_Store
 .AppleDouble
