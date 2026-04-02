@@ -6,6 +6,7 @@
 # init_config
 # Creates default .ia-framework/project.json if it doesn't exist.
 # Prompts for target project path.
+# Uses SELECTED_EMBED_MODEL and SELECTED_EMBED_DIMS env vars from install-ollama.sh.
 # Args: $1 = ia-framework directory (optional, defaults to SCRIPT_DIR or cwd)
 # Exit code: 0 on success, 1 on failure.
 # ──────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ init_config() {
 
   local detect_script="${ia_dir}/scripts/detect-project.mjs"
   if [ -f "${ia_dir}/packages/project-detector/dist/index.js" ] && [ -f "$detect_script" ]; then
-    if node "$detect_script" "$target_path" "$config_file"; then
+    if node "$detect_script" "$target_path" "$config_file" "${SELECTED_EMBED_MODEL:-}" "${SELECTED_EMBED_DIMS:-}"; then
       echo -e "  ${GREEN}✓${NC} Config created with detected profile: ${config_file}"
       echo "    Target project: ${target_path}"
       return 0
@@ -77,9 +78,9 @@ init_config() {
   "targetProjectPath": "${target_path}",
   "embedding": {
     "provider": "ollama",
-    "model": "nomic-embed-text",
+    "model": "${SELECTED_EMBED_MODEL:-nomic-embed-text}",
     "baseUrl": "http://localhost:11434",
-    "dimensions": 768
+    "dimensions": ${SELECTED_EMBED_DIMS:-768}
   },
   "vectorStore": {
     "host": "localhost",
