@@ -20,6 +20,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **INST-09**: Installer triggers initial codebase indexing after setup completes
 - [x] **INST-10**: Installer configures OpenCode MCP server integration automatically
 - [x] **INST-11**: If framework is already installed, developer can run individual components (dashboard, re-indexing, benchmarks) without re-running full installer
+- [ ] **INST-12**: Installer configures Context7 and Sequential Thinking MCP servers in OpenCode if not already present
 
 ### Architecture
 
@@ -37,6 +38,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **INDX-06**: Incremental re-indexing detects changed files via git diff and only re-indexes those
 - [x] **INDX-07**: Indexing respects .gitignore and skips irrelevant files (node_modules, build output, etc.)
 - [x] **INDX-08**: All indexing runs fully locally — no codebase data is sent to external services
+- [ ] **INDX-09**: Indexing supports Java as a default language alongside TypeScript and Python — tree-sitter-java grammar is pulled during installation
 
 ### Retrieval
 
@@ -139,6 +141,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INST-09 | Phase 5 | Pending |
 | INST-10 | Phase 5 | Pending |
 | INST-11 | Phase 5 | Pending |
+| INST-12 | Phase 5 | Pending |
 | ARCH-01 | Phase 1 | Complete |
 | ARCH-02 | Phase 1 | Complete |
 | ARCH-03 | Phase 1 | Complete |
@@ -150,6 +153,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INDX-06 | Phase 3 | Pending |
 | INDX-07 | Phase 3 | Pending |
 | INDX-08 | Phase 3 | Pending |
+| INDX-09 | Phase 3 | Pending |
 | RETR-01 | Phase 4 | Pending |
 | RETR-02 | Phase 4 | Pending |
 | RETR-03 | Phase 10 | Pending |
@@ -182,10 +186,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WKFL-03 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 52 total
-- Mapped to phases: 52
+- v1 requirements: 54 total
+- Mapped to phases: 54
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-31*
-*Last updated: 2026-03-31 after additions (standalone architecture, post-install mode, deterministic benchmarks, custom queries)*
+*Last updated: 2026-04-02 — added INST-12 (Context7 + Sequential Thinking MCP servers), INDX-09 (Java tree-sitter grammar)*
