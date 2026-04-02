@@ -55,7 +55,23 @@ init_config() {
   # Create config directory
   mkdir -p "$config_dir"
 
-  # Write default config
+  # Auto-detect target project's tech stack using project-detector
+  echo -e "  ${YELLOW}→${NC} Detecting project stack..."
+
+  local detect_script="${ia_dir}/scripts/detect-project.mjs"
+  if [ -f "${ia_dir}/packages/project-detector/dist/index.js" ] && [ -f "$detect_script" ]; then
+    if node "$detect_script" "$target_path" "$config_file"; then
+      echo -e "  ${GREEN}✓${NC} Config created with detected profile: ${config_file}"
+      echo "    Target project: ${target_path}"
+      return 0
+    else
+      echo -e "  ${YELLOW}⚠${NC} Project detection failed — falling back to defaults"
+    fi
+  else
+    echo -e "  ${YELLOW}⚠${NC} Project detector not built — using defaults (run 'ia-framework index' after build)"
+  fi
+
+  # Fallback: write default config without profile
   cat > "$config_file" <<EOF
 {
   "targetProjectPath": "${target_path}",

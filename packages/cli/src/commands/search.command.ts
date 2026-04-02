@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
-import { SearchEngine } from '@ia-framework/retrieval';
+import { SearchEngine, DependencyGraph } from '@ia-framework/retrieval';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 
@@ -31,19 +31,41 @@ export function searchCommand(): Command {
           apiKey: config.vectorStore.apiKey,
         });
 
-        const searchEngine = new SearchEngine({ embeddingProvider, vectorStore });
+        // Set up dependency graph for search expansion (if graph.sqlite exists)
+        const frameworkDir = dirname(configPath);
+        const graphDbPath = join(frameworkDir, 'graph.sqlite');
+        let dependencyGraph: { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> } | undefined;
+
+        try {
+          const graph = new DependencyGraph({ dbPath: graphDbPath });
+          graph.initialize();
+          dependencyGraph = {
+            getNeighborFiles: async (filePaths: string[], hops: 1 | 2) =>
+              graph.getNeighborFiles(filePaths, hops),
+          };
+        } catch {
+          // Graph not available — search will work without expansion
+        }
+
+        const searchEngine = new SearchEngine({ embeddingProvider, vectorStore, dependencyGraph });
 
         const limit = parseInt(options.limit, 10);
         const scoreThreshold = parseFloat(options.threshold);
 
+        // Read expansion hops from config (default: 0 = no expansion)
+        const expansionHops = config.retrieval?.expansionHops ?? 0;
+
         console.log(`Searching for: "${query}"\n`);
 
         const startTime = Date.now();
-        const results = await searchEngine.search({
-          text: query,
-          limit: isNaN(limit) ? 10 : limit,
-          scoreThreshold: isNaN(scoreThreshold) ? 0.5 : scoreThreshold,
-        });
+        const results = await searchEngine.searchWithExpansion(
+          {
+            text: query,
+            limit: isNaN(limit) ? 10 : limit,
+            scoreThreshold: isNaN(scoreThreshold) ? 0.5 : scoreThreshold,
+          },
+          { hops: expansionHops },
+        );
         const latencyMs = Date.now() - startTime;
 
         // Log RAG event — graceful degradation on failure

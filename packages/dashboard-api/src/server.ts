@@ -7,6 +7,7 @@ import { BenchmarkStore } from '@ia-framework/benchmark';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { IndexingPipeline } from '@ia-framework/indexer';
+import { DependencyGraph } from '@ia-framework/retrieval';
 import { ConfigWatcher } from './config-watcher.js';
 import { IndexingStateManager } from './indexing-state.js';
 import { createApp } from './app.js';
@@ -45,6 +46,16 @@ export async function startServer(options: ServerOptions): Promise<void> {
 
   const indexingPipeline = new IndexingPipeline();
 
+  // Set up dependency graph for building import adjacency during indexing
+  const graphDbPath = join(frameworkDir, 'graph.sqlite');
+  let dependencyGraph: InstanceType<typeof DependencyGraph> | undefined;
+  try {
+    dependencyGraph = new DependencyGraph({ dbPath: graphDbPath });
+    dependencyGraph.initialize();
+  } catch {
+    dependencyGraph = undefined;
+  }
+
   // Build triggerIndexing function that uses the real providers
   const triggerIndexing = async (
     onProgress: (progress: import('@ia-framework/indexer').IndexingProgress) => void,
@@ -71,6 +82,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
       includePatterns: currentConfig.indexing?.includePatterns,
       excludePatterns: currentConfig.indexing?.excludePatterns,
       incremental: false,
+      dependencyGraph,
     };
     return indexingPipeline.run(indexingConfig, onProgress);
   };

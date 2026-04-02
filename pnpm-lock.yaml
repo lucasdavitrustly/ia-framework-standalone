@@ -217,6 +217,9 @@ importers:
       '@ia-framework/observability':
         specifier: workspace:*
         version: link:../observability
+      '@ia-framework/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
       '@ia-framework/vector-store':
         specifier: workspace:*
         version: link:../vector-store

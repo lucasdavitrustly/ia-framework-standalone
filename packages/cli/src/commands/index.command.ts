@@ -6,6 +6,7 @@ import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { IndexingPipeline } from '@ia-framework/indexer';
 import type { IndexingProgress } from '@ia-framework/indexer';
+import { DependencyGraph } from '@ia-framework/retrieval';
 
 function resolveFrameworkDir(configPath: string): string {
   // .ia-framework/project.json → .ia-framework/
@@ -36,6 +37,18 @@ export function indexCommand(): Command {
           apiKey: config.vectorStore.apiKey,
         });
 
+        // Set up dependency graph for building import adjacency during indexing
+        const graphDbPath = join(frameworkDir, 'graph.sqlite');
+        let dependencyGraph: InstanceType<typeof DependencyGraph> | undefined;
+        try {
+          dependencyGraph = new DependencyGraph({ dbPath: graphDbPath });
+          dependencyGraph.initialize();
+          logger.info({ graphDbPath }, 'Dependency graph initialized for indexing');
+        } catch {
+          logger.info({ graphDbPath }, 'Dependency graph not available — skipping');
+          dependencyGraph = undefined;
+        }
+
         const pipeline = new IndexingPipeline();
 
         console.log(`Indexing: ${config.targetProjectPath}`);
@@ -54,6 +67,7 @@ export function indexCommand(): Command {
             excludePatterns: config.indexing?.excludePatterns,
             maxChunkLines: config.indexing?.maxChunkLines,
             incremental: !options.force,
+            dependencyGraph,
           },
           (progress: IndexingProgress) => {
             const file = progress.currentFile ?? lastFile;

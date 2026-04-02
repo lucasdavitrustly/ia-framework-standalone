@@ -28,6 +28,7 @@
     "@ia-framework/embedding": "workspace:*",
     "@ia-framework/indexer": "workspace:*",
     "@ia-framework/observability": "workspace:*",
+    "@ia-framework/retrieval": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
     "chokidar": "^4.0.0",
     "hono": "^4.12.9"

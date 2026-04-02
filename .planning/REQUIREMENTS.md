@@ -20,7 +20,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **INST-09**: Installer triggers initial codebase indexing after setup completes
 - [x] **INST-10**: Installer configures OpenCode MCP server integration automatically
 - [x] **INST-11**: If framework is already installed, developer can run individual components (dashboard, re-indexing, benchmarks) without re-running full installer
-- [ ] **INST-12**: Installer configures Context7 and Sequential Thinking MCP servers in OpenCode if not already present
+- [x] **INST-12**: Installer configures Context7 and Sequential Thinking MCP servers in OpenCode if not already present
 
 ### Architecture
 
@@ -34,19 +34,19 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **INDX-02**: Indexing uses AST-aware chunking via tree-sitter (function/class/interface boundaries)
 - [x] **INDX-03**: Indexing supports provider-agnostic local embeddings (Ollama, local models)
 - [x] **INDX-04**: Indexing uses dual-vector storage (text embedding + code embedding per point)
-- [ ] **INDX-05**: Indexing builds a dependency graph (imports, type references, function calls) during parsing
+- [x] **INDX-05**: Indexing builds a dependency graph (imports, type references, function calls) during parsing
 - [x] **INDX-06**: Incremental re-indexing detects changed files via git diff and only re-indexes those
 - [x] **INDX-07**: Indexing respects .gitignore and skips irrelevant files (node_modules, build output, etc.)
 - [x] **INDX-08**: All indexing runs fully locally — no codebase data is sent to external services
-- [ ] **INDX-09**: Indexing supports Java as a default language alongside TypeScript and Python — tree-sitter-java grammar is pulled during installation
+- [x] **INDX-09**: Indexing supports Java as a default language alongside TypeScript and Python — tree-sitter-java grammar is pulled during installation
 
 ### Retrieval
 
 - [x] **RETR-01**: Developer can query indexed codebase via semantic search and get relevant code results
 - [x] **RETR-02**: MCP server exposes RAG tools (search_codebase, get_file, get_dependencies) for OpenCode
-- [ ] **RETR-03**: Retrieval expands results 1-2 hops along the dependency graph to include types, interfaces, and utilities
+- [x] **RETR-03**: Retrieval expands results 1-2 hops along the dependency graph to include types, interfaces, and utilities
 - [ ] **RETR-04**: Auto-context mode prepends relevant codebase context to prompts automatically
-- [ ] **RETR-05**: Developer can configure retrieval mode: MCP-only, auto-context, or both
+- [x] **RETR-05**: Developer can configure retrieval mode: MCP-only, auto-context, or both
 - [x] **RETR-06**: All retrieval runs fully locally — queries and results never leave the developer's machine
 
 ### Observability
@@ -73,8 +73,8 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **DASH-02**: Dashboard shows indexing status (progress, coverage, last update time)
 - [x] **DASH-03**: Dashboard shows token usage trends (charts over time)
 - [x] **DASH-04**: Dashboard shows benchmark history with score trend visualization
-- [ ] **DASH-05**: Dashboard shows detected project profile
-- [ ] **DASH-06**: Dashboard syncs with `.ia-framework/project.json` config file
+- [x] **DASH-05**: Dashboard shows detected project profile
+- [x] **DASH-06**: Dashboard syncs with `.ia-framework/project.json` config file
 
 ### Database
 
@@ -84,9 +84,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Workflow Integration
 
-- [ ] **WKFL-01**: GSD planning phases automatically inject relevant architectural context from RAG
-- [ ] **WKFL-02**: GSD execution phases automatically inject relevant code context from RAG
-- [ ] **WKFL-03**: GSD workflows can use online LLMs for reasoning and code generation
+- [x] **WKFL-01**: GSD planning phases automatically inject relevant architectural context from RAG
+- [x] **WKFL-02**: GSD execution phases automatically inject relevant code context from RAG
+- [x] **WKFL-03**: GSD workflows can use online LLMs for reasoning and code generation
 
 ## v2 Requirements
 
