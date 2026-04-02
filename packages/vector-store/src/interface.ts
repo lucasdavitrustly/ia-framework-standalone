@@ -108,4 +108,9 @@ export interface VectorStore {
    * Delete specific points by their chunk IDs.
    */
   deleteByIds(ids: string[]): Promise<void>;
+
+  /**
+   * Delete the entire collection. Used when re-indexing with a different embedding model.
+   */
+  deleteCollection(): Promise<void>;
 }

@@ -6,5 +6,6 @@ export {
   getChangedFiles,
   getCurrentCommit,
   getLastIndexedCommit,
+  getLastEmbeddingModel,
   saveLastIndexedCommit,
 } from './incremental.js';

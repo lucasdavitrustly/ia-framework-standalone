@@ -5,6 +5,7 @@ export interface PersistOptions {
   targetProjectPath?: string | undefined;
   embeddingProvider?: 'openai' | 'ollama' | undefined;
   embeddingModel?: string | undefined;
+  embeddingDimensions?: number | undefined;
 }
 
 const DEFAULT_VECTOR_STORE = {
@@ -39,6 +40,7 @@ export async function persistProfile(
       provider: options.embeddingProvider ?? DEFAULT_EMBEDDING.provider,
       model: options.embeddingModel ?? DEFAULT_EMBEDDING.model,
       baseUrl: DEFAULT_EMBEDDING.baseUrl,
+      ...(options.embeddingDimensions ? { dimensions: options.embeddingDimensions } : {}),
     },
     vectorStore: existing.vectorStore ?? DEFAULT_VECTOR_STORE,
     ...(existing.indexing ? { indexing: existing.indexing } : {}),

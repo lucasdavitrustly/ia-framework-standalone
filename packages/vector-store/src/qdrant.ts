@@ -135,4 +135,8 @@ export class QdrantVectorStore implements VectorStore {
       points: ids.map(toQdrantId),
     });
   }
+
+  async deleteCollection(): Promise<void> {
+    await this.client.deleteCollection(this.collectionName);
+  }
 }

@@ -9,6 +9,7 @@ interface IndexingState {
   lastIndexedCommit: string;
   collectionName: string;
   indexedAt: string;
+  embeddingModel?: string;
 }
 
 function getStatePath(frameworkDir: string): string {
@@ -25,16 +26,28 @@ export async function getLastIndexedCommit(frameworkDir: string): Promise<string
   }
 }
 
+export async function getLastEmbeddingModel(frameworkDir: string): Promise<string | null> {
+  try {
+    const content = await readFile(getStatePath(frameworkDir), 'utf-8');
+    const state = JSON.parse(content) as IndexingState;
+    return state.embeddingModel ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function saveLastIndexedCommit(
   frameworkDir: string,
   commit: string,
   collectionName: string,
+  embeddingModel?: string,
 ): Promise<void> {
   await mkdir(frameworkDir, { recursive: true });
   const state: IndexingState = {
     lastIndexedCommit: commit,
     collectionName,
     indexedAt: new Date().toISOString(),
+    ...(embeddingModel ? { embeddingModel } : {}),
   };
   await writeFile(getStatePath(frameworkDir), JSON.stringify(state, null, 2), 'utf-8');
 }
