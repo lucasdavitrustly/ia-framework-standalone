@@ -48,7 +48,7 @@ metrics:
 |------|---------|
 | `src/file-walker.ts` | `walkFiles()` with tinyglobby + ignore, skips node_modules/.git/dist/build, respects .gitignore |
 | `src/incremental.ts` | `getChangedFiles()` via git diff, `getLastIndexedCommit()`/`saveLastIndexedCommit()` for state persistence |
-| `src/pipeline.ts` | `IndexingPipeline.run()` — orchestrates walk→parse→embed→store with progress callbacks |
+| `src/pipeline.ts` | `IndexingPipeline.run()` — orchestrates walk->parse->embed->store with progress callbacks. Passes `maxChunkLines` config to ast-parser, which splits oversized chunks with signature context preservation. |
 | `src/pipeline.test.ts` | 8 TDD tests (vi.hoisted + vi.mock for ast-parser and incremental) |
 | `src/index.ts` | Package barrel export |
 

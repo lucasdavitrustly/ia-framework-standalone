@@ -138,6 +138,116 @@ export function add(a, b) {
   });
 });
 
+describe('parseFile — TypeScript class decomposition', () => {
+  it('extracts methods from classes as separate function chunks', async () => {
+    const filePath = await makeFile('service.ts', `
+export class OrderService {
+  private orders: string[] = [];
+
+  addOrder(name: string): void {
+    this.orders.push(name);
+  }
+
+  removeOrder(name: string): void {
+    this.orders = this.orders.filter(o => o !== name);
+  }
+
+  getOrders(): string[] {
+    return this.orders;
+  }
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.name).toBe('OrderService');
+
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(3);
+    const names = methods.map((m) => m.name);
+    expect(names).toContain('addOrder');
+    expect(names).toContain('removeOrder');
+    expect(names).toContain('getOrders');
+  });
+
+  it('sets parentName on method chunks extracted from a class', async () => {
+    const filePath = await makeFile('parent.ts', `
+export class UserService {
+  getUser(): string { return 'user'; }
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const method = chunks.find((c) => c.chunkType === 'function' && c.name === 'getUser');
+    expect(method).toBeDefined();
+    expect(method!.parentName).toBe('UserService');
+  });
+});
+
+describe('parseFile — oversized chunk splitting', () => {
+  it('splits an oversized TypeScript function into sub-chunks', async () => {
+    // Generate a function with 50 body lines
+    const bodyLines = Array.from({ length: 50 }, (_, i) =>
+      `  const v${i} = process(${i});`,
+    );
+    const content = [
+      'export function bigFn(): void {',
+      ...bodyLines,
+      '}',
+    ].join('\n');
+
+    const filePath = await makeFile('big.ts', content);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir, maxChunkLines: 20 });
+
+    // Should be split into multiple sub-chunks
+    expect(chunks.length).toBeGreaterThan(1);
+
+    // Each sub-chunk should reference the parent
+    for (const chunk of chunks) {
+      expect(chunk.parentName).toBe('bigFn');
+    }
+
+    // Each sub-chunk should contain the signature for context
+    for (const chunk of chunks) {
+      expect(chunk.content).toContain('export function bigFn(): void {');
+    }
+  });
+
+  it('does not split a small function when maxChunkLines is large', async () => {
+    const filePath = await makeFile('small.ts', `
+export function smallFn(): string {
+  return 'hello';
+}
+    `.trim());
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir, maxChunkLines: 200 });
+    const fn = chunks.find((c) => c.name === 'smallFn');
+    expect(fn).toBeDefined();
+    expect(fn!.parentName).toBeUndefined();
+  });
+
+  it('splits an oversized Java method into sub-chunks', async () => {
+    const bodyLines = Array.from({ length: 50 }, (_, i) =>
+      `        int v${i} = process(${i});`,
+    );
+    const content = [
+      'public class BigService {',
+      '    public void bigMethod() {',
+      ...bodyLines,
+      '    }',
+      '}',
+    ].join('\n');
+
+    const filePath = await makeFile('BigService.java', content);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir, maxChunkLines: 20 });
+
+    // Should have the class chunk plus split method chunks
+    const methodChunks = chunks.filter((c) => c.parentName === 'bigMethod');
+    expect(methodChunks.length).toBeGreaterThan(1);
+  });
+});
+
 describe('parseFile — Java', () => {
   it('detects class declarations with correct chunkType and name', async () => {
     const filePath = await makeFile('UserService.java', `

@@ -486,29 +486,34 @@ await server.connect(transport);
 
 ### Pattern 4: AST-Aware Chunking Strategy
 
-**What:** Use tree-sitter ASTs to create semantically meaningful chunks instead of arbitrary text splits.
+**What:** Use tree-sitter ASTs to create semantically meaningful chunks instead of arbitrary text splits. Split oversized constructs with context preservation.
 **When:** Indexing phase. Critical for retrieval quality.
-**Why:** Text-based chunking breaks code mid-function or mid-class. AST-aware chunking preserves complete semantic units (functions, classes, type definitions), which produces better retrieval results. (Source: Qdrant RAG best practices + tree-sitter docs, HIGH confidence)
+**Why:** Text-based chunking breaks code mid-function or mid-class. AST-aware chunking preserves complete semantic units (functions, classes, type definitions), which produces better retrieval results. For legacy codebases with 500+ line methods, a two-layer splitting strategy prevents embedding dilution. (Source: Qdrant RAG best practices + tree-sitter docs, HIGH confidence)
 
 ```typescript
-// packages/ast-parser/src/chunker.ts
+// packages/ast-parser/src/types.ts
 export interface CodeChunk {
-  id: string;             // Deterministic hash
-  content: string;        // Raw source code of the chunk
+  id: string;              // sha1(filePath:startLine:endLine)
+  content: string;         // Raw source code of the chunk
   filePath: string;
+  relativePath: string;
   language: string;
-  chunkType: 'function' | 'class' | 'interface' | 'type' | 'module' | 'block';
-  name: string;           // Function/class/type name
-  signature: string;      // Condensed signature for search
-  lineStart: number;
-  lineEnd: number;
+  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other';
+  name?: string;           // Function/class/type name
+  startLine: number;       // 1-indexed
+  endLine: number;         // 1-indexed
   imports: string[];       // What this chunk imports
   exports: string[];       // What this chunk exports
+  parentName?: string;     // Set on sub-chunks (method from class, or split fragment)
 }
 
-// Strategy: walk AST, extract top-level declarations as chunks
-// If a declaration exceeds max chunk size, split at method boundaries
-// Always include the full declaration (don't split mid-function)
+// Two-layer strategy:
+// Layer 1 (AST-level): Walk AST, extract top-level declarations as chunks.
+//   Classes are decomposed into individual method chunks with parentName.
+// Layer 2 (post-processing): splitOversizedChunks() in splitter.ts.
+//   Any chunk exceeding maxChunkLines (default: 200) is split into sub-chunks.
+//   Each sub-chunk carries the function signature as a context prefix.
+//   Sub-chunks named functionName$part1, $part2, etc.
 ```
 
 ### Pattern 5: Repository Pattern for Vector Store

@@ -25,6 +25,8 @@ export interface CodeChunk {
   imports: string[];
   /** Names this chunk exports */
   exports: string[];
+  /** Parent construct name when this chunk is a sub-chunk (e.g., method split from a class, or fragment of an oversized function) */
+  parentName?: string | undefined;
 }
 
 /**

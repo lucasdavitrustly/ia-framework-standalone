@@ -25,6 +25,8 @@ export interface ChunkMetadata {
   imports: string[];
   /** Identifiers this chunk exports */
   exports: string[];
+  /** Parent construct name when this is a sub-chunk (e.g., method extracted from a class) */
+  parentName?: string | undefined;
   /** Git commit hash at time of indexing */
   indexedAt: string;
 }
@@ -111,7 +113,7 @@ export interface IndexingConfig {
   includePatterns: string[];
   /** Glob patterns for files to exclude */
   excludePatterns: string[];
-  /** Maximum lines per chunk (default: 100) */
+  /** Maximum lines per chunk (default: 200). Oversized chunks are split with signature context preserved. */
   maxChunkLines?: number | undefined;
   /** Whether to respect .gitignore (default: true) */
   respectGitignore?: boolean | undefined;

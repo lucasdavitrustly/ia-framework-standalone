@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { CodeChunk, ChunkerConfig } from './types.js';
 import { parseTypeScript } from './parsers/typescript.js';
 import { parseJava } from './parsers/java.js';
+import { splitOversizedChunks } from './splitter.js';
 
 const LANGUAGE_MAP: Record<string, string> = {
   '.ts': 'typescript',
@@ -54,9 +55,14 @@ export async function parseFile(
 
   const content = await readFile(filePath, 'utf-8');
 
+  let chunks: CodeChunk[];
+
   if (language === 'java') {
-    return parseJava(content, filePath, relativePath);
+    chunks = parseJava(content, filePath, relativePath);
+  } else {
+    chunks = parseTypeScript(content, filePath, relativePath, language);
   }
 
-  return parseTypeScript(content, filePath, relativePath, language);
+  // Split any chunks exceeding maxChunkLines
+  return splitOversizedChunks(chunks, config.maxChunkLines);
 }

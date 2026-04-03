@@ -15,6 +15,8 @@ export interface ChunkPayload {
   endLine: number;
   imports: string[];
   exports: string[];
+  /** Parent construct name when this is a sub-chunk */
+  parentName?: string | undefined;
   indexedAt: string;
 }
 

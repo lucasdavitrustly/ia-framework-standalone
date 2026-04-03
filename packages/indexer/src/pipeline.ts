@@ -187,6 +187,7 @@ export class IndexingPipeline {
           endLine: chunk.endLine,
           imports: chunk.imports,
           exports: chunk.exports,
+          parentName: chunk.parentName,
           indexedAt: new Date().toISOString(),
         };
         vectorPoints.push({
@@ -231,6 +232,7 @@ export class IndexingPipeline {
                 endLine: chunk.endLine,
                 imports: chunk.imports,
                 exports: chunk.exports,
+                parentName: chunk.parentName,
                 indexedAt: chunk.indexedAt,
               };
               vectorPoints.push({

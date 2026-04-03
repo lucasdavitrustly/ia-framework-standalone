@@ -21,7 +21,7 @@ Your Project                  ia-framework                    OpenCode
                             └──────────────┘
 ```
 
-1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks (not arbitrary text splits), then generates dual embeddings (text + code vectors) stored in Qdrant
+1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks (not arbitrary text splits), splits oversized constructs with signature-preserving context, then generates dual embeddings (text + code vectors) stored in Qdrant
 2. **Serves context via MCP** — OpenCode calls `search_codebase`, `get_file`, and `get_dependencies` tools during conversations to pull in relevant code
 3. **Expands results along the dependency graph** — search results include 1-2 hops of imported files so the AI sees the full picture
 4. **Tracks everything** — token usage, retrieval quality, indexing status, all visible in a browser dashboard
@@ -478,7 +478,8 @@ The main config file is `.ia-framework/project.json`:
   "indexing": {
     "includePatterns": ["**/*.ts", "**/*.py"],
     "excludePatterns": ["**/node_modules/**"],
-    "respectGitignore": true
+    "respectGitignore": true,
+    "maxChunkLines": 200
   },
   "retrieval": {
     "mode": "mcp-only",     // "mcp-only", "auto-context" (v2), "combined" (v2)
@@ -698,7 +699,7 @@ pnpm lint           # ESLint + Prettier
 | Package | Tests | Purpose |
 |---------|-------|---------|
 | `@ia-framework/core` | 7 | Config loader, schemas, logger, shared types |
-| `@ia-framework/ast-parser` | 15 | tree-sitter chunking (functions, classes, interfaces) |
+| `@ia-framework/ast-parser` | 31 | tree-sitter chunking with oversized chunk splitting |
 | `@ia-framework/embedding` | 8 | Ollama + OpenAI embedding adapters |
 | `@ia-framework/vector-store` | 8 | Qdrant dual-vector storage |
 | `@ia-framework/indexer` | 17 | File walker, incremental indexing, context sources |

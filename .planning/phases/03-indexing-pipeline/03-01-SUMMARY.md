@@ -2,20 +2,23 @@
 phase: "03-indexing-pipeline"
 plan: "01"
 subsystem: "ast-parser"
-tags: ["tree-sitter", "ast", "chunking", "typescript", "parsing"]
+tags: ["tree-sitter", "ast", "chunking", "typescript", "java", "parsing", "chunk-splitting"]
 dependency_graph:
   requires: ["01-02"]
-  provides: ["CodeChunk[]", "parseFile()"]
+  provides: ["CodeChunk[]", "parseFile()", "splitOversizedChunks()"]
   affects: ["03-04-indexer"]
 tech_stack:
   added: ["tree-sitter@0.21.1", "tree-sitter-typescript@0.21.2"]
-  patterns: ["per-language parser instance", "AST-aware chunking", "deterministic sha1 chunk IDs"]
+  patterns: ["per-language parser instance", "AST-aware chunking", "deterministic sha1 chunk IDs", "oversized chunk splitting with signature context preservation", "class decomposition into methods"]
 key_files:
   created:
     - packages/ast-parser/src/types.ts
     - packages/ast-parser/src/parsers/typescript.ts
+    - packages/ast-parser/src/parsers/java.ts
     - packages/ast-parser/src/chunker.ts
     - packages/ast-parser/src/chunker.test.ts
+    - packages/ast-parser/src/splitter.ts
+    - packages/ast-parser/src/splitter.test.ts
     - packages/ast-parser/src/index.ts
     - packages/ast-parser/package.json
     - packages/ast-parser/tsconfig.json
@@ -29,12 +32,15 @@ decisions:
   - "Files with only imports (no declarations) return a single 'module' chunk"
   - "Chunk IDs are sha1(filePath:startLine:endLine) for deterministic incremental re-indexing"
   - "onlyBuiltDependencies in root package.json updated to allow tree-sitter native module compilation"
+  - "TypeScript parser decomposes classes into individual method chunks (matching Java parser behavior)"
+  - "Oversized chunks split via post-processing in chunker.ts — each sub-chunk carries function signature as context prefix"
+  - "Sub-chunks named with $partN suffix and linked to parent via parentName field"
 metrics:
   duration: "8 minutes"
   completed: "2026-04-01"
   tasks_completed: 3
   files_created: 8
-  tests_added: 8
+  tests_added: 31
 ---
 
 # Phase 3 Plan 01: AST Parser Summary
@@ -44,10 +50,12 @@ metrics:
 ## What Was Built
 
 The `@ia-framework/ast-parser` package provides `parseFile(filePath, config?)` which:
-1. Reads and parses the source file using tree-sitter's TypeScript/TSX grammar
+1. Reads and parses the source file using tree-sitter's TypeScript/TSX or Java grammar
 2. Walks the AST top-level nodes, extracting declarations (functions, classes, interfaces, types, enums)
-3. Returns `CodeChunk[]` with content, metadata (startLine, endLine, imports, exports), and deterministic IDs
-4. Falls back to a single 'module' chunk for files with only imports or unsupported languages
+3. Decomposes classes into individual method chunks (TypeScript and Java) with `parentName` linking back to the class
+4. Splits any chunk exceeding `maxChunkLines` (default: 200) into sub-chunks, preserving the function/class signature as a context prefix in each sub-chunk
+5. Returns `CodeChunk[]` with content, metadata (startLine, endLine, imports, exports, parentName), and deterministic IDs
+6. Falls back to a single 'module' chunk for files with only imports or unsupported languages
 
 ## Decisions Made
 
@@ -59,15 +67,36 @@ The `@ia-framework/ast-parser` package provides `parseFile(filePath, config?)` w
 
 ## Test Results
 
-All 8 TDD tests pass:
-- ✅ Function declaration detection with name extraction
-- ✅ Class declaration detection with name extraction  
-- ✅ Interface declaration detection with name extraction
-- ✅ Import extraction from import_statement nodes
-- ✅ Module chunk for import-only files
-- ✅ Non-empty IDs and correct 1-indexed line numbers
-- ✅ JavaScript file parsing (.js extension → tsx grammar)
-- ✅ Error thrown for non-existent files
+All 31 tests pass across two test files:
+
+### chunker.test.ts (20 tests)
+- Function declaration detection with name extraction
+- Class declaration detection with name extraction
+- Interface declaration detection with name extraction
+- Import extraction from import_statement nodes
+- Module chunk for import-only files
+- Non-empty IDs and correct 1-indexed line numbers
+- JavaScript file parsing (.js extension -> tsx grammar)
+- Error thrown for non-existent files
+- TypeScript class decomposition: methods extracted as separate function chunks
+- TypeScript class decomposition: parentName set on method chunks
+- Oversized chunk splitting: TypeScript function split into sub-chunks
+- Oversized chunk splitting: small functions not split when within limit
+- Oversized chunk splitting: Java methods split into sub-chunks
+- Java class/method/interface/enum detection (7 tests)
+
+### splitter.test.ts (11 tests)
+- Chunks within limit passed through unchanged
+- Oversized chunks split into sub-chunks
+- Function signature preserved in each sub-chunk
+- Sub-chunks named with $partN suffix
+- Unique IDs generated for each sub-chunk
+- Sub-chunks have empty exports (parent owns the export)
+- Sub-chunks inherit imports from original chunk
+- Default maxChunkLines of 200 when not specified
+- Splitting disabled when maxChunkLines is 0
+- Mixed chunks: only oversized ones are split
+- All body lines covered without gaps or loss
 
 ## Deviations from Plan
 
@@ -84,8 +113,11 @@ All 8 TDD tests pass:
 
 - [x] packages/ast-parser/src/types.ts — FOUND
 - [x] packages/ast-parser/src/parsers/typescript.ts — FOUND
+- [x] packages/ast-parser/src/parsers/java.ts — FOUND
 - [x] packages/ast-parser/src/chunker.ts — FOUND
 - [x] packages/ast-parser/src/chunker.test.ts — FOUND
+- [x] packages/ast-parser/src/splitter.ts — FOUND
+- [x] packages/ast-parser/src/splitter.test.ts — FOUND
 - [x] packages/ast-parser/src/index.ts — FOUND
 - [x] packages/ast-parser/dist/index.js — FOUND
 - [x] Commit 962778d — FOUND
