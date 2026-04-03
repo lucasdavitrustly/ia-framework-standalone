@@ -149,6 +149,9 @@ importers:
       '@ia-framework/observability':
         specifier: workspace:*
         version: link:../observability
+      '@ia-framework/project-detector':
+        specifier: workspace:*
+        version: link:../project-detector
       '@ia-framework/retrieval':
         specifier: workspace:*
         version: link:../retrieval

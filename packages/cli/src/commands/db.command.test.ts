@@ -16,7 +16,14 @@ const {
   const mockClose = vi.fn().mockResolvedValue(undefined);
   const mockGetChunks = vi.fn().mockResolvedValue([]);
   const mockPipelineRun = vi.fn().mockResolvedValue({ filesIndexed: 0, chunksIndexed: 7 });
-  return { mockLoadDbConfig, mockLoadConfig, mockTestConnection, mockClose, mockGetChunks, mockPipelineRun };
+  return {
+    mockLoadDbConfig,
+    mockLoadConfig,
+    mockTestConnection,
+    mockClose,
+    mockGetChunks,
+    mockPipelineRun,
+  };
 });
 
 vi.mock('@ia-framework/db-context', async (importOriginal) => {
@@ -61,7 +68,13 @@ vi.mock('@ia-framework/vector-store', () => ({
 // ── Import the command factory after mocks ────────────────────────────────────
 import { dbCommand } from './db.command.js';
 
-const baseDbConfig = { host: 'localhost', port: 5432, database: 'testdb', user: 'testuser', password: 'secret' };
+const baseDbConfig = {
+  host: 'localhost',
+  port: 5432,
+  database: 'testdb',
+  user: 'testuser',
+  password: 'secret',
+};
 const baseProjectConfig = {
   targetProjectPath: '/target',
   embedding: { provider: 'ollama', model: 'nomic-embed-text' },
@@ -77,20 +90,31 @@ function captureOutput(fn: () => Promise<void>): Promise<{ out: string[]; err: s
   console.log = (...args: unknown[]) => out.push(args.map(String).join(' '));
   console.error = (...args: unknown[]) => err.push(args.map(String).join(' '));
   return fn().then(
-    () => { console.log = originalLog; console.error = originalError; return { out, err }; },
-    (e: unknown) => { console.log = originalLog; console.error = originalError; throw e; },
+    () => {
+      console.log = originalLog;
+      console.error = originalError;
+      return { out, err };
+    },
+    (e: unknown) => {
+      console.log = originalLog;
+      console.error = originalError;
+      throw e;
+    },
   );
 }
 
 // Helper: parse and run a subcommand
-async function runSubcommand(args: string[]): Promise<{ out: string[]; err: string[]; exitCode?: number }> {
+async function runSubcommand(
+  args: string[],
+): Promise<{ out: string[]; err: string[]; exitCode: number | undefined }> {
   const cmd = dbCommand();
   let exitCode: number | undefined;
-  const mockExit = vi.spyOn(process, 'exit').mockImplementation((code?: number | string) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockExit = vi.spyOn(process, 'exit').mockImplementation(((code?: any) => {
     exitCode = typeof code === 'number' ? code : 0;
     throw new Error(`process.exit(${exitCode})`);
-  });
-  
+  }) as never);
+
   const { out, err } = await captureOutput(async () => {
     try {
       // Use ['node', 'db', ...args] since Commander's default from='process.argv' strips first 2
@@ -101,7 +125,7 @@ async function runSubcommand(args: string[]): Promise<{ out: string[]; err: stri
       }
     }
   });
-  
+
   mockExit.mockRestore();
   return { out, err, exitCode };
 }
@@ -137,7 +161,11 @@ describe('db connect', () => {
     mockLoadDbConfig.mockResolvedValue(baseDbConfig);
     mockTestConnection.mockRejectedValue(new Error('ECONNREFUSED'));
 
-    const { out, err, exitCode } = await runSubcommand(['connect', '--config', '/path/project.json']);
+    const { out, err, exitCode } = await runSubcommand([
+      'connect',
+      '--config',
+      '/path/project.json',
+    ]);
 
     const output = [...out, ...err].join('\n');
     expect(output).toMatch(/Connection failed|ECONNREFUSED/i);
@@ -198,7 +226,9 @@ describe('db index', () => {
     await runSubcommand(['index', '--config', '/path/project.json']);
 
     expect(mockPipelineRun).toHaveBeenCalledOnce();
-    const [pipelineConfig] = mockPipelineRun.mock.calls[0] as [{ contextSources: { name: string }[] }];
+    const [pipelineConfig] = mockPipelineRun.mock.calls[0] as [
+      { contextSources: { name: string }[] },
+    ];
     expect(pipelineConfig.contextSources).toHaveLength(1);
     expect(pipelineConfig.contextSources[0]?.name).toBe('postgres');
   });

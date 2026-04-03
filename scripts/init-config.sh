@@ -59,7 +59,29 @@ init_config() {
   # Auto-detect target project's tech stack using project-detector
   echo -e "  ${YELLOW}→${NC} Detecting project stack..."
 
+  local cli_bin="${ia_dir}/packages/cli/dist/bin.js"
   local detect_script="${ia_dir}/scripts/detect-project.mjs"
+
+  # Prefer CLI init command (built binary); fall back to bridge script
+  if [ -f "$cli_bin" ]; then
+    local cli_args=("$target_path" "--config" "$config_file")
+    if [ -n "${SELECTED_EMBED_MODEL:-}" ]; then
+      cli_args+=("--embed-model" "$SELECTED_EMBED_MODEL")
+    fi
+    if [ -n "${SELECTED_EMBED_DIMS:-}" ]; then
+      cli_args+=("--embed-dims" "$SELECTED_EMBED_DIMS")
+    fi
+    cli_args+=("--force")
+    if node "$cli_bin" init "${cli_args[@]}"; then
+      echo -e "  ${GREEN}✓${NC} Config created with detected profile: ${config_file}"
+      echo "    Target project: ${target_path}"
+      return 0
+    else
+      echo -e "  ${YELLOW}⚠${NC} CLI init failed — trying bridge script"
+    fi
+  fi
+
+  # Fallback: use detect-project.mjs bridge script
   if [ -f "${ia_dir}/packages/project-detector/dist/index.js" ] && [ -f "$detect_script" ]; then
     if node "$detect_script" "$target_path" "$config_file" "${SELECTED_EMBED_MODEL:-}" "${SELECTED_EMBED_DIMS:-}"; then
       echo -e "  ${GREEN}✓${NC} Config created with detected profile: ${config_file}"

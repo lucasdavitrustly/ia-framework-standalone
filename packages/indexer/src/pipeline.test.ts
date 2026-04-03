@@ -44,9 +44,9 @@ function makeMockEmbeddingProvider(dim = 3) {
     model: 'mock-model',
     dimensions: dim,
     embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
-    embedBatch: vi.fn().mockImplementation((texts: string[]) =>
-      Promise.resolve(texts.map(() => [0.1, 0.2, 0.3])),
-    ),
+    embedBatch: vi
+      .fn()
+      .mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => [0.1, 0.2, 0.3]))),
     estimateTokens: vi.fn().mockReturnValue(10),
   };
 }
@@ -56,9 +56,17 @@ function makeMockVectorStore() {
     initialize: vi.fn().mockResolvedValue(undefined),
     upsertBatch: vi.fn().mockResolvedValue(undefined),
     search: vi.fn().mockResolvedValue([]),
-    getCollectionInfo: vi.fn().mockResolvedValue({ name: 'test', pointCount: 0, vectorDimensions: { text: 3, code: 3 }, status: 'green' }),
+    getCollectionInfo: vi
+      .fn()
+      .mockResolvedValue({
+        name: 'test',
+        pointCount: 0,
+        vectorDimensions: { text: 3, code: 3 },
+        status: 'green',
+      }),
     deleteByFilter: vi.fn().mockResolvedValue(0),
     deleteByIds: vi.fn().mockResolvedValue(undefined),
+    deleteCollection: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -130,7 +138,9 @@ describe('IndexingPipeline', () => {
     await pipeline.run(makeConfig());
 
     expect(vectorStore.upsertBatch).toHaveBeenCalledOnce();
-    const [points] = vectorStore.upsertBatch.mock.calls[0] as [{ textVector: number[]; codeVector: number[] }[]];
+    const [points] = vectorStore.upsertBatch.mock.calls[0] as [
+      { textVector: number[]; codeVector: number[] }[],
+    ];
     expect(points).toHaveLength(1);
     expect(points[0]!.textVector).toEqual([0.1, 0.2, 0.3]);
     expect(points[0]!.codeVector).toEqual([0.1, 0.2, 0.3]);
@@ -178,8 +188,12 @@ describe('IndexingPipeline', () => {
 
   it('Test 7: run() calls vectorStore.initialize() before upserting', async () => {
     const callOrder: string[] = [];
-    vectorStore.initialize.mockImplementation(async () => { callOrder.push('initialize'); });
-    vectorStore.upsertBatch.mockImplementation(async () => { callOrder.push('upsertBatch'); });
+    vectorStore.initialize.mockImplementation(async () => {
+      callOrder.push('initialize');
+    });
+    vectorStore.upsertBatch.mockImplementation(async () => {
+      callOrder.push('upsertBatch');
+    });
 
     await pipeline.run(makeConfig());
 
@@ -274,7 +288,10 @@ describe('IndexingPipeline — contextSources', () => {
 
   // Test 2: Handles multiple ContextSources sequentially
   it('handles multiple ContextSources sequentially', async () => {
-    const source1 = makeContextSource('postgres', [makeTableChunk('users'), makeTableChunk('orders')]);
+    const source1 = makeContextSource('postgres', [
+      makeTableChunk('users'),
+      makeTableChunk('orders'),
+    ]);
     const source2 = makeContextSource('docs', [makeTableChunk('products')]);
 
     const result = await pipeline.run(makeConfig({ contextSources: [source1, source2] }));
@@ -286,31 +303,41 @@ describe('IndexingPipeline — contextSources', () => {
 
   // Test 3: Skips a ContextSource that throws (logs error, continues with next)
   it('skips a ContextSource that throws and continues with next', async () => {
-    const failingSource = { name: 'broken', getChunks: vi.fn().mockRejectedValue(new Error('connection failed')) };
+    const failingSource = {
+      name: 'broken',
+      getChunks: vi.fn().mockRejectedValue(new Error('connection failed')),
+    };
     const workingSource = makeContextSource('postgres', [makeTableChunk('users')]);
 
-    const result = await pipeline.run(makeConfig({ contextSources: [failingSource, workingSource] }));
+    const result = await pipeline.run(
+      makeConfig({ contextSources: [failingSource, workingSource] }),
+    );
 
     expect(result.chunksIndexed).toBe(1); // only from workingSource
   });
 
   // Test 4: Returns correct chunksIndexed count including context source chunks
   it('returns correct chunksIndexed count including context source chunks', async () => {
-    mockParseFile.mockResolvedValue([{
-      id: 'file-chunk-1',
-      filePath: join(tmpDir, 'foo.ts'),
-      relativePath: 'foo.ts',
-      language: 'typescript',
-      chunkType: 'function',
-      name: 'foo',
-      content: 'function foo() {}',
-      startLine: 1,
-      endLine: 1,
-      imports: [],
-      exports: ['foo'],
-    }]);
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'file-chunk-1',
+        filePath: join(tmpDir, 'foo.ts'),
+        relativePath: 'foo.ts',
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'foo',
+        content: 'function foo() {}',
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: ['foo'],
+      },
+    ]);
 
-    const source = makeContextSource('postgres', [makeTableChunk('users'), makeTableChunk('orders')]);
+    const source = makeContextSource('postgres', [
+      makeTableChunk('users'),
+      makeTableChunk('orders'),
+    ]);
     const result = await pipeline.run(makeConfig({ contextSources: [source] }));
 
     // 1 file chunk + 2 DB chunks = 3 total
@@ -394,11 +421,7 @@ describe('IndexingPipeline — dependencyGraph', () => {
     await pipeline.run(makeConfig({ dependencyGraph: mockGraph }));
 
     expect(mockGraph.initialize).toHaveBeenCalledOnce();
-    expect(mockGraph.upsertEdges).toHaveBeenCalledWith(
-      join(tmpDir, 'foo.ts'),
-      ['./bar'],
-      tmpDir,
-    );
+    expect(mockGraph.upsertEdges).toHaveBeenCalledWith(join(tmpDir, 'foo.ts'), ['./bar'], tmpDir);
   });
 
   it('does not call upsertEdges for chunks with empty imports', async () => {
@@ -434,19 +457,21 @@ describe('IndexingPipeline — dependencyGraph', () => {
     const changedFile = join(tmpDir, 'foo.ts');
     mockGetLastIndexedCommit.mockResolvedValue('old-commit');
     mockGetChangedFiles.mockResolvedValue([changedFile]);
-    mockParseFile.mockResolvedValue([{
-      id: 'chunk-1',
-      filePath: changedFile,
-      relativePath: 'foo.ts',
-      language: 'typescript',
-      chunkType: 'function',
-      name: 'foo',
-      content: 'function foo() {}',
-      startLine: 1,
-      endLine: 1,
-      imports: [],
-      exports: ['foo'],
-    }]);
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'chunk-1',
+        filePath: changedFile,
+        relativePath: 'foo.ts',
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'foo',
+        content: 'function foo() {}',
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: ['foo'],
+      },
+    ]);
 
     const mockGraph = {
       initialize: vi.fn(),
@@ -461,19 +486,21 @@ describe('IndexingPipeline — dependencyGraph', () => {
   });
 
   it('does not call graph methods when dependencyGraph is undefined', async () => {
-    mockParseFile.mockResolvedValue([{
-      id: 'chunk-1',
-      filePath: join(tmpDir, 'foo.ts'),
-      relativePath: 'foo.ts',
-      language: 'typescript',
-      chunkType: 'function',
-      name: 'foo',
-      content: 'import { bar } from "./bar";\nfunction foo() {}',
-      startLine: 1,
-      endLine: 2,
-      imports: ['./bar'],
-      exports: ['foo'],
-    }]);
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'chunk-1',
+        filePath: join(tmpDir, 'foo.ts'),
+        relativePath: 'foo.ts',
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'foo',
+        content: 'import { bar } from "./bar";\nfunction foo() {}',
+        startLine: 1,
+        endLine: 2,
+        imports: ['./bar'],
+        exports: ['foo'],
+      },
+    ]);
 
     // No dependencyGraph in config — should not throw
     await expect(pipeline.run(makeConfig())).resolves.toBeDefined();

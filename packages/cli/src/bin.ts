@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { initCommand } from './commands/init.command.js';
 import { indexCommand } from './commands/index.command.js';
 import { searchCommand } from './commands/search.command.js';
 import { statusCommand } from './commands/status.command.js';
@@ -11,6 +12,7 @@ const program = new Command('ia-framework')
   .version('0.1.0')
   .description('AI codebase context framework — index your codebase for AI understanding');
 
+program.addCommand(initCommand());
 program.addCommand(indexCommand());
 program.addCommand(searchCommand());
 program.addCommand(statusCommand());

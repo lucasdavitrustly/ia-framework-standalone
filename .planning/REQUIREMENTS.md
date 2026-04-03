@@ -113,83 +113,89 @@ Deferred to future release. Tracked but not in current roadmap.
 
 Explicitly excluded. Documented to prevent scope creep.
 
-| Feature | Reason |
-|---------|--------|
-| Own IDE / editor | OpenCode is the primary interface — framework provides infrastructure, not UI |
-| Code completion / autocomplete | AI client's responsibility — framework improves context, not suggestions |
-| Own chat interface | OpenCode has full TUI chat — building another is redundant |
-| Multi-tenancy / authentication | Internal single-user tool — no auth needed |
-| npm / binary distribution | Git clone + ./install.sh sufficient for internal use |
-| Proactive task suggestion | Unreliable without deep understanding — be reactive, not intrusive |
-| Cloud-hosted RAG | RAG must run fully locally for codebase privacy |
-| Sending codebase to external APIs | Privacy constraint — only GSD reasoning uses online LLMs |
+| Feature                           | Reason                                                                        |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| Own IDE / editor                  | OpenCode is the primary interface — framework provides infrastructure, not UI |
+| Code completion / autocomplete    | AI client's responsibility — framework improves context, not suggestions      |
+| Own chat interface                | OpenCode has full TUI chat — building another is redundant                    |
+| Multi-tenancy / authentication    | Internal single-user tool — no auth needed                                    |
+| npm / binary distribution         | Git clone + ./install.sh sufficient for internal use                          |
+| Proactive task suggestion         | Unreliable without deep understanding — be reactive, not intrusive            |
+| Cloud-hosted RAG                  | RAG must run fully locally for codebase privacy                               |
+| Sending codebase to external APIs | Privacy constraint — only GSD reasoning uses online LLMs                      |
 
 ## Traceability
 
 Which phases cover which requirements. Updated during roadmap creation.
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| INST-01 | Phase 5 | Pending |
-| INST-02 | Phase 5 | Pending |
-| INST-03 | Phase 5 | Pending |
-| INST-04 | Phase 5 | Pending |
-| INST-05 | Phase 2 | Complete |
-| INST-06 | Phase 2 | Complete |
-| INST-07 | Phase 2 | Complete |
-| INST-08 | Phase 5 | Pending |
-| INST-09 | Phase 5 | Pending |
-| INST-10 | Phase 5 | Pending |
-| INST-11 | Phase 5 | Pending |
-| INST-12 | Phase 5 | Pending |
-| ARCH-01 | Phase 1 | Complete |
-| ARCH-02 | Phase 1 | Complete |
-| ARCH-03 | Phase 1 | Complete |
-| INDX-01 | Phase 3 | Pending |
-| INDX-02 | Phase 3 | Pending |
-| INDX-03 | Phase 3 | Pending |
-| INDX-04 | Phase 3 | Pending |
-| INDX-05 | Phase 3 | Pending |
-| INDX-06 | Phase 3 | Pending |
-| INDX-07 | Phase 3 | Pending |
-| INDX-08 | Phase 3 | Pending |
-| INDX-09 | Phase 3 | Pending |
-| RETR-01 | Phase 4 | Pending |
-| RETR-02 | Phase 4 | Pending |
-| RETR-03 | Phase 10 | Pending |
-| RETR-04 | Phase 10 | Pending |
-| RETR-05 | Phase 10 | Pending |
-| RETR-06 | Phase 4 | Pending |
-| OBSV-01 | Phase 6 | Complete |
-| OBSV-02 | Phase 6 | Complete |
-| OBSV-03 | Phase 6 | Complete |
-| OBSV-04 | Phase 6 | Complete |
-| OBSV-05 | Phase 6 | Complete |
-| BNCH-01 | Phase 7 | Pending |
-| BNCH-02 | Phase 7 | Pending |
-| BNCH-03 | Phase 7 | Pending |
-| BNCH-04 | Phase 7 | Pending |
-| BNCH-05 | Phase 7 | Pending |
-| BNCH-06 | Phase 7 | Pending |
-| BNCH-07 | Phase 8 | Complete |
-| DASH-01 | Phase 8 | Complete |
-| DASH-02 | Phase 8 | Complete |
-| DASH-03 | Phase 8 | Complete |
-| DASH-04 | Phase 8 | Complete |
-| DASH-05 | Phase 8 | Pending |
-| DASH-06 | Phase 8 | Pending |
-| DBAS-01 | Phase 9 | Complete |
-| DBAS-02 | Phase 9 | Complete |
-| DBAS-03 | Phase 9 | Complete |
-| WKFL-01 | Phase 10 | Pending |
-| WKFL-02 | Phase 10 | Pending |
-| WKFL-03 | Phase 10 | Pending |
+| Requirement | Phase       | Status                           |
+| ----------- | ----------- | -------------------------------- |
+| INST-01     | Phase 5     | Complete                         |
+| INST-02     | Phase 5     | Complete                         |
+| INST-03     | Phase 5     | Complete                         |
+| INST-04     | Phase 5     | Complete                         |
+| INST-05     | Phase 2     | Complete                         |
+| INST-06     | Phase 2     | Complete                         |
+| INST-07     | Phase 2     | Complete                         |
+| INST-08     | Phase 5     | Complete                         |
+| INST-09     | Phase 5     | Complete                         |
+| INST-10     | Phase 5     | Complete                         |
+| INST-11     | Phase 5     | Complete                         |
+| INST-12     | Phase 5     | Complete                         |
+| ARCH-01     | Phase 1     | Complete                         |
+| ARCH-02     | Phase 1     | Complete                         |
+| ARCH-03     | Phase 1     | Complete                         |
+| INDX-01     | Phase 3     | Complete                         |
+| INDX-02     | Phase 3     | Complete                         |
+| INDX-03     | Phase 3     | Complete                         |
+| INDX-04     | Phase 3     | Complete                         |
+| INDX-05     | Phase 3, 10 | Complete                         |
+| INDX-06     | Phase 3     | Complete                         |
+| INDX-07     | Phase 3     | Complete                         |
+| INDX-08     | Phase 3     | Complete                         |
+| INDX-09     | Phase 3     | Complete                         |
+| RETR-01     | Phase 4     | Complete                         |
+| RETR-02     | Phase 4     | Complete                         |
+| RETR-03     | Phase 10    | Complete                         |
+| RETR-04     | Phase 10    | Deferred (v2)                    |
+| RETR-05     | Phase 10    | Complete                         |
+| RETR-06     | Phase 4     | Complete                         |
+| OBSV-01     | Phase 6     | Complete                         |
+| OBSV-02     | Phase 6     | Complete                         |
+| OBSV-03     | Phase 6     | Complete                         |
+| OBSV-04     | Phase 6     | Complete                         |
+| OBSV-05     | Phase 6     | Complete                         |
+| BNCH-01     | Phase 7     | Partial (retrieval quality only) |
+| BNCH-02     | Phase 7     | Complete                         |
+| BNCH-03     | Phase 7     | Complete                         |
+| BNCH-04     | Phase 7     | Complete                         |
+| BNCH-05     | Phase 7     | Complete                         |
+| BNCH-06     | Phase 7     | Complete                         |
+| BNCH-07     | Phase 8     | Complete                         |
+| DASH-01     | Phase 8     | Complete                         |
+| DASH-02     | Phase 8     | Complete                         |
+| DASH-03     | Phase 8     | Complete                         |
+| DASH-04     | Phase 8     | Complete                         |
+| DASH-05     | Phase 8     | Complete                         |
+| DASH-06     | Phase 8     | Complete                         |
+| DBAS-01     | Phase 9     | Complete                         |
+| DBAS-02     | Phase 9     | Complete                         |
+| DBAS-03     | Phase 9     | Complete                         |
+| WKFL-01     | Phase 10    | Complete                         |
+| WKFL-02     | Phase 10    | Complete                         |
+| WKFL-03     | Phase 10    | Complete                         |
 
 **Coverage:**
+
 - v1 requirements: 54 total
 - Mapped to phases: 54
+- Complete: 51
+- Partial: 1 (BNCH-01)
+- Deferred to v2: 1 (RETR-04)
+- Unchecked: 1 (BNCH-01 checkbox — intentionally partial)
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-03-31*
-*Last updated: 2026-04-02 — added INST-12 (Context7 + Sequential Thinking MCP servers), INDX-09 (Java tree-sitter grammar)*
+
+_Requirements defined: 2026-03-31_
+_Last updated: 2026-04-03 — synced traceability table with actual implementation status across all phases_
