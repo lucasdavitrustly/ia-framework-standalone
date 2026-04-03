@@ -1,0 +1,36 @@
+{
+  "name": "@ia-framework/retrieval",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@ia-framework/core": "workspace:*",
+    "@ia-framework/embedding": "workspace:*",
+    "@ia-framework/vector-store": "workspace:*",
+    "better-sqlite3": "^12.8.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "vitest": "^4.1.2",
+    "typescript": "^5.9.0"
+  }
+}

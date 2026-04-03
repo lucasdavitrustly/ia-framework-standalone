@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A TypeScript monorepo that helps developers use AI to build features in existing large projects. It provides a one-shot installer (`./install.sh`) that auto-detects the target project's stack, sets up local RAG via Qdrant in Docker, and integrates with OpenCode through MCP servers and auto-context injection. A monitoring dashboard tracks token usage, indexing status, and RAG quality benchmarks. The framework extends GSD workflows so AI-guided feature development automatically leverages codebase context.
+A TypeScript monorepo that helps developers use AI to build features in existing large projects. It is a **standalone tool** — cloned and run independently from the target project. It provides a one-shot installer (`./install.sh`) that auto-detects the target project's stack, sets up local RAG via Qdrant in Docker, and integrates with OpenCode through MCP servers and auto-context injection. A monitoring dashboard tracks token usage, indexing status, and RAG quality benchmarks. GSD workflows run inside the target project directory, and all GSD-generated artifacts (.planning/, AGENTS.md) belong to the target project — not the framework.
 
 ## Core Value
 
@@ -50,7 +50,7 @@ The problem: developers using AI to build features in large codebases get poor r
 
 This framework solves the context problem through local RAG — the codebase is indexed with AST-aware parsing, stored in Qdrant, and retrieved automatically when the developer prompts for features. The retrieval uses semantic search first, then expands to dependency graph to ensure the AI sees not just relevant code but also the types, interfaces, and utilities it depends on.
 
-The framework is distributed as a git repo. Developers clone it anywhere and run `./install.sh`, which detects their project profile (language, framework, test runner, commands), sets up Qdrant in Docker, indexes the codebase, and configures OpenCode integration.
+The framework is distributed as a git repo. Developers clone it anywhere and run `./install.sh`, which asks for the target project path, detects the project profile (language, framework, test runner, commands), sets up Qdrant in Docker, indexes the codebase, and configures OpenCode integration. The framework lives outside the target project — it points at codebases but never installs itself inside them. GSD workflows run in the target project's working directory, and all GSD artifacts (.planning/, AGENTS.md) are committed to the target project's repo.
 
 The monitoring dashboard (also Docker) provides visibility into indexing health, token consumption, and — critically — RAG quality benchmarks. When developers change the embedding model or chunking strategy, they can run end-to-end benchmarks that measure whether AI output actually compiles and passes tests, then see the score trend over time.
 
@@ -61,7 +61,7 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 ## Constraints
 
 - **Language**: TypeScript — all components (installer logic, MCP servers, dashboard, benchmark runner)
-- **Testing**: Jest with TDD — tests written before implementation for all framework code
+- **Testing**: Vitest with TDD — tests written before implementation for all framework code (ecosystem-aligned, zero-config for TS monorepos)
 - **Code Quality**: ESLint + Prettier + strict TypeScript + architectural rules (no circular deps, layer boundaries)
 - **Infrastructure**: Docker required — Qdrant and dashboard run as containers
 - **Interface**: OpenCode is the primary developer interface — framework provides tools, not UI for coding
@@ -78,8 +78,11 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 | Monorepo structure | All components co-located, simpler dependency management | — Pending |
 | MCP + auto-context (configurable) | Both retrieval modes available, benchmarkable against each other | — Pending |
 | Clone anywhere + install script | No npm publish needed, simple distribution for internal tool | — Pending |
+| Standalone architecture | Framework lives outside target project, GSD artifacts belong to target | — Pending |
 | AST-aware + dependency graph | Better retrieval than generic text chunking — understands code structure | — Pending |
-| Jest for testing | Widely used, good TypeScript support, team familiarity | — Pending |
+| Jest for testing | Widely used, good TypeScript support, team familiarity | ⚠️ Revisit — switching to Vitest per research |
+| Vitest over Jest | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API | — Pending |
+| Dual-vector search | Text + code embeddings per point — avoids missing ~40% of queries | — Pending |
 | Full code quality enforcement | Framework practices what it preaches — clean code standards | — Pending |
 | Dashboard for benchmarks | Visual benchmark history more actionable than CLI output | — Pending |
 
@@ -101,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-31 after initialization*
+*Last updated: 2026-03-31 after research (switched Jest → Vitest, added dual-vector decision, standalone architecture)*

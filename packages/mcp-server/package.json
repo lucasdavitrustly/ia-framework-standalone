@@ -1,0 +1,43 @@
+{
+  "name": "@ia-framework/mcp-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "ia-mcp-server": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@ia-framework/core": "workspace:*",
+    "@ia-framework/db-context": "workspace:*",
+    "@ia-framework/embedding": "workspace:*",
+    "@ia-framework/indexer": "workspace:*",
+    "@ia-framework/observability": "workspace:*",
+    "@ia-framework/retrieval": "workspace:*",
+    "@ia-framework/vector-store": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "vitest": "^4.1.2",
+    "typescript": "^5.9.0"
+  }
+}
