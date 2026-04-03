@@ -29,18 +29,29 @@ function captureOutput(fn: () => Promise<void>): Promise<{ out: string[]; err: s
   console.log = (...args: unknown[]) => out.push(args.map(String).join(' '));
   console.error = (...args: unknown[]) => err.push(args.map(String).join(' '));
   return fn().then(
-    () => { console.log = originalLog; console.error = originalError; return { out, err }; },
-    (e: unknown) => { console.log = originalLog; console.error = originalError; throw e; },
+    () => {
+      console.log = originalLog;
+      console.error = originalError;
+      return { out, err };
+    },
+    (e: unknown) => {
+      console.log = originalLog;
+      console.error = originalError;
+      throw e;
+    },
   );
 }
 
-async function runSubcommand(args: string[]): Promise<{ out: string[]; err: string[]; exitCode?: number }> {
+async function runSubcommand(
+  args: string[],
+): Promise<{ out: string[]; err: string[]; exitCode: number | undefined }> {
   const cmd = agentsCommand();
   let exitCode: number | undefined;
-  const mockExit = vi.spyOn(process, 'exit').mockImplementation((code?: number | string) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockExit = vi.spyOn(process, 'exit').mockImplementation(((code?: any) => {
     exitCode = typeof code === 'number' ? code : 0;
     throw new Error(`process.exit(${exitCode})`);
-  });
+  }) as never);
 
   const { out, err } = await captureOutput(async () => {
     try {
@@ -80,8 +91,10 @@ describe('agents inject', () => {
 
     const { out } = await runSubcommand([
       'inject',
-      '--config', '/path/project.json',
-      '--file', agentsPath,
+      '--config',
+      '/path/project.json',
+      '--file',
+      agentsPath,
     ]);
 
     const content = await readFile(agentsPath, 'utf-8');
@@ -106,11 +119,7 @@ describe('agents inject', () => {
     ].join('\n');
     await writeFile(agentsPath, existing);
 
-    await runSubcommand([
-      'inject',
-      '--config', '/path/project.json',
-      '--file', agentsPath,
-    ]);
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
 
     const content = await readFile(agentsPath, 'utf-8');
     expect(content).not.toContain('old content here');
@@ -125,11 +134,7 @@ describe('agents inject', () => {
   it('creates file when --file points to non-existent path', async () => {
     const newPath = join(targetDir, 'CLAUDE.md');
 
-    await runSubcommand([
-      'inject',
-      '--config', '/path/project.json',
-      '--file', newPath,
-    ]);
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', newPath]);
 
     const content = await readFile(newPath, 'utf-8');
     expect(content).toContain(RAG_MARKER_START);
@@ -142,8 +147,10 @@ describe('agents inject', () => {
 
     const { err, exitCode } = await runSubcommand([
       'inject',
-      '--config', '/path/project.json',
-      '--file', join(targetDir, 'AGENTS.md'),
+      '--config',
+      '/path/project.json',
+      '--file',
+      join(targetDir, 'AGENTS.md'),
     ]);
 
     expect(exitCode).toBe(1);
@@ -155,11 +162,7 @@ describe('agents inject', () => {
     const filePath = join(targetDir, 'AGENTS.md');
     await writeFile(filePath, '# Project\n\nSome content.\n');
 
-    await runSubcommand([
-      'inject',
-      '--config', '/path/project.json',
-      '--file', filePath,
-    ]);
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', filePath]);
 
     const content = await readFile(filePath, 'utf-8');
     // Original content is before markers
