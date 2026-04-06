@@ -129,6 +129,10 @@ export interface ApiDbStatus {
   error?: string;
 }
 
+export interface ApiStopResponse {
+  message: string;
+}
+
 // Base URL — same origin via Vite proxy in dev; relative path in production
 const BASE = '';
 
@@ -168,5 +172,6 @@ export const DashboardClient = {
   getIndexingStatus: () => get<ApiIndexingStatus>('/api/indexing/status'),
   triggerIndexing: (body?: { incremental?: boolean; label?: string }) =>
     post<ApiTriggerResponse>('/api/indexing/trigger', body),
+  stopIndexing: () => post<ApiStopResponse>('/api/indexing/stop'),
   getDbStatus: () => get<ApiDbStatus>('/api/db/status'),
 };

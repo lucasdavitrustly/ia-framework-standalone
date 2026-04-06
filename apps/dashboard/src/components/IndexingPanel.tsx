@@ -31,6 +31,7 @@ export default function IndexingPanel() {
   const [status, setStatus] = useState<ApiIndexingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -76,6 +77,18 @@ export default function IndexingPanel() {
     }
   }
 
+  async function handleStop() {
+    setStopping(true);
+    setTriggerError(null);
+    try {
+      await DashboardClient.stopIndexing();
+    } catch (e: unknown) {
+      setTriggerError(e instanceof Error ? e.message : 'Failed to stop indexing');
+    } finally {
+      setStopping(false);
+    }
+  }
+
   const isRunning = status?.running ?? false;
   const isDone = status?.stage === 'done';
 
@@ -110,13 +123,24 @@ export default function IndexingPanel() {
       {/* Header row */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Indexing</h3>
-        <button
-          onClick={() => void handleTrigger()}
-          disabled={isRunning || triggering || loading}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {isRunning || triggering ? 'Indexing…' : 'Start Indexing'}
-        </button>
+        <div className="flex items-center gap-2">
+          {isRunning && (
+            <button
+              onClick={() => void handleStop()}
+              disabled={stopping}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-700 text-white hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          )}
+          <button
+            onClick={() => void handleTrigger()}
+            disabled={isRunning || triggering || loading}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {isRunning || triggering ? 'Indexing…' : 'Start Indexing'}
+          </button>
+        </div>
       </div>
 
       {loading && <div className="h-4 bg-gray-800 rounded animate-pulse" />}

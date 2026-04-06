@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { initCommand } from './commands/init.command.js';
 import { indexCommand } from './commands/index.command.js';
+import { indexStopCommand } from './commands/index-stop.command.js';
 import { searchCommand } from './commands/search.command.js';
 import { statusCommand } from './commands/status.command.js';
 import { benchmarkCommand } from './commands/benchmark.command.js';
@@ -16,6 +17,7 @@ const program = new Command('ia-framework')
 program.addCommand(helloCommand());
 program.addCommand(initCommand());
 program.addCommand(indexCommand());
+program.addCommand(indexStopCommand());
 program.addCommand(searchCommand());
 program.addCommand(statusCommand());
 program.addCommand(benchmarkCommand());

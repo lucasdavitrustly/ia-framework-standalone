@@ -59,13 +59,25 @@ export async function startServer(options: ServerOptions): Promise<void> {
   // Build triggerIndexing function that uses the real providers
   const triggerIndexing = async (
     onProgress: (progress: import('@ia-framework/indexer').IndexingProgress) => void,
+    signal?: AbortSignal,
   ): Promise<{ filesIndexed: number; chunksIndexed: number }> => {
     const currentConfig = configWatcher.getConfig() ?? config;
     if (!currentConfig) {
       throw new Error('No project.json config found — cannot trigger indexing');
     }
-    const currentEmbeddingProvider =
-      embeddingProvider ?? createEmbeddingProvider(currentConfig.embedding);
+    // Override Ollama baseUrl with env var so the dashboard Docker container can reach
+    // Ollama running on the host machine. project.json stores "http://localhost:11434"
+    // which is unreachable from inside Docker; docker-compose.yml sets OLLAMA_BASE_URL
+    // to "http://host.docker.internal:11434" (Docker Desktop macOS/Windows special hostname).
+    const ollamaBaseUrl = process.env['OLLAMA_BASE_URL'];
+    const embeddingConfig =
+      ollamaBaseUrl && currentConfig.embedding.provider === 'ollama'
+        ? { ...currentConfig.embedding, baseUrl: ollamaBaseUrl }
+        : currentConfig.embedding;
+    // Always construct a fresh provider so the OLLAMA_BASE_URL env var override takes
+    // effect — do NOT reuse the startup-time embeddingProvider which was created before
+    // the env var could be applied.
+    const currentEmbeddingProvider = createEmbeddingProvider(embeddingConfig);
     const currentVectorStore =
       vectorStore ??
       new QdrantVectorStore({
@@ -84,7 +96,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
       incremental: false,
       dependencyGraph,
     };
-    return indexingPipeline.run(indexingConfig, onProgress);
+    return indexingPipeline.run(indexingConfig, onProgress, signal);
   };
 
   // Build Hono app

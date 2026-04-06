@@ -87,7 +87,92 @@ describe('IndexingStateManager — observer pattern', () => {
   });
 });
 
+// ─── Cancel unit tests ───────────────────────────────────────────────────────
+
+describe('IndexingStateManager — cancel()', () => {
+  let stateManager: IndexingStateManager;
+
+  beforeEach(() => {
+    stateManager = new IndexingStateManager();
+    stateManager.start(new Date().toISOString());
+  });
+
+  // T11: cancel() sets running=false and error='Indexing cancelled'
+  it('T11: cancel() sets running=false and error=Indexing cancelled', () => {
+    stateManager.cancel();
+    const state = stateManager.getState();
+    expect(state.running).toBe(false);
+    expect(state.error).toBe('Indexing cancelled');
+  });
+
+  // T12: cancel() notifies observers
+  it('T12: cancel() notifies observers', () => {
+    const observer = vi.fn() as unknown as IndexingObserver;
+    stateManager.subscribe(observer);
+    stateManager.cancel();
+    expect(observer).toHaveBeenCalledOnce();
+    const calls = (observer as ReturnType<typeof vi.fn>).mock.calls;
+    const snapshot = calls[0]?.[0] as IndexingState;
+    expect(snapshot.running).toBe(false);
+    expect(snapshot.error).toBe('Indexing cancelled');
+  });
+
+  // T13: start() resets cancelled flag so isCancelled() returns false after re-start
+  it('T13: start() resets cancelled flag', () => {
+    stateManager.cancel();
+    expect(stateManager.isCancelled()).toBe(true);
+    stateManager.start(new Date().toISOString());
+    expect(stateManager.isCancelled()).toBe(false);
+  });
+});
+
 // ─── Route integration tests ─────────────────────────────────────────────────
+
+describe('indexingRouter — stop route', () => {
+  let indexingState: IndexingStateManager;
+
+  beforeEach(() => {
+    indexingState = new IndexingStateManager();
+  });
+
+  function makeRouter(triggerFn?: TriggerFn) {
+    return indexingRouter({
+      indexingState,
+      triggerIndexing: triggerFn ?? vi.fn().mockReturnValue(new Promise(() => {})),
+      frameworkDir: '/tmp/no-such-dir',
+    });
+  }
+
+  // T14: POST /stop when running → 200 { message: 'Stop requested' }
+  it('T14: POST /stop when running → 200 { message: Stop requested }', async () => {
+    indexingState.start(new Date().toISOString());
+    const router = makeRouter();
+    const res = await router.request('/stop', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe('Stop requested');
+  });
+
+  // T15: POST /stop when NOT running → still 200 (idempotent)
+  it('T15: POST /stop when not running → still 200 (idempotent)', async () => {
+    // indexingState is fresh — not running
+    const router = makeRouter();
+    const res = await router.request('/stop', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toBe('Stop requested');
+  });
+
+  // T16: POST /stop → indexingState.cancel() is called → state.running becomes false
+  it('T16: POST /stop → indexingState.cancel() called → state.running=false', async () => {
+    indexingState.start(new Date().toISOString());
+    expect(indexingState.getState().running).toBe(true);
+    const router = makeRouter();
+    await router.request('/stop', { method: 'POST' });
+    expect(indexingState.getState().running).toBe(false);
+    expect(indexingState.getState().error).toBe('Indexing cancelled');
+  });
+});
 
 describe('indexingRouter — stage-aware status route', () => {
   let indexingState: IndexingStateManager;

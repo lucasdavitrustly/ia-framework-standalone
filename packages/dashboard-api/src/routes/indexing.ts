@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IndexingStateManager } from '../indexing-state.js';
 import type { IndexingProgress } from '@ia-framework/indexer';
 
 export type TriggerFn = (
   onProgress: (progress: IndexingProgress) => void,
+  signal?: AbortSignal,
 ) => Promise<{ filesIndexed: number; chunksIndexed: number }>;
 
 interface IndexingDeps {
@@ -43,6 +44,7 @@ async function readProgressFile(frameworkDir: string): Promise<ProgressFile | nu
 
 export function indexingRouter(deps: IndexingDeps): Hono {
   const app = new Hono();
+  let activeController: AbortController | null = null;
 
   // GET /api/indexing/status
   app.get('/status', async (c) => {
@@ -84,20 +86,45 @@ export function indexingRouter(deps: IndexingDeps): Hono {
     const startedAt = new Date().toISOString();
     deps.indexingState.start(startedAt);
 
+    const controller = new AbortController();
+    activeController = controller;
+
     // Fire and forget
     void deps
       .triggerIndexing((progress) => {
         deps.indexingState.update(progress);
-      })
+      }, controller.signal)
       .then(() => {
         deps.indexingState.complete(new Date().toISOString());
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         deps.indexingState.fail(msg);
+      })
+      .finally(() => {
+        if (activeController === controller) activeController = null;
       });
 
     return c.json({ message: 'Indexing started', startedAt }, 202);
+  });
+
+  // POST /api/indexing/stop
+  app.post('/stop', async (c) => {
+    // Abort in-process dashboard-triggered indexing
+    if (activeController) {
+      activeController.abort();
+      activeController = null;
+    }
+    deps.indexingState.cancel();
+
+    // Write sentinel file for CLI-triggered indexing (cross-process)
+    try {
+      await writeFile(join(deps.frameworkDir, 'indexing-stop-requested'), '', 'utf-8');
+    } catch {
+      // Non-fatal — CLI sentinel is best-effort
+    }
+
+    return c.json({ message: 'Stop requested' });
   });
 
   return app;

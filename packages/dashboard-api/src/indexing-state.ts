@@ -31,9 +31,14 @@ const defaultState: IndexingState = {
 export class IndexingStateManager {
   private state: IndexingState = { ...defaultState };
   private observers: Set<IndexingObserver> = new Set();
+  private cancelled = false;
 
   getState(): IndexingState {
     return { ...this.state };
+  }
+
+  isCancelled(): boolean {
+    return this.cancelled;
   }
 
   subscribe(observer: IndexingObserver): void {
@@ -50,6 +55,7 @@ export class IndexingStateManager {
   }
 
   start(startedAt: string): void {
+    this.cancelled = false;
     this.state = {
       ...defaultState,
       running: true,
@@ -80,5 +86,10 @@ export class IndexingStateManager {
     this.state.error = error;
     this.state.completedAt = new Date().toISOString();
     this.notifyObservers();
+  }
+
+  cancel(): void {
+    this.cancelled = true;
+    this.fail('Indexing cancelled');
   }
 }
