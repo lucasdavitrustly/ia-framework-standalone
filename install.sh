@@ -129,6 +129,19 @@ echo -e "  ${GREEN}✓${NC} ia-framework built successfully"
 echo ""
 
 # ──────────────────────────────────────────────────────
+# Step 3.5: Install ia-framework CLI globally
+# ──────────────────────────────────────────────────────
+echo -e "${BOLD}Step 3.5: Install CLI globally${NC}"
+echo -e "  ${YELLOW}→${NC} Linking ia-framework CLI globally via pnpm..."
+if pnpm link --global --dir "${SCRIPT_DIR}/packages/cli" 2>&1 | tail -3; then
+  echo -e "  ${GREEN}✓${NC} 'ia-framework' command is now available globally"
+else
+  echo -e "  ${YELLOW}⚠${NC} Global link failed — you can run the CLI via:"
+  echo "    node ${SCRIPT_DIR}/packages/cli/dist/bin.js <command>"
+fi
+echo ""
+
+# ──────────────────────────────────────────────────────
 # Step 4: Initialize config (ask for target project path)
 # ──────────────────────────────────────────────────────
 echo -e "${BOLD}Step 4: Configure${NC}"
@@ -225,24 +238,6 @@ fi
 echo ""
 
 # ──────────────────────────────────────────────────────
-# Step 7: Run initial codebase indexing
-# ──────────────────────────────────────────────────────
-echo -e "${BOLD}Step 7: Initial indexing${NC}"
-CONFIG_FILE="${SCRIPT_DIR}/.ia-framework/project.json"
-if [ -f "$CONFIG_FILE" ] && [ -f "${SCRIPT_DIR}/packages/cli/dist/bin.js" ]; then
-  echo -e "  ${YELLOW}→${NC} Indexing your codebase (this may take a few minutes)..."
-  if node "${SCRIPT_DIR}/packages/cli/dist/bin.js" index --config "$CONFIG_FILE"; then
-    echo -e "  ${GREEN}✓${NC} Initial indexing complete"
-  else
-    echo -e "  ${YELLOW}⚠${NC} Indexing failed — run the following to retry:"
-    echo "    node packages/cli/dist/bin.js index"
-  fi
-else
-  echo -e "  ${YELLOW}⚠${NC} Skipping initial indexing (config or CLI not found)"
-fi
-echo ""
-
-# ──────────────────────────────────────────────────────
 # Success summary
 # ──────────────────────────────────────────────────────
 echo -e "${GREEN}${BOLD}"
@@ -251,9 +246,12 @@ echo "║   ✓ ia-framework is ready!           ║"
 echo "╚══════════════════════════════════════╝"
 echo -e "${NC}"
 echo "Available commands:"
-echo "  node packages/cli/dist/bin.js index    — Re-index after code changes"
-echo "  node packages/cli/dist/bin.js search   — Search your codebase"
-echo "  node packages/cli/dist/bin.js status   — Check indexing status"
+echo "  ia-framework index    — Index your codebase into Qdrant"
+echo "  ia-framework search   — Search your codebase"
+echo "  ia-framework status   — Check indexing status"
+echo ""
+echo "Start indexing: Open the dashboard and click 'Start Indexing', or run:"
+echo "  ia-framework index"
 echo ""
 echo "OpenCode MCP: Restart OpenCode to load the ia-framework tools"
 echo "Dashboard:    http://localhost:${DASHBOARD_PORT:-3000}"

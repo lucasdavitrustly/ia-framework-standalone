@@ -59,13 +59,13 @@ ia-framework/
 
 The installer (`install.sh`) auto-detects and installs missing tools. If a **required** tool fails to install, the installer exits. **Optional** tools print a warning and continue.
 
-| Tool | Version | Install method | Required | Notes |
-|------|---------|----------------|----------|-------|
-| **Docker** | Latest | macOS: `brew install --cask docker` / Linux: `apt-get install docker.io` or `dnf install docker` | **Yes** — hard fail | Runs Qdrant and the dashboard. On macOS, starts Docker Desktop and waits up to 60s for daemon. On Linux, enables + starts systemd service and adds user to `docker` group. |
-| **Node.js** | >= 22.0.0 | macOS: `brew install node@22` / Linux: NodeSource `setup_22.x` script | **Yes** — hard fail | Upgrades existing Node.js if below v22. |
-| **pnpm** | >= 10.0.0 | `npm install -g pnpm` | **Yes** — hard fail | Installed in Step 2 after Node.js is confirmed. |
-| **Ollama** | Latest | macOS: `brew install ollama` / Linux: `ollama.com/install.sh` | **No** — soft fail | Also starts the Ollama service and presents an interactive model selection menu (see [Embedding Models](#embedding-models)). If install or model pull fails, prints warning and continues. Browse available models at [ollama.com/search](https://ollama.com/search). |
-| **OpenCode** | Latest | `npm install -g @opencode-sh/opencode` | **No** — soft fail | AI coding assistant that consumes MCP tools. If install fails, prints warning and continues — you can install manually later. |
+| Tool         | Version   | Install method                                                                                   | Required            | Notes                                                                                                                                                                                                                                                                 |
+| ------------ | --------- | ------------------------------------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Docker**   | Latest    | macOS: `brew install --cask docker` / Linux: `apt-get install docker.io` or `dnf install docker` | **Yes** — hard fail | Runs Qdrant and the dashboard. On macOS, starts Docker Desktop and waits up to 60s for daemon. On Linux, enables + starts systemd service and adds user to `docker` group.                                                                                            |
+| **Node.js**  | >= 22.0.0 | macOS: `brew install node@22` / Linux: NodeSource `setup_22.x` script                            | **Yes** — hard fail | Upgrades existing Node.js if below v22.                                                                                                                                                                                                                               |
+| **pnpm**     | >= 10.0.0 | `npm install -g pnpm`                                                                            | **Yes** — hard fail | Installed in Step 2 after Node.js is confirmed.                                                                                                                                                                                                                       |
+| **Ollama**   | Latest    | macOS: `brew install ollama` / Linux: `ollama.com/install.sh`                                    | **No** — soft fail  | Also starts the Ollama service and presents an interactive model selection menu (see [Embedding Models](#embedding-models)). If install or model pull fails, prints warning and continues. Browse available models at [ollama.com/search](https://ollama.com/search). |
+| **OpenCode** | Latest    | `npm install -g @opencode-sh/opencode`                                                           | **No** — soft fail  | AI coding assistant that consumes MCP tools. If install fails, prints warning and continues — you can install manually later.                                                                                                                                         |
 
 > If you skip Ollama, set `OPENAI_API_KEY` and change `embedding.provider` to `"openai"` in `project.json` for cloud embeddings.
 
@@ -85,18 +85,20 @@ The installer will:
 1. **Check and install prerequisites** — Docker and Node.js 22+ are required (installer exits if they fail). Ollama and OpenCode are optional (installer warns and continues if they fail).
 2. Install **pnpm** if missing (`npm install -g pnpm`)
 3. Build all 14 packages (`pnpm install && pnpm build`)
-4. **Select an embedding model** — shows your locally available Ollama models (with `[embed]` hints for known embedding models), lets you pick one or enter a custom name, and auto-pulls it if needed
-5. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
-6. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
-7. Configure **OpenCode's MCP server** to connect to ia-framework
-8. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
-9. Run the **initial codebase indexing** (parses + embeds + stores in Qdrant)
+4. **Install `ia-framework` as a global CLI tool** — runs `pnpm link --global` so `ia-framework` is available from anywhere in your terminal
+5. **Select an embedding model** — shows your locally available Ollama models (with `[embed]` hints for known embedding models), lets you pick one or enter a custom name, and auto-pulls it if needed
+6. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
+7. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
+8. Configure **OpenCode's MCP server** to connect to ia-framework
+9. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
 
 After it completes:
 
 - **Dashboard:** http://localhost:3000
 - **Restart OpenCode** to load the MCP tools
-- You're ready to go — OpenCode now has deep codebase understanding
+- **Start indexing** from the dashboard (Overview page → "Start Indexing" button) or run `ia-framework index` in your terminal
+
+> Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready from the dashboard or CLI.
 
 ## Manual Setup (Step by Step)
 
@@ -133,7 +135,7 @@ ollama serve &          # Start Ollama in the background
 ollama pull nomic-embed-text   # Download an embedding model (or any model you prefer)
 ```
 
-> **Tip:** Browse all available models at [ollama.com/search](https://ollama.com/search). Popular embedding models include `nomic-embed-text` (768d), `mxbai-embed-large` (1024d), and `all-minilm` (384d).
+> **Tip:** Browse all available models at [ollama.com/search](https://ollama.com/search). Popular embedding models include `nomic-embed-text` (768d), `mxbai-embed-large` (1024d), `all-minilm` (384d), and `qwen3-embedding` (0.6b→1024d, 1.7b→2048d, 4b→2560d).
 
 You can skip specifying a model in the config — the `index` command will present an interactive model selection if none is configured (see [Embedding Models](#embedding-models)).
 
@@ -163,12 +165,22 @@ mkdir -p .ia-framework
   },
   "indexing": {
     "includePatterns": [
-      "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx",
-      "**/*.py", "**/*.go", "**/*.rs", "**/*.java"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.py",
+      "**/*.go",
+      "**/*.rs",
+      "**/*.java"
     ],
     "excludePatterns": [
-      "**/node_modules/**", "**/dist/**", "**/build/**",
-      "**/.git/**", "**/coverage/**", "**/__pycache__/**"
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/.git/**",
+      "**/coverage/**",
+      "**/__pycache__/**"
     ],
     "respectGitignore": true
   }
@@ -240,13 +252,13 @@ Add the MCP server to OpenCode's config at `~/.config/opencode/config.json`:
 
 Restart OpenCode. The following tools are now available to your AI assistant:
 
-| MCP Tool | Description |
-|----------|-------------|
-| `search_codebase` | Semantic search with dependency graph expansion |
-| `get_file` | Retrieve all indexed chunks for a specific file |
-| `get_dependencies` | Get imports and exports for a file |
-| `query_database` | Execute SQL against a configured PostgreSQL database |
-| `index_database_schema` | Index database schema into Qdrant |
+| MCP Tool                | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `search_codebase`       | Semantic search with dependency graph expansion      |
+| `get_file`              | Retrieve all indexed chunks for a specific file      |
+| `get_dependencies`      | Get imports and exports for a file                   |
+| `query_database`        | Execute SQL against a configured PostgreSQL database |
+| `index_database_schema` | Index database schema into Qdrant                    |
 
 ### Step 8: Start the Dashboard (Optional)
 
@@ -258,7 +270,7 @@ docker compose up -d dashboard
 
 Open http://localhost:3000 to see:
 
-- **Overview** — Qdrant health, indexed chunks, token usage, benchmark scores
+- **Overview** — Qdrant health, indexed chunks, token usage, benchmark scores — includes a **"Start Indexing"** button to trigger the initial (or a fresh) index run
 - **Config** — Detected project profile, current configuration
 - **Token Usage** — Daily token consumption charts, per-query breakdown
 - **Benchmarks** — Hit@K and MRR trends over time
@@ -327,34 +339,38 @@ Commands:
 
 The primary tool. AI assistants call this to find relevant code for the task at hand.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `query` | string | required | Natural language search query |
-| `limit` | number | 10 | Maximum number of results |
-| `score_threshold` | number | 0.5 | Minimum similarity score (0-1) |
-| `expand_hops` | number | 1 | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive |
+| Parameter         | Type   | Default  | Description                                                       |
+| ----------------- | ------ | -------- | ----------------------------------------------------------------- |
+| `query`           | string | required | Natural language search query                                     |
+| `limit`           | number | 10       | Maximum number of results                                         |
+| `score_threshold` | number | 0.5      | Minimum similarity score (0-1)                                    |
+| `expand_hops`     | number | 1        | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive |
 
 **Example response:**
 
-```markdown
+````markdown
 ## Code results for: "authentication middleware"
 
 ### 1. src/auth/middleware.ts (validateToken) — score: 0.89 [both]
+
 ```typescript
 export function validateToken(req: Request): AuthResult {
   const token = req.headers.get('Authorization')?.split(' ')[1];
   // ...
 }
 ```
+````
 
-### 2. src/auth/types.ts (AuthResult) — score: 0.82 [text]  ← expanded via dependency graph
+### 2. src/auth/types.ts (AuthResult) — score: 0.82 [text] ← expanded via dependency graph
+
 ```typescript
 export interface AuthResult {
   valid: boolean;
   userId?: string;
 }
 ```
-```
+
+````
 
 The `[both]`, `[text]`, `[code]` tags show which vector matched. Expanded results (from the dependency graph) appear alongside direct matches so the AI gets the full context.
 
@@ -426,7 +442,7 @@ Add MCP servers to OpenCode's config at `~/.config/opencode/config.json`. Each s
     }
   }
 }
-```
+````
 
 **Example — adding a PostgreSQL MCP server for direct database access:**
 
@@ -465,7 +481,7 @@ The main config file is `.ia-framework/project.json`:
 {
   "targetProjectPath": "/path/to/project",
   "embedding": {
-    "provider": "ollama",        // "ollama" or "openai"
+    "provider": "ollama", // "ollama" or "openai"
     "model": "nomic-embed-text", // Model name
     "baseUrl": "http://localhost:11434",
     "dimensions": 768
@@ -482,23 +498,23 @@ The main config file is `.ia-framework/project.json`:
     "maxChunkLines": 200
   },
   "retrieval": {
-    "mode": "mcp-only",     // "mcp-only", "auto-context" (v2), "combined" (v2)
-    "expansionHops": 1,     // 0 = off, 1 = direct imports, 2 = transitive
-    "autoContextTopK": 5    // Top results for auto-context (v2)
+    "mode": "mcp-only", // "mcp-only", "auto-context" (v2), "combined" (v2)
+    "expansionHops": 1, // 0 = off, 1 = direct imports, 2 = transitive
+    "autoContextTopK": 5 // Top results for auto-context (v2)
   }
 }
 ```
 
 ### Environment Variables
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `IA_FRAMEWORK_CONFIG` | Path to `project.json` | `.ia-framework/project.json` |
-| `IA_FRAMEWORK_DIR` | Path to `.ia-framework/` directory (for Docker) | — |
-| `DASHBOARD_PORT` | Dashboard port | `3000` |
-| `QDRANT_HTTP_PORT` | Qdrant HTTP port | `6333` |
-| `QDRANT_GRPC_PORT` | Qdrant gRPC port | `6334` |
-| `OPENAI_API_KEY` | OpenAI API key (if using cloud embeddings) | — |
+| Variable              | Purpose                                         | Default                      |
+| --------------------- | ----------------------------------------------- | ---------------------------- |
+| `IA_FRAMEWORK_CONFIG` | Path to `project.json`                          | `.ia-framework/project.json` |
+| `IA_FRAMEWORK_DIR`    | Path to `.ia-framework/` directory (for Docker) | —                            |
+| `DASHBOARD_PORT`      | Dashboard port                                  | `3000`                       |
+| `QDRANT_HTTP_PORT`    | Qdrant HTTP port                                | `6333`                       |
+| `QDRANT_GRPC_PORT`    | Qdrant gRPC port                                | `6334`                       |
+| `OPENAI_API_KEY`      | OpenAI API key (if using cloud embeddings)      | —                            |
 
 Copy `.env.example` to `.env` and fill in values as needed. The installer (`install.sh`) generates `.env` automatically — manual setup only needs this for custom overrides.
 
@@ -514,8 +530,11 @@ ia-framework supports any Ollama embedding model. You can switch models at any t
   Select an embedding model:
     1. nomic-embed-text:latest [embed]
     2. mxbai-embed-large:latest [embed]
-    3. llama3:latest
-    4. Enter a custom model name
+    3. qwen3-embedding:0.6b [embed]
+    4. qwen3-embedding:1.7b [embed]
+    5. qwen3-embedding:4b [embed]
+    6. llama3:latest
+    7. Enter a custom model name
   Select [1]:
 ```
 
@@ -537,11 +556,11 @@ If no model is configured in `project.json` and no `--model` flag is given, the 
 
 When you select a model, ia-framework automatically discovers its embedding dimensions using a 3-tier strategy:
 
-| Priority | Method | How it works |
-|----------|--------|--------------|
-| 1 | **Known model map** | Instant lookup for popular models (`nomic-embed-text`→768, `mxbai-embed-large`→1024, `all-minilm`→384, etc.) |
-| 2 | **Ollama `/api/show`** | Queries the model metadata for `embedding_length` — works for any model with published dimensions |
-| 3 | **Embed probe** | Sends a test string to `/api/embed` and measures the returned vector length — universal fallback |
+| Priority | Method                 | How it works                                                                                                                                                                                      |
+| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | **Known model map**    | Instant lookup for popular models (`nomic-embed-text`→768, `mxbai-embed-large`→1024, `all-minilm`→384, `qwen3-embedding:0.6b`→1024, `qwen3-embedding:1.7b`→2048, `qwen3-embedding:4b`→2560, etc.) |
+| 2        | **Ollama `/api/show`** | Queries the model metadata for `embedding_length` — works for any model with published dimensions                                                                                                 |
+| 3        | **Embed probe**        | Sends a test string to `/api/embed` and measures the returned vector length — universal fallback                                                                                                  |
 
 This means you never need to manually specify `dimensions` in `project.json` — it's always auto-detected.
 
@@ -613,12 +632,12 @@ On the first `benchmark run`, if no corpus file exists, the CLI auto-creates an 
 
 The corpus is a JSON file with a `queries` array. Each entry has:
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `id` | Yes | Unique identifier (e.g. `"user-service"`) |
-| `query` | Yes | Natural language search text — what a developer would type |
-| `expectedFiles` | Yes | Array of relative file paths that *should* appear in results (min 1) |
-| `description` | No | Human-readable note about what this query tests |
+| Field           | Required | Description                                                          |
+| --------------- | -------- | -------------------------------------------------------------------- |
+| `id`            | Yes      | Unique identifier (e.g. `"user-service"`)                            |
+| `query`         | Yes      | Natural language search text — what a developer would type           |
+| `expectedFiles` | Yes      | Array of relative file paths that _should_ appear in results (min 1) |
+| `description`   | No       | Human-readable note about what this query tests                      |
 
 Validated by Zod on load — malformed files produce clear error messages.
 
@@ -661,7 +680,7 @@ Validated by Zod on load — malformed files produce clear error messages.
 
 ### Limitations
 
-The corpus is fully manual. There is no automatic generation from the codebase — you need to know your project well enough to write queries and their expected answers. This is intentional: the corpus defines what "correct retrieval" means for *your* project, which requires human judgment.
+The corpus is fully manual. There is no automatic generation from the codebase — you need to know your project well enough to write queries and their expected answers. This is intentional: the corpus defines what "correct retrieval" means for _your_ project, which requires human judgment.
 
 ## Database Context (Optional)
 
@@ -696,22 +715,22 @@ pnpm lint           # ESLint + Prettier
 
 ### Project Structure
 
-| Package | Tests | Purpose |
-|---------|-------|---------|
-| `@ia-framework/core` | 7 | Config loader, schemas, logger, shared types |
-| `@ia-framework/ast-parser` | 31 | tree-sitter chunking with oversized chunk splitting |
-| `@ia-framework/embedding` | 8 | Ollama + OpenAI embedding adapters |
-| `@ia-framework/vector-store` | 8 | Qdrant dual-vector storage |
-| `@ia-framework/indexer` | 17 | File walker, incremental indexing, context sources |
-| `@ia-framework/retrieval` | 24 | Search engine, dependency graph, hop expansion |
-| `@ia-framework/mcp-server` | 17 | 5 MCP tools via stdio transport |
-| `@ia-framework/observability` | 27 | Token counting, metrics SQLite store |
-| `@ia-framework/benchmark` | 19 | Hit@K, MRR, benchmark store, comparison |
-| `@ia-framework/project-detector` | 19 | Language, framework, package manager detection |
-| `@ia-framework/db-context` | 14 | PostgreSQL schema extraction |
-| `@ia-framework/dashboard-api` | 20 | Hono REST API (8 endpoints) |
-| `@ia-framework/cli` | 23 | Commander.js CLI (6 command groups) |
-| `@ia-framework/dashboard` | — | React 19 monitoring UI |
+| Package                          | Tests | Purpose                                             |
+| -------------------------------- | ----- | --------------------------------------------------- |
+| `@ia-framework/core`             | 7     | Config loader, schemas, logger, shared types        |
+| `@ia-framework/ast-parser`       | 31    | tree-sitter chunking with oversized chunk splitting |
+| `@ia-framework/embedding`        | 8     | Ollama + OpenAI embedding adapters                  |
+| `@ia-framework/vector-store`     | 8     | Qdrant dual-vector storage                          |
+| `@ia-framework/indexer`          | 17    | File walker, incremental indexing, context sources  |
+| `@ia-framework/retrieval`        | 24    | Search engine, dependency graph, hop expansion      |
+| `@ia-framework/mcp-server`       | 17    | 5 MCP tools via stdio transport                     |
+| `@ia-framework/observability`    | 27    | Token counting, metrics SQLite store                |
+| `@ia-framework/benchmark`        | 19    | Hit@K, MRR, benchmark store, comparison             |
+| `@ia-framework/project-detector` | 19    | Language, framework, package manager detection      |
+| `@ia-framework/db-context`       | 14    | PostgreSQL schema extraction                        |
+| `@ia-framework/dashboard-api`    | 20    | Hono REST API (8 endpoints)                         |
+| `@ia-framework/cli`              | 23    | Commander.js CLI (6 command groups)                 |
+| `@ia-framework/dashboard`        | —     | React 19 monitoring UI                              |
 
 ### Adding a New Language
 
@@ -727,16 +746,19 @@ Currently supported: TypeScript, TSX, JavaScript, JSX, Python, Java.
 ## Troubleshooting
 
 **MCP tools not appearing in OpenCode:**
+
 1. Verify `packages/mcp-server/dist/bin.js` exists (`pnpm build` if missing)
 2. Check `~/.config/opencode/config.json` has the correct paths
 3. Restart OpenCode completely
 
 **Search returns no results:**
+
 1. Run `ia-framework status` to check Qdrant connection and chunk count
 2. Re-index: `ia-framework index --force`
 3. Lower the threshold: `--threshold 0.3`
 
 **Qdrant not reachable:**
+
 ```bash
 docker compose up -d qdrant
 # Check health
@@ -744,6 +766,7 @@ curl http://localhost:6333/readyz
 ```
 
 **Ollama embedding errors:**
+
 ```bash
 ollama serve &                   # Ensure Ollama is running
 ollama pull nomic-embed-text     # Ensure model is downloaded
@@ -751,13 +774,16 @@ curl http://localhost:11434/     # Check Ollama is responding
 ```
 
 **Switched models and search quality dropped:**
+
 ```bash
 # The old vectors are incompatible with the new model — re-index to fix
 ia-framework index --model <your-new-model> --force
 ```
+
 If you see "Embedding model mismatch detected" during indexing, confirm the collection delete to start fresh with the new model.
 
 **Dashboard not loading:**
+
 ```bash
 docker compose up -d dashboard
 docker compose logs dashboard    # Check for errors
