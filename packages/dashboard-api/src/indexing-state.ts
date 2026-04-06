@@ -13,6 +13,8 @@ export interface IndexingState {
   error: string | null;
 }
 
+export type IndexingObserver = (state: IndexingState) => void;
+
 const defaultState: IndexingState = {
   running: false,
   stage: null,
@@ -28,9 +30,23 @@ const defaultState: IndexingState = {
 
 export class IndexingStateManager {
   private state: IndexingState = { ...defaultState };
+  private observers: Set<IndexingObserver> = new Set();
 
   getState(): IndexingState {
     return { ...this.state };
+  }
+
+  subscribe(observer: IndexingObserver): void {
+    this.observers.add(observer);
+  }
+
+  unsubscribe(observer: IndexingObserver): void {
+    this.observers.delete(observer);
+  }
+
+  private notifyObservers(): void {
+    const snapshot = { ...this.state };
+    this.observers.forEach((observer) => observer(snapshot));
   }
 
   start(startedAt: string): void {
@@ -39,6 +55,7 @@ export class IndexingStateManager {
       running: true,
       startedAt,
     };
+    // No observer notification on start — frontend will see running=true on next poll
   }
 
   update(progress: IndexingProgress): void {
@@ -48,17 +65,20 @@ export class IndexingStateManager {
     this.state.chunksTotal = progress.chunksTotal;
     this.state.chunksIndexed = progress.chunksIndexed;
     this.state.currentFile = progress.currentFile ?? null;
+    this.notifyObservers();
   }
 
   complete(completedAt: string): void {
     this.state.running = false;
     this.state.stage = 'done';
     this.state.completedAt = completedAt;
+    this.notifyObservers();
   }
 
   fail(error: string): void {
     this.state.running = false;
     this.state.error = error;
     this.state.completedAt = new Date().toISOString();
+    this.notifyObservers();
   }
 }

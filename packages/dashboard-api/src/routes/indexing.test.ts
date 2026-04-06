@@ -1,12 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IndexingStateManager } from '../indexing-state.js';
-import type { IndexingState } from '../indexing-state.js';
+import type { IndexingState, IndexingObserver } from '../indexing-state.js';
 import { indexingRouter } from './indexing.js';
 import type { TriggerFn } from './indexing.js';
 import type { IndexingProgress } from '@ia-framework/indexer';
-
-// IndexingObserver type (will be exported from indexing-state.ts in Task 2)
-type IndexingObserver = (state: IndexingState) => void;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -34,7 +31,6 @@ describe('IndexingStateManager — observer pattern', () => {
   // T1: subscribe() — registered observer is called when update() fires
   it('T1: registered observer is called when update() fires', () => {
     const observer = vi.fn() as unknown as IndexingObserver;
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(observer);
     stateManager.update(makeProgress({ stage: 'walking' }));
     expect(observer).toHaveBeenCalledOnce();
@@ -46,7 +42,6 @@ describe('IndexingStateManager — observer pattern', () => {
   // T2: subscribe() — registered observer is called when complete() fires (stage='done')
   it('T2: registered observer is called when complete() fires', () => {
     const observer = vi.fn() as unknown as IndexingObserver;
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(observer);
     stateManager.complete(new Date().toISOString());
     expect(observer).toHaveBeenCalledOnce();
@@ -59,7 +54,6 @@ describe('IndexingStateManager — observer pattern', () => {
   // T3: subscribe() — registered observer is called when fail() fires
   it('T3: registered observer is called when fail() fires', () => {
     const observer = vi.fn() as unknown as IndexingObserver;
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(observer);
     stateManager.fail('Something went wrong');
     expect(observer).toHaveBeenCalledOnce();
@@ -72,9 +66,7 @@ describe('IndexingStateManager — observer pattern', () => {
   // T4: unsubscribe() — removed observer is NOT called after unsubscription
   it('T4: unsubscribed observer is NOT called after unsubscription', () => {
     const observer = vi.fn() as unknown as IndexingObserver;
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(observer);
-    // @ts-expect-error unsubscribe not yet implemented — RED test
     stateManager.unsubscribe(observer);
     stateManager.update(makeProgress({ stage: 'embedding' }));
     expect(observer).not.toHaveBeenCalled();
@@ -85,11 +77,8 @@ describe('IndexingStateManager — observer pattern', () => {
     const obs1 = vi.fn() as unknown as IndexingObserver;
     const obs2 = vi.fn() as unknown as IndexingObserver;
     const obs3 = vi.fn() as unknown as IndexingObserver;
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(obs1);
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(obs2);
-    // @ts-expect-error subscribe not yet implemented — RED test
     stateManager.subscribe(obs3);
     stateManager.update(makeProgress({ stage: 'storing' }));
     expect(obs1).toHaveBeenCalledOnce();
@@ -201,7 +190,6 @@ describe('indexingRouter — stage-aware status route', () => {
     const observer = vi.fn() as unknown as IndexingObserver;
 
     // Register observer BEFORE trigger
-    // @ts-expect-error subscribe not yet implemented — RED test
     indexingState.subscribe(observer);
 
     const router = makeRouter(triggerFn);
