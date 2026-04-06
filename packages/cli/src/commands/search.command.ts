@@ -25,8 +25,12 @@ export function searchCommand(): Command {
         try {
           const config = await loadConfig(configPath);
           const embeddingProvider = createEmbeddingProvider(config.embedding);
+          // CLI runs on the host machine — use QDRANT_HOST env var or fall back to localhost.
+          // config.vectorStore.host may be "qdrant" (the Docker service name), which only
+          // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
+          const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
           const vectorStore = new QdrantVectorStore({
-            host: config.vectorStore.host,
+            host: qdrantHost,
             port: config.vectorStore.port,
             collectionName: config.vectorStore.collectionName,
             apiKey: config.vectorStore.apiKey,

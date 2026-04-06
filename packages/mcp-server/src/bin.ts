@@ -21,14 +21,17 @@ const logger = createLogger('mcp-server');
 async function main(): Promise<void> {
   // Load config from .ia-framework/project.json (searches from cwd)
   const configPath =
-    process.env['IA_FRAMEWORK_CONFIG'] ??
-    join(process.cwd(), '.ia-framework', 'project.json');
+    process.env['IA_FRAMEWORK_CONFIG'] ?? join(process.cwd(), '.ia-framework', 'project.json');
 
   const config = await loadConfig(configPath);
 
   const embeddingProvider = createEmbeddingProvider(config.embedding);
+  // MCP server runs on the host machine — use QDRANT_HOST env var or fall back to localhost.
+  // config.vectorStore.host may be "qdrant" (the Docker service name), which only
+  // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
+  const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
   const vectorStore = new QdrantVectorStore({
-    host: config.vectorStore.host,
+    host: qdrantHost,
     port: config.vectorStore.port,
     collectionName: config.vectorStore.collectionName,
     apiKey: config.vectorStore.apiKey,
@@ -37,7 +40,9 @@ async function main(): Promise<void> {
   // Set up dependency graph for search expansion (if graph.sqlite exists)
   const frameworkDir = dirname(configPath);
   const graphDbPath = join(frameworkDir, 'graph.sqlite');
-  let dependencyGraph: { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> } | undefined;
+  let dependencyGraph:
+    | { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> }
+    | undefined;
 
   try {
     const graph = new DependencyGraph({ dbPath: graphDbPath });

@@ -6,7 +6,11 @@ import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embed
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { IndexingPipeline } from '@ia-framework/indexer';
 import type { IndexingProgress } from '@ia-framework/indexer';
-import { getLastEmbeddingModel, saveLastIndexedCommit, getCurrentCommit } from '@ia-framework/indexer';
+import {
+  getLastEmbeddingModel,
+  saveLastIndexedCommit,
+  getCurrentCommit,
+} from '@ia-framework/indexer';
 import { DependencyGraph } from '@ia-framework/retrieval';
 
 function resolveFrameworkDir(configPath: string): string {
@@ -148,8 +152,12 @@ export function indexCommand(): Command {
         }
 
         const embeddingProvider = createEmbeddingProvider(config.embedding);
+        // CLI runs on the host machine — use QDRANT_HOST env var or fall back to localhost.
+        // config.vectorStore.host may be "qdrant" (the Docker service name), which only
+        // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
+        const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
         const vectorStore = new QdrantVectorStore({
-          host: config.vectorStore.host,
+          host: qdrantHost,
           port: config.vectorStore.port,
           collectionName: config.vectorStore.collectionName,
           apiKey: config.vectorStore.apiKey,
@@ -170,13 +178,17 @@ export function indexCommand(): Command {
             if (dimensionMismatch || modelMismatch) {
               console.log('');
               console.log('  \u26a0 Embedding model mismatch detected!');
-              console.log(`    Previous model: ${lastModel ?? 'unknown'} (${existingDimensions}d vectors)`);
+              console.log(
+                `    Previous model: ${lastModel ?? 'unknown'} (${existingDimensions}d vectors)`,
+              );
               console.log(`    New model:      ${currentModel} (${configuredDimensions}d vectors)`);
               console.log('    Existing vectors are incompatible with the new model.');
               console.log('');
 
               const rl = createInterface({ input: process.stdin, output: process.stdout });
-              const answer = await rl.question('  Delete existing collection and re-index? (y/N): ');
+              const answer = await rl.question(
+                '  Delete existing collection and re-index? (y/N): ',
+              );
               rl.close();
 
               if (answer.trim().toLowerCase() === 'y') {
@@ -237,7 +249,9 @@ export function indexCommand(): Command {
         );
 
         process.stdout.write('\n');
-        console.log(`\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files`);
+        console.log(
+          `\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files`,
+        );
 
         // Save embedding model to indexing state for mismatch detection
         const currentCommit = await getCurrentCommit(config.targetProjectPath);
