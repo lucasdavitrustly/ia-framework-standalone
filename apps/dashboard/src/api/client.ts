@@ -117,11 +117,6 @@ export interface ApiIndexingStatus {
   error: string | null;
 }
 
-export interface ApiTriggerResponse {
-  message: string;
-  startedAt: string;
-}
-
 export interface ApiDbStatus {
   configured: boolean;
   connected: boolean;
@@ -135,19 +130,6 @@ const BASE = '';
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
-  return res.json() as Promise<T>;
-}
-
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(err.error ?? `API error ${res.status}: ${path}`);
-  }
   return res.json() as Promise<T>;
 }
 
@@ -166,7 +148,5 @@ export const DashboardClient = {
     get<ApiBenchmarks>(`/api/benchmarks${limit ? `?limit=${limit}` : ''}`),
   getBenchmarkRun: (runId: string) => get<BenchmarkRun>(`/api/benchmarks/${runId}`),
   getIndexingStatus: () => get<ApiIndexingStatus>('/api/indexing/status'),
-  triggerIndexing: (body?: { incremental?: boolean; label?: string }) =>
-    post<ApiTriggerResponse>('/api/indexing/trigger', body),
   getDbStatus: () => get<ApiDbStatus>('/api/db/status'),
 };

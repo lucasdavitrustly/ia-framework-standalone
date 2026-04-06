@@ -2,15 +2,9 @@ import { Hono } from 'hono';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IndexingStateManager } from '../indexing-state.js';
-import type { IndexingProgress } from '@ia-framework/indexer';
-
-export type TriggerFn = (
-  onProgress: (progress: IndexingProgress) => void,
-) => Promise<{ filesIndexed: number; chunksIndexed: number }>;
 
 interface IndexingDeps {
   indexingState: IndexingStateManager;
-  triggerIndexing: TriggerFn;
   /** frameworkDir is used to read CLI-written progress file for cross-process visibility */
   frameworkDir: string;
 }
@@ -48,7 +42,7 @@ export function indexingRouter(deps: IndexingDeps): Hono {
   app.get('/status', async (c) => {
     const memState = deps.indexingState.getState();
 
-    // If the in-memory state shows indexing is running (dashboard-triggered), prefer it.
+    // If the in-memory state shows indexing is running (legacy in-process path), prefer it.
     if (memState.running) {
       return c.json(memState);
     }
@@ -56,7 +50,6 @@ export function indexingRouter(deps: IndexingDeps): Hono {
     // Otherwise check if the CLI wrote a progress file (CLI-triggered indexing).
     const fileState = await readProgressFile(deps.frameworkDir);
     if (fileState !== null) {
-      // Merge file state into the response shape expected by the frontend
       return c.json({
         running: fileState.running,
         stage: fileState.stage ?? null,
@@ -73,31 +66,6 @@ export function indexingRouter(deps: IndexingDeps): Hono {
 
     // No file state — return in-memory default (all zeros)
     return c.json(memState);
-  });
-
-  // POST /api/indexing/trigger
-  app.post('/trigger', async (c) => {
-    if (deps.indexingState.getState().running) {
-      return c.json({ error: 'Indexing already in progress' }, 409);
-    }
-
-    const startedAt = new Date().toISOString();
-    deps.indexingState.start(startedAt);
-
-    // Fire and forget
-    void deps
-      .triggerIndexing((progress) => {
-        deps.indexingState.update(progress);
-      })
-      .then(() => {
-        deps.indexingState.complete(new Date().toISOString());
-      })
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        deps.indexingState.fail(msg);
-      });
-
-    return c.json({ message: 'Indexing started', startedAt }, 202);
   });
 
   return app;

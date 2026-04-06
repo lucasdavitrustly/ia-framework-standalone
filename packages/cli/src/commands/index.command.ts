@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, access, unlink } from 'node:fs/promises';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -33,6 +33,22 @@ async function writeIndexingProgress(
     await writeFile(filePath, JSON.stringify(data), 'utf-8');
   } catch {
     // Non-fatal — dashboard just won't show progress
+  }
+}
+
+/**
+ * Check if the stop-requested sentinel file exists.
+ * If found, deletes it and returns true.
+ * Never throws — always returns false on any error.
+ */
+async function checkAndClearStopSentinel(frameworkDir: string): Promise<boolean> {
+  const sentinelPath = join(frameworkDir, 'indexing-stop-requested');
+  try {
+    await access(sentinelPath);
+    await unlink(sentinelPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -275,7 +291,18 @@ Browse available models: https://ollama.com/search
         console.log(`Model: ${config.embedding.model}`);
         console.log('');
 
-        let lastFile = '';
+        const BAR_WIDTH = 20;
+        const renderProgress = (progress: IndexingProgress): void => {
+          const pct =
+            progress.filesTotal > 0
+              ? Math.round((progress.filesProcessed / progress.filesTotal) * 100)
+              : 0;
+          const filled = Math.round((pct / 100) * BAR_WIDTH);
+          const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+          const line = `  [${bar}] ${String(pct).padStart(3)}%  ${progress.stage}  ${progress.filesProcessed}/${progress.filesTotal} files  ${progress.chunksIndexed} chunks`;
+          process.stdout.write(`\r\x1b[2K${line}`);
+        };
+
         const startedAt = new Date().toISOString();
         // Write initial "running" state so the dashboard can detect indexing started
         await writeIndexingProgress(frameworkDir, {
@@ -304,11 +331,7 @@ Browse available models: https://ollama.com/search
             dependencyGraph,
           },
           (progress: IndexingProgress) => {
-            const file = progress.currentFile ?? lastFile;
-            lastFile = file;
-            process.stdout.write(
-              `\r  ${progress.stage}: ${progress.filesProcessed}/${progress.filesTotal} files, ${progress.chunksIndexed} chunks${file ? ` — ${file.slice(-40)}` : ''}`,
-            );
+            renderProgress(progress);
             // Write progress to shared file so the dashboard API can pick it up
             void writeIndexingProgress(frameworkDir, {
               running: true,
@@ -320,6 +343,26 @@ Browse available models: https://ollama.com/search
               currentFile: progress.currentFile ?? null,
               startedAt,
               updatedAt: new Date().toISOString(),
+            });
+            // Check for stop sentinel — if found, exit cleanly
+            void checkAndClearStopSentinel(frameworkDir).then(async (shouldStop) => {
+              if (shouldStop) {
+                process.stdout.write('\n');
+                console.log('\n✗ Indexing stopped by user');
+                await writeIndexingProgress(frameworkDir, {
+                  running: false,
+                  stage: null,
+                  filesTotal: progress.filesTotal,
+                  filesProcessed: progress.filesProcessed,
+                  chunksTotal: progress.chunksTotal,
+                  chunksIndexed: progress.chunksIndexed,
+                  currentFile: null,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  error: 'Stopped by user',
+                });
+                process.exit(0);
+              }
             });
           },
         );

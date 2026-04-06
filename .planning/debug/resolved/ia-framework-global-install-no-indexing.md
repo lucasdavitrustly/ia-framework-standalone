@@ -1,8 +1,8 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Add the 'ia-framework' globally during the install and not start the indexing during the install phase. Add option to start it through the dashboard."
 created: 2026-04-06T00:00:00Z
-updated: 2026-04-06T00:05:00Z
+updated: 2026-04-06T00:10:00Z
 ---
 
 ## Current Focus
@@ -10,7 +10,7 @@ updated: 2026-04-06T00:05:00Z
 hypothesis: CONFIRMED — install.sh has Step 7 that runs indexing directly; the CLI package has a `bin` field but no global install step exists in install.sh; the dashboard's IndexingPanel with "Trigger Re-index" button exists but is NOT rendered in Overview or any page
 test: Implement 3 changes: (1) remove Step 7 from install.sh + add global CLI install, (2) render IndexingPanel in Overview.tsx, (3) update install.sh success banner
 expecting: install.sh completes without indexing; `ia-framework` is available as a global command; dashboard has "Start Indexing" button visible
-next_action: Implement all three changes
+next_action: RESOLVED — human verification confirmed all three items work correctly
 
 ## Symptoms
 
@@ -22,7 +22,7 @@ started: Feature request / enhancement — may never have worked this way
 
 ## Eliminated
 
-(none yet)
+(none)
 
 ## Evidence
 
@@ -66,7 +66,7 @@ fix: |
 3. Updated install.sh success banner to reference `ia-framework` global commands and point users to dashboard for starting indexing.
 4. In Overview.tsx: replaced the simple static indexing status indicator with the full `IndexingPanel` component that has a "Start Indexing" button.
 5. In IndexingPanel.tsx: renamed button label from "Trigger Re-index" to "Start Indexing" to match feature request language.
-   verification: All 52 tests in @ia-framework/cli and @ia-framework/dashboard-api pass (20 + 32). Pre-existing vector-store failures are unrelated to these changes.
+   verification: Human confirmed all three items work end-to-end — `ia-framework hello` works globally, `./install.sh` completes without indexing, dashboard Overview shows "Start Indexing" button.
    files_changed:
 
 - install.sh

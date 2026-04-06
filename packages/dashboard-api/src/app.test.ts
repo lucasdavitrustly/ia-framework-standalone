@@ -90,9 +90,6 @@ function makeDeps(overrides: Partial<AppDependencies> = {}): AppDependencies {
       }),
     },
     indexingState,
-    // Use a never-resolving promise so the background task stays in-flight
-    // during assertions (prevents complete() from running before we check state)
-    triggerIndexing: vi.fn().mockReturnValue(new Promise(() => {})),
     frameworkDir: '/tmp/.ia-framework',
     fetchFn: mockFetch,
     ...overrides,
@@ -220,33 +217,6 @@ describe('createApp', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { running: boolean };
     expect(body.running).toBe(false);
-  });
-
-  // Test 11: POST /api/indexing/trigger → 202, indexing starts, state.running becomes true
-  it('POST /api/indexing/trigger → 202, state.running becomes true', async () => {
-    const app = createApp(deps);
-    const res = await app.request('/api/indexing/trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(202);
-    const body = (await res.json()) as { message: string; startedAt: string };
-    expect(body.message).toBe('Indexing started');
-    expect(typeof body.startedAt).toBe('string');
-    expect(deps.indexingState.getState().running).toBe(true);
-  });
-
-  // Test 12: POST /api/indexing/trigger while running → 409
-  it('POST /api/indexing/trigger while running → 409', async () => {
-    deps.indexingState.start(new Date().toISOString());
-    const app = createApp(deps);
-    const res = await app.request('/api/indexing/trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(409);
   });
 
   // Test 13: GET /api/metrics/events?offset=0&limit=10 → pagination works

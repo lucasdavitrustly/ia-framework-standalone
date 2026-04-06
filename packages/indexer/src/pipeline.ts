@@ -38,11 +38,13 @@ export interface IndexingConfig {
   /** Optional additional context sources (DB schema, docs, etc.) */
   contextSources?: ContextSource[] | undefined;
   /** Optional dependency graph for building file-level import adjacency */
-  dependencyGraph?: {
-    initialize(): void;
-    upsertEdges(sourceFilePath: string, imports: string[], projectRoot: string): void;
-    deleteEdgesForFile(filePath: string): void;
-  } | undefined;
+  dependencyGraph?:
+    | {
+        initialize(): void;
+        upsertEdges(sourceFilePath: string, imports: string[], projectRoot: string): void;
+        deleteEdgesForFile(filePath: string): void;
+      }
+    | undefined;
 }
 
 export interface IndexingProgress {
@@ -60,6 +62,7 @@ export class IndexingPipeline {
   async run(
     config: IndexingConfig,
     onProgress?: ProgressCallback,
+    signal?: AbortSignal,
   ): Promise<{ filesIndexed: number; chunksIndexed: number }> {
     const {
       targetProjectPath,
@@ -158,6 +161,11 @@ export class IndexingPipeline {
       }
       progress.filesProcessed++;
       onProgress?.({ ...progress });
+
+      // Check for cancellation after each file
+      if (signal?.aborted) {
+        throw new Error('Indexing cancelled');
+      }
     }
 
     progress.chunksTotal = allChunks.length;
@@ -167,6 +175,11 @@ export class IndexingPipeline {
     // Embed chunks in batches
     const vectorPoints: VectorPoint[] = [];
     for (let i = 0; i < allChunks.length; i += embeddingBatchSize) {
+      // Check for cancellation before each batch
+      if (signal?.aborted) {
+        throw new Error('Indexing cancelled');
+      }
+
       const batch = allChunks.slice(i, i + embeddingBatchSize);
       const texts = batch.map((c) => c.content);
 
@@ -207,7 +220,10 @@ export class IndexingPipeline {
         logger.info({ source: source.name }, 'Processing context source');
         try {
           const sourceChunks = await source.getChunks();
-          logger.info({ source: source.name, count: sourceChunks.length }, 'Got chunks from context source');
+          logger.info(
+            { source: source.name, count: sourceChunks.length },
+            'Got chunks from context source',
+          );
 
           progress.chunksTotal += sourceChunks.length;
 
