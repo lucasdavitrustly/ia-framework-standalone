@@ -1,5 +1,10 @@
 import { Hono } from 'hono';
-import type { TotalStats, StrategyStats, DailyTokenUsage, EventsPage } from '@ia-framework/observability';
+import type {
+  TotalStats,
+  StrategyStats,
+  DailyTokenUsage,
+  EventsPage,
+} from '@ia-framework/observability';
 import type { BenchmarkRun } from '@ia-framework/benchmark';
 import type { ProjectConfig } from '@ia-framework/core';
 import { IndexingStateManager } from './indexing-state.js';
@@ -30,8 +35,6 @@ export interface AppDependencies {
   indexingState: IndexingStateManager;
   triggerIndexing: TriggerFn;
   frameworkDir: string;
-  qdrantHost: string;
-  qdrantPort: number;
   /** Optional fetch override for testing */
   fetchFn?: typeof fetch;
 }
@@ -39,12 +42,11 @@ export interface AppDependencies {
 export function createApp(deps: AppDependencies): Hono {
   const app = new Hono();
 
-  // Mount status route — passes fetchFn for testability
+  // Mount status route — passes configWatcher for dynamic host resolution and fetchFn for testability
   const statusDeps = {
     indexingState: deps.indexingState,
     frameworkDir: deps.frameworkDir,
-    qdrantHost: deps.qdrantHost,
-    qdrantPort: deps.qdrantPort,
+    configWatcher: deps.configWatcher,
     ...(deps.fetchFn !== undefined ? { fetchFn: deps.fetchFn } : {}),
   };
 

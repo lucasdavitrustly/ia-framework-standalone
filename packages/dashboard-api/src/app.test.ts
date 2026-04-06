@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createApp } from './app.js';
 import type { AppDependencies } from './app.js';
 import { IndexingStateManager } from './indexing-state.js';
-import type { TotalStats, StrategyStats, DailyTokenUsage, RagEvent, EventsPage } from '@ia-framework/observability';
+import type {
+  TotalStats,
+  StrategyStats,
+  DailyTokenUsage,
+  RagEvent,
+  EventsPage,
+} from '@ia-framework/observability';
 import type { BenchmarkRun } from '@ia-framework/benchmark';
 
 function makeRun(overrides: Partial<BenchmarkRun> = {}): BenchmarkRun {
@@ -54,9 +60,7 @@ function makeDeps(overrides: Partial<AppDependencies> = {}): AppDependencies {
     { strategy: 'mcp', totalQueries: 10, totalTokens: 5000, avgTokensPerQuery: 500 },
   ];
 
-  const byDay: DailyTokenUsage[] = [
-    { date: '2026-04-01', totalTokens: 5000, totalQueries: 10 },
-  ];
+  const byDay: DailyTokenUsage[] = [{ date: '2026-04-01', totalTokens: 5000, totalQueries: 10 }];
 
   const events: RagEvent[] = [makeEvent(), makeEvent()];
   const eventsPage: EventsPage = { events, total: 2 };
@@ -74,9 +78,9 @@ function makeDeps(overrides: Partial<AppDependencies> = {}): AppDependencies {
     },
     benchmarkStore: {
       listRuns: vi.fn().mockReturnValue(runs),
-      getRunById: vi.fn().mockImplementation((id: string) =>
-        runs.find((r) => r.runId === id) ?? null,
-      ),
+      getRunById: vi
+        .fn()
+        .mockImplementation((id: string) => runs.find((r) => r.runId === id) ?? null),
     },
     configWatcher: {
       getConfig: vi.fn().mockReturnValue({
@@ -90,8 +94,6 @@ function makeDeps(overrides: Partial<AppDependencies> = {}): AppDependencies {
     // during assertions (prevents complete() from running before we check state)
     triggerIndexing: vi.fn().mockReturnValue(new Promise(() => {})),
     frameworkDir: '/tmp/.ia-framework',
-    qdrantHost: 'localhost',
-    qdrantPort: 6333,
     fetchFn: mockFetch,
     ...overrides,
   };
@@ -109,7 +111,11 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/status');
     expect(res.status).toBe(200);
-    const body = await res.json() as { qdrant: string; indexingInProgress: boolean; timestamp: string };
+    const body = (await res.json()) as {
+      qdrant: string;
+      indexingInProgress: boolean;
+      timestamp: string;
+    };
     expect(body.qdrant).toBe('ok');
     expect(body.indexingInProgress).toBe(false);
     expect(typeof body.timestamp).toBe('string');
@@ -123,7 +129,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/status');
     expect(res.status).toBe(200);
-    const body = await res.json() as { qdrant: string };
+    const body = (await res.json()) as { qdrant: string };
     expect(body.qdrant).toBe('error');
   });
 
@@ -132,7 +138,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/config');
     expect(res.status).toBe(200);
-    const body = await res.json() as { targetProjectPath: string };
+    const body = (await res.json()) as { targetProjectPath: string };
     expect(body).toMatchObject({ targetProjectPath: '/test/project' });
   });
 
@@ -151,7 +157,11 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/metrics');
     expect(res.status).toBe(200);
-    const body = await res.json() as { totals: { totalTokens: number }; byStrategy: unknown[]; byDay: unknown[] };
+    const body = (await res.json()) as {
+      totals: { totalTokens: number };
+      byStrategy: unknown[];
+      byDay: unknown[];
+    };
     expect(body).toHaveProperty('totals');
     expect(body).toHaveProperty('byStrategy');
     expect(body).toHaveProperty('byDay');
@@ -163,7 +173,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/metrics/events?limit=5');
     expect(res.status).toBe(200);
-    const body = await res.json() as { events: unknown[]; total: number };
+    const body = (await res.json()) as { events: unknown[]; total: number };
     expect(body).toHaveProperty('events');
     expect(body).toHaveProperty('total');
     expect(Array.isArray(body.events)).toBe(true);
@@ -174,7 +184,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/benchmarks');
     expect(res.status).toBe(200);
-    const body = await res.json() as { runs: unknown[] };
+    const body = (await res.json()) as { runs: unknown[] };
     expect(body).toHaveProperty('runs');
     expect(Array.isArray(body.runs)).toBe(true);
     expect(body.runs.length).toBe(1);
@@ -192,7 +202,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request(`/api/benchmarks/${run.runId}`);
     expect(res.status).toBe(200);
-    const body = await res.json() as { runId: string };
+    const body = (await res.json()) as { runId: string };
     expect(body.runId).toBe(run.runId);
   });
 
@@ -208,7 +218,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/indexing/status');
     expect(res.status).toBe(200);
-    const body = await res.json() as { running: boolean };
+    const body = (await res.json()) as { running: boolean };
     expect(body.running).toBe(false);
   });
 
@@ -221,7 +231,7 @@ describe('createApp', () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(202);
-    const body = await res.json() as { message: string; startedAt: string };
+    const body = (await res.json()) as { message: string; startedAt: string };
     expect(body.message).toBe('Indexing started');
     expect(typeof body.startedAt).toBe('string');
     expect(deps.indexingState.getState().running).toBe(true);

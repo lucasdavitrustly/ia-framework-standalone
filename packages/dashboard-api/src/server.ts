@@ -95,8 +95,6 @@ export async function startServer(options: ServerOptions): Promise<void> {
     indexingState,
     triggerIndexing,
     frameworkDir,
-    qdrantHost: config?.vectorStore.host ?? process.env['QDRANT_HOST'] ?? 'localhost',
-    qdrantPort: config?.vectorStore.port ?? parseInt(process.env['QDRANT_PORT'] ?? '6333', 10),
   });
 
   // Serve static files for React build
@@ -133,12 +131,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
-  const configPath =
-    process.env['IA_FRAMEWORK_CONFIG'] ?? join(frameworkDir, 'project.json');
+  const configPath = process.env['IA_FRAMEWORK_CONFIG'] ?? join(frameworkDir, 'project.json');
   const serverPort = parseInt(process.env['DASHBOARD_PORT'] ?? '3000', 10);
   const __dirname = fileURLToPath(new URL('.', import.meta.url));
-  const publicDir =
-    process.env['DASHBOARD_PUBLIC_DIR'] ?? join(__dirname, '../public');
+  const publicDir = process.env['DASHBOARD_PUBLIC_DIR'] ?? join(__dirname, '../public');
 
   void startServer({
     port: serverPort,

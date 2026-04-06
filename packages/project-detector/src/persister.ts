@@ -9,7 +9,7 @@ export interface PersistOptions {
 }
 
 const DEFAULT_VECTOR_STORE = {
-  host: 'localhost',
+  host: 'qdrant',
   port: 6333,
   collectionName: 'codebase',
 } as const;
