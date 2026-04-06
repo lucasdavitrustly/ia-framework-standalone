@@ -25,14 +25,19 @@ export function statusCommand(): Command {
         console.log(`Config:         ${configPath}`);
         console.log(`Target project: ${config.targetProjectPath}`);
         console.log(`Embedding:      ${config.embedding.provider} / ${config.embedding.model}`);
-        console.log(`Vector store:   ${config.vectorStore.host}:${config.vectorStore.port}`);
+        const effectiveQdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
+        console.log(`Vector store:   ${effectiveQdrantHost}:${config.vectorStore.port}`);
         console.log(`Collection:     ${config.vectorStore.collectionName}`);
 
         // Try to connect to Qdrant
         console.log('');
         try {
+          // CLI runs on the host machine — use QDRANT_HOST env var or fall back to localhost.
+          // config.vectorStore.host may be "qdrant" (the Docker service name), which only
+          // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
+          const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
           const vectorStore = new QdrantVectorStore({
-            host: config.vectorStore.host,
+            host: qdrantHost,
             port: config.vectorStore.port,
             collectionName: config.vectorStore.collectionName,
             apiKey: config.vectorStore.apiKey,
