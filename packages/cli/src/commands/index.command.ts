@@ -127,7 +127,39 @@ export function indexCommand(): Command {
     .description('Index the configured target project codebase into Qdrant')
     .option('-f, --force', 'Force re-index all files regardless of changes', false)
     .option('-c, --config <path>', 'Path to project.json config', '')
-    .option('-m, --model <name>', 'Override embedding model (auto-pulls if not installed)')
+    .option(
+      '-m, --model <name>',
+      [
+        'Embedding model to use (overrides project.json).',
+        'Auto-pulls from Ollama if not installed locally.',
+        'Detects dimension mismatches and prompts to recreate the collection.',
+        '',
+        'Examples:',
+        '  --model nomic-embed-text       (768d, fast)',
+        '  --model mxbai-embed-large      (1024d, higher quality)',
+        '  --model qwen3-embedding:0.6b   (1024d)',
+        '  --model qwen3-embedding:1.7b   (2048d)',
+        '  --model qwen3-embedding:4b     (2560d)',
+        '',
+        'Browse all models: https://ollama.com/search',
+      ].join('\n'),
+    )
+    .addHelpText(
+      'after',
+      `
+Changing embedding models:
+  Switch models at any time with --model. If the new model has different
+  dimensions than the existing Qdrant collection, you will be prompted to
+  delete and re-index. This is required — vectors from different models
+  are incompatible.
+
+  $ ia-framework index --model mxbai-embed-large
+  $ ia-framework index --model qwen3-embedding:1.7b --force
+
+To persist a model change, update "embedding.model" in .ia-framework/project.json.
+Browse available models: https://ollama.com/search
+`,
+    )
     .action(async (options: { force: boolean; config: string; model?: string }) => {
       const logger = createLogger('cli:index');
       const configPath =

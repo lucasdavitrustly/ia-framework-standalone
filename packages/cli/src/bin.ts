@@ -7,11 +7,13 @@ import { statusCommand } from './commands/status.command.js';
 import { benchmarkCommand } from './commands/benchmark.command.js';
 import { dbCommand } from './commands/db.command.js';
 import { agentsCommand } from './commands/agents.command.js';
+import { helloCommand } from './commands/hello.command.js';
 
 const program = new Command('ia-framework')
   .version('0.1.0')
   .description('AI codebase context framework — index your codebase for AI understanding');
 
+program.addCommand(helloCommand());
 program.addCommand(initCommand());
 program.addCommand(indexCommand());
 program.addCommand(searchCommand());

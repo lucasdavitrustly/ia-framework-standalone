@@ -132,8 +132,8 @@ echo ""
 # Step 3.5: Install ia-framework CLI globally
 # ──────────────────────────────────────────────────────
 echo -e "${BOLD}Step 3.5: Install CLI globally${NC}"
-echo -e "  ${YELLOW}→${NC} Linking ia-framework CLI globally via pnpm..."
-if pnpm link --global --dir "${SCRIPT_DIR}/packages/cli" 2>&1 | tail -3; then
+echo -e "  ${YELLOW}→${NC} Linking ia-framework CLI globally..."
+if (cd "${SCRIPT_DIR}/packages/cli" && npm link) 2>&1 | tail -3; then
   echo -e "  ${GREEN}✓${NC} 'ia-framework' command is now available globally"
 else
   echo -e "  ${YELLOW}⚠${NC} Global link failed — you can run the CLI via:"
