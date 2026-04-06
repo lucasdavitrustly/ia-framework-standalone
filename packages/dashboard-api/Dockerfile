@@ -27,6 +27,7 @@ COPY packages/benchmark/package.json          packages/benchmark/
 COPY packages/mcp-server/package.json         packages/mcp-server/
 COPY packages/cli/package.json                packages/cli/
 COPY packages/project-detector/package.json   packages/project-detector/
+COPY packages/db-context/package.json         packages/db-context/
 COPY packages/dashboard-api/package.json      packages/dashboard-api/
 COPY apps/dashboard/package.json              apps/dashboard/
 
@@ -46,6 +47,7 @@ RUN pnpm --filter "@ia-framework/core" build && \
     pnpm --filter "@ia-framework/ast-parser" build && \
     pnpm --filter "@ia-framework/indexer" build && \
     pnpm --filter "@ia-framework/retrieval" build && \
+    pnpm --filter "@ia-framework/db-context" build && \
     pnpm --filter "@ia-framework/dashboard-api" build
 
 # Build React frontend (outputs to apps/dashboard/dist)
@@ -78,6 +80,7 @@ COPY packages/ast-parser/package.json         packages/ast-parser/
 COPY packages/mcp-server/package.json         packages/mcp-server/
 COPY packages/cli/package.json                packages/cli/
 COPY packages/project-detector/package.json   packages/project-detector/
+COPY packages/db-context/package.json         packages/db-context/
 COPY packages/dashboard-api/package.json      packages/dashboard-api/
 
 # Install production deps only (--prod prunes devDependencies)
@@ -92,6 +95,7 @@ COPY --from=build-frontend /app/packages/vector-store/dist      packages/vector-
 COPY --from=build-frontend /app/packages/ast-parser/dist        packages/ast-parser/dist/
 COPY --from=build-frontend /app/packages/indexer/dist           packages/indexer/dist/
 COPY --from=build-frontend /app/packages/retrieval/dist         packages/retrieval/dist/
+COPY --from=build-frontend /app/packages/db-context/dist        packages/db-context/dist/
 COPY --from=build-frontend /app/packages/dashboard-api/dist     packages/dashboard-api/dist/
 
 # Copy React build into dashboard-api's public directory
