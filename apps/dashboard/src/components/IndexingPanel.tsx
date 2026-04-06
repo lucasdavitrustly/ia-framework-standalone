@@ -31,18 +31,27 @@ export default function IndexingPanel() {
   const [status, setStatus] = useState<ApiIndexingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastJsonRef = useRef<string>('');
+
+  function applyStatus(s: ApiIndexingStatus) {
+    const json = JSON.stringify(s);
+    if (json !== lastJsonRef.current) {
+      lastJsonRef.current = json;
+      setStatus(s);
+    }
+  }
 
   useEffect(() => {
     // Fetch immediately on mount
     DashboardClient.getIndexingStatus()
-      .then((s) => setStatus(s))
+      .then((s) => applyStatus(s))
       .catch(() => {})
       .finally(() => setLoading(false));
 
     // Then poll unconditionally — detects when CLI indexing starts or finishes
     intervalRef.current = setInterval(() => {
       DashboardClient.getIndexingStatus()
-        .then((s) => setStatus(s))
+        .then((s) => applyStatus(s))
         .catch(() => {});
     }, 2000);
 
