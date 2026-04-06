@@ -23,3 +23,13 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Files changed:** packages/project-detector/src/persister.ts, scripts/init-config.sh, .ia-framework/project.json, packages/dashboard-api/src/routes/status.ts, packages/dashboard-api/src/app.ts, packages/dashboard-api/src/server.ts
 
 ---
+
+## indexing-silent-failure-empty-qdrant — CLI indexer uses Docker hostname "qdrant" on host machine, causing silent indexing failure
+
+- **Date:** 2026-04-06
+- **Error patterns:** empty Qdrant, 0 vectors, silent failure, fetch failed, ENOTFOUND, qdrant hostname, CLI indexer, install.sh, vectorStore.host
+- **Root cause:** The CLI (`index.command.ts`, `search.command.ts`, `status.command.ts`) and MCP server (`bin.ts`) constructed QdrantVectorStore using `config.vectorStore.host` which is set to "qdrant" (Docker service name). This hostname only resolves inside Docker containers; the CLI and MCP server run on the host machine where only "localhost" resolves, causing `TypeError: fetch failed` (ENOTFOUND) at vectorStore.initialize(). The error appeared silent because carriage-return progress output overwrote the terminal line.
+- **Fix:** Replace `config.vectorStore.host` with `process.env['QDRANT_HOST'] ?? 'localhost'` in all four host-side processes. This correctly defaults to localhost for host-machine use while remaining overridable via env var.
+- **Files changed:** packages/cli/src/commands/index.command.ts, packages/cli/src/commands/search.command.ts, packages/cli/src/commands/status.command.ts, packages/mcp-server/src/bin.ts
+
+---
