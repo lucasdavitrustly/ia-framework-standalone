@@ -24,6 +24,36 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
+## dashboard-not-updating-during-index — Dashboard shows Idle while CLI indexing is running
+
+- **Date:** 2026-04-06
+- **Error patterns:** dashboard idle, indexing progress blank, no live updates, zero chunks, CLI index, separate process, Docker container, IndexingStateManager, in-memory state, shared state
+- **Root cause:** The CLI runs as a separate OS process from the dashboard API (which runs in a Docker container / Lima VM via Rancher Desktop). Each had its own in-memory `IndexingStateManager` — they never shared state. The CLI's `onProgress` callback only wrote to stdout via `process.stdout.write()`. The dashboard API's `GET /api/indexing/status` returned `IndexingStateManager.getState()` which was always zero for CLI-triggered runs. The dashboard frontend correctly polled every 2 seconds but always received zeros.
+- **Fix:** (1) Added `writeIndexingProgress()` helper to CLI that writes `.ia-framework/indexing-progress.json` on every progress event (walking → parsing → embedding → storing → done/error). Fire-and-forget, never throws. (2) Modified `GET /api/indexing/status` to read this file as a fallback when in-memory state shows idle — in-memory takes priority for dashboard-triggered runs. (3) Passed `frameworkDir` to `indexingRouter` so it can locate the file. The shared file works because `.ia-framework/` is already mounted into the Docker container as `/ia-framework-data`.
+- **Files changed:** packages/cli/src/commands/index.command.ts, packages/dashboard-api/src/routes/indexing.ts, packages/dashboard-api/src/app.ts
+
+---
+
+## tree-sitter-32kb-limit — tree-sitter throws Invalid argument on files larger than 32KB causing 0 chunks
+
+- **Date:** 2026-04-06
+- **Error patterns:** Invalid argument, 0 chunks, tree-sitter, parseFile, large file, Java, minified JS, indexing skips files, silent failure, 32767 characters
+- **Root cause:** `tree-sitter@0.21.1` has a hard **32,767-character (32KB - 1) internal buffer limit**. Any source file larger than that throws `Invalid argument` from `Parser.parse()`. The `parseFile` catch block logged the error and skipped the file — silently producing 0 chunks. ~17 out of every 500 real-world files hit this limit (large Java test classes, service files, minified JS). The limit is not documented; it was found via binary search on the failing file.
+- **Fix:** Upgrade `tree-sitter` from `0.21.1` → `0.22.4`, `tree-sitter-java` from `0.21.0` → `0.23.5`, `tree-sitter-typescript` from `0.21.2` → `0.23.2`. Version 0.22.x removes the 32KB limit. Grammar APIs are backwards-compatible (same `{ typescript, tsx }` export shape). All 31 ast-parser tests continue to pass.
+- **Files changed:** packages/ast-parser/package.json, pnpm-lock.yaml
+
+---
+
+## embedding-dimension-mismatch — Qdrant upserts silently fail due to wrong vector dimensions
+
+- **Date:** 2026-04-06
+- **Error patterns:** 0 vectors in Qdrant, silent upsert failure, dimension mismatch, qwen3-embedding, 768 dimensions, 1024 dimensions, 1536 dimensions, DEFAULT_DIMENSIONS, VectorStore.initialize, stale collection
+- **Root cause:** Two compounding bugs: (1) `qwen3-embedding:0.6b` was not in the `DEFAULT_DIMENSIONS` map in `packages/embedding/src/factory.ts`, so it fell back to 1536d (OpenAI default) instead of the correct 1024d. (2) `VectorStore.initialize()` had `if (existence.exists) return;` — it skipped re-creation even when the existing collection had wrong dimensions (768d from old `nomic-embed-text` default), causing all upserts to silently fail with dimension mismatch.
+- **Fix:** (1) Added `qwen3-embedding:0.6b`, `qwen3-embedding:1.7b`, `qwen3-embedding:4b` (all 1024d) to `DEFAULT_DIMENSIONS` in `factory.ts`. (2) Updated `VectorStore.initialize()` to fetch the existing collection's dimension config and compare — if mismatch detected, delete and recreate the collection before continuing.
+- **Files changed:** packages/embedding/src/factory.ts, packages/vector-store/src/qdrant.ts
+
+---
+
 ## indexing-silent-failure-empty-qdrant — CLI indexer uses Docker hostname "qdrant" on host machine, causing silent indexing failure
 
 - **Date:** 2026-04-06
