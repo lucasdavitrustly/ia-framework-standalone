@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import StatCard from '../components/StatCard.tsx';
+import IndexingPanel from '../components/IndexingPanel.tsx';
 import { DashboardClient } from '../api/client.ts';
 import type { ApiStatus, ApiMetrics, ApiBenchmarks, ApiDbStatus } from '../api/client.ts';
 
@@ -72,32 +73,17 @@ export default function Overview() {
         />
       </div>
 
-      {/* Indexing status indicator */}
-      {status && (
-        <div className="mt-8 p-4 bg-gray-900 rounded-xl border border-gray-800">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Indexing</p>
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-block w-2 h-2 rounded-full ${
-                status.indexingInProgress ? 'bg-yellow-400 animate-pulse' : 'bg-green-500'
-              }`}
-            />
-            <span className="text-sm text-gray-300">
-              {status.indexingInProgress ? 'In progress' : 'Idle'}
-            </span>
-            {status.lastIndexedCommit && (
-              <span className="text-xs text-gray-500 ml-auto">
-                Last commit: {status.lastIndexedCommit.slice(0, 8)}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Indexing panel — shows status and allows triggering indexing from the dashboard */}
+      <div className="mt-8">
+        <IndexingPanel />
+      </div>
 
       {/* Database connection status */}
       {!loading && dbStatus && (
         <div className="mt-4 p-4 bg-gray-900 rounded-xl border border-gray-800">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Database</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+            Database
+          </p>
           <div className="flex items-center gap-2">
             <span
               className={`inline-block w-2 h-2 rounded-full ${
@@ -116,7 +102,10 @@ export default function Overview() {
                   : 'Disconnected'}
             </span>
             {dbStatus.error && (
-              <span className="text-xs text-red-400 ml-auto truncate max-w-xs" title={dbStatus.error}>
+              <span
+                className="text-xs text-red-400 ml-auto truncate max-w-xs"
+                title={dbStatus.error}
+              >
                 {dbStatus.error}
               </span>
             )}

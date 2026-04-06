@@ -57,6 +57,7 @@ export function createApp(deps: AppDependencies): Hono {
   const indexingApp = indexingRouter({
     indexingState: deps.indexingState,
     triggerIndexing: deps.triggerIndexing,
+    frameworkDir: deps.frameworkDir,
   });
 
   app.route('/api/status', statusApp);

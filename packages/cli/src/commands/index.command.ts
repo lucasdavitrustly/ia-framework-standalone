@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { writeFile } from 'node:fs/promises';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -16,6 +17,23 @@ import { DependencyGraph } from '@ia-framework/retrieval';
 function resolveFrameworkDir(configPath: string): string {
   // .ia-framework/project.json → .ia-framework/
   return dirname(configPath);
+}
+
+/**
+ * Write indexing progress to a JSON file so the dashboard API (a separate
+ * process, possibly in a VM) can read live CLI-triggered progress.
+ * Fire-and-forget — never throws, so it never disrupts actual indexing.
+ */
+async function writeIndexingProgress(
+  frameworkDir: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const filePath = join(frameworkDir, 'indexing-progress.json');
+    await writeFile(filePath, JSON.stringify(data), 'utf-8');
+  } catch {
+    // Non-fatal — dashboard just won't show progress
+  }
 }
 
 /**
@@ -109,17 +127,49 @@ export function indexCommand(): Command {
     .description('Index the configured target project codebase into Qdrant')
     .option('-f, --force', 'Force re-index all files regardless of changes', false)
     .option('-c, --config <path>', 'Path to project.json config', '')
-    .option('-m, --model <name>', 'Override embedding model (auto-pulls if not installed)')
+    .option(
+      '-m, --model <name>',
+      [
+        'Embedding model to use (overrides project.json).',
+        'Auto-pulls from Ollama if not installed locally.',
+        'Detects dimension mismatches and prompts to recreate the collection.',
+        '',
+        'Examples:',
+        '  --model nomic-embed-text       (768d, fast)',
+        '  --model mxbai-embed-large      (1024d, higher quality)',
+        '  --model qwen3-embedding:0.6b   (1024d)',
+        '  --model qwen3-embedding:1.7b   (2048d)',
+        '  --model qwen3-embedding:4b     (2560d)',
+        '',
+        'Browse all models: https://ollama.com/search',
+      ].join('\n'),
+    )
+    .addHelpText(
+      'after',
+      `
+Changing embedding models:
+  Switch models at any time with --model. If the new model has different
+  dimensions than the existing Qdrant collection, you will be prompted to
+  delete and re-index. This is required — vectors from different models
+  are incompatible.
+
+  $ ia-framework index --model mxbai-embed-large
+  $ ia-framework index --model qwen3-embedding:1.7b --force
+
+To persist a model change, update "embedding.model" in .ia-framework/project.json.
+Browse available models: https://ollama.com/search
+`,
+    )
     .action(async (options: { force: boolean; config: string; model?: string }) => {
       const logger = createLogger('cli:index');
       const configPath =
         options.config ||
         process.env['IA_FRAMEWORK_CONFIG'] ||
         join(process.cwd(), '.ia-framework', 'project.json');
+      const frameworkDir = resolveFrameworkDir(configPath);
 
       try {
         const config = await loadConfig(configPath);
-        const frameworkDir = resolveFrameworkDir(configPath);
         const baseUrl = config.embedding.baseUrl ?? 'http://localhost:11434';
 
         // Handle --model override or missing model
@@ -226,6 +276,20 @@ export function indexCommand(): Command {
         console.log('');
 
         let lastFile = '';
+        const startedAt = new Date().toISOString();
+        // Write initial "running" state so the dashboard can detect indexing started
+        await writeIndexingProgress(frameworkDir, {
+          running: true,
+          stage: 'walking',
+          filesTotal: 0,
+          filesProcessed: 0,
+          chunksTotal: 0,
+          chunksIndexed: 0,
+          currentFile: null,
+          startedAt,
+          updatedAt: startedAt,
+        });
+
         const result = await pipeline.run(
           {
             targetProjectPath: config.targetProjectPath,
@@ -245,6 +309,18 @@ export function indexCommand(): Command {
             process.stdout.write(
               `\r  ${progress.stage}: ${progress.filesProcessed}/${progress.filesTotal} files, ${progress.chunksIndexed} chunks${file ? ` — ${file.slice(-40)}` : ''}`,
             );
+            // Write progress to shared file so the dashboard API can pick it up
+            void writeIndexingProgress(frameworkDir, {
+              running: true,
+              stage: progress.stage,
+              filesTotal: progress.filesTotal,
+              filesProcessed: progress.filesProcessed,
+              chunksTotal: progress.chunksTotal,
+              chunksIndexed: progress.chunksIndexed,
+              currentFile: progress.currentFile ?? null,
+              startedAt,
+              updatedAt: new Date().toISOString(),
+            });
           },
         );
 
@@ -252,6 +328,19 @@ export function indexCommand(): Command {
         console.log(
           `\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files`,
         );
+
+        // Mark indexing complete in the progress file
+        await writeIndexingProgress(frameworkDir, {
+          running: false,
+          stage: 'done',
+          filesTotal: result.filesIndexed,
+          filesProcessed: result.filesIndexed,
+          chunksTotal: result.chunksIndexed,
+          chunksIndexed: result.chunksIndexed,
+          currentFile: null,
+          startedAt,
+          completedAt: new Date().toISOString(),
+        });
 
         // Save embedding model to indexing state for mismatch detection
         const currentCommit = await getCurrentCommit(config.targetProjectPath);
@@ -264,6 +353,18 @@ export function indexCommand(): Command {
       } catch (error) {
         console.error(`\n\u2717 Indexing failed: ${String(error)}`);
         logger.error({ error }, 'Indexing failed');
+        // Write failure state so the dashboard shows the error
+        await writeIndexingProgress(frameworkDir, {
+          running: false,
+          stage: null,
+          filesTotal: 0,
+          filesProcessed: 0,
+          chunksTotal: 0,
+          chunksIndexed: 0,
+          currentFile: null,
+          error: String(error),
+          completedAt: new Date().toISOString(),
+        });
         process.exit(1);
       }
     });

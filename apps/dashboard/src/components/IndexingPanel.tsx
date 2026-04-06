@@ -21,7 +21,7 @@ export default function IndexingPanel() {
     if (intervalRef.current) return;
     intervalRef.current = setInterval(() => {
       DashboardClient.getIndexingStatus()
-        .then(s => {
+        .then((s) => {
           setStatus(s);
           if (!s.running && intervalRef.current) {
             clearInterval(intervalRef.current);
@@ -34,7 +34,7 @@ export default function IndexingPanel() {
 
   useEffect(() => {
     DashboardClient.getIndexingStatus()
-      .then(s => {
+      .then((s) => {
         setStatus(s);
         if (s.running) startPolling();
       })
@@ -76,7 +76,7 @@ export default function IndexingPanel() {
           disabled={isRunning || triggering || loading}
           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          {isRunning || triggering ? 'Indexing…' : 'Trigger Re-index'}
+          {isRunning || triggering ? 'Indexing…' : 'Start Indexing'}
         </button>
       </div>
 
