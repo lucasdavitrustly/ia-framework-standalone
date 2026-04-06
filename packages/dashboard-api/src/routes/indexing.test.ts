@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IndexingStateManager } from '../indexing-state.js';
 import type { IndexingState, IndexingObserver } from '../indexing-state.js';
-import { indexingRouter } from './indexing.js';
-import type { TriggerFn } from './indexing.js';
 import type { IndexingProgress } from '@ia-framework/indexer';
+import { indexingRouter } from './indexing.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -15,7 +14,7 @@ function makeProgress(overrides: Partial<IndexingProgress> = {}): IndexingProgre
     chunksTotal: 100,
     chunksIndexed: 50,
     ...overrides,
-  };
+  } as IndexingProgress;
 }
 
 // ─── Observer unit tests ──────────────────────────────────────────────────────
@@ -128,52 +127,6 @@ describe('IndexingStateManager — cancel()', () => {
 
 // ─── Route integration tests ─────────────────────────────────────────────────
 
-describe('indexingRouter — stop route', () => {
-  let indexingState: IndexingStateManager;
-
-  beforeEach(() => {
-    indexingState = new IndexingStateManager();
-  });
-
-  function makeRouter(triggerFn?: TriggerFn) {
-    return indexingRouter({
-      indexingState,
-      triggerIndexing: triggerFn ?? vi.fn().mockReturnValue(new Promise(() => {})),
-      frameworkDir: '/tmp/no-such-dir',
-    });
-  }
-
-  // T14: POST /stop when running → 200 { message: 'Stop requested' }
-  it('T14: POST /stop when running → 200 { message: Stop requested }', async () => {
-    indexingState.start(new Date().toISOString());
-    const router = makeRouter();
-    const res = await router.request('/stop', { method: 'POST' });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { message: string };
-    expect(body.message).toBe('Stop requested');
-  });
-
-  // T15: POST /stop when NOT running → still 200 (idempotent)
-  it('T15: POST /stop when not running → still 200 (idempotent)', async () => {
-    // indexingState is fresh — not running
-    const router = makeRouter();
-    const res = await router.request('/stop', { method: 'POST' });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { message: string };
-    expect(body.message).toBe('Stop requested');
-  });
-
-  // T16: POST /stop → indexingState.cancel() is called → state.running becomes false
-  it('T16: POST /stop → indexingState.cancel() called → state.running=false', async () => {
-    indexingState.start(new Date().toISOString());
-    expect(indexingState.getState().running).toBe(true);
-    const router = makeRouter();
-    await router.request('/stop', { method: 'POST' });
-    expect(indexingState.getState().running).toBe(false);
-    expect(indexingState.getState().error).toBe('Indexing cancelled');
-  });
-});
-
 describe('indexingRouter — stage-aware status route', () => {
   let indexingState: IndexingStateManager;
 
@@ -181,10 +134,9 @@ describe('indexingRouter — stage-aware status route', () => {
     indexingState = new IndexingStateManager();
   });
 
-  function makeRouter(triggerFn?: TriggerFn) {
+  function makeRouter() {
     return indexingRouter({
       indexingState,
-      triggerIndexing: triggerFn ?? vi.fn().mockReturnValue(new Promise(() => {})),
       frameworkDir: '/tmp/no-such-dir', // readProgressFile returns null when dir missing
     });
   }
@@ -233,69 +185,5 @@ describe('indexingRouter — stage-aware status route', () => {
     expect(body.stage).toBe('embedding');
     expect(body.chunksTotal).toBe(200);
     expect(body.chunksIndexed).toBe(50);
-  });
-
-  // T9: POST /trigger → triggerIndexing mock receives a progress callback; calling it updates state
-  it('T9: POST /trigger → triggerIndexing receives callback; calling it updates state', async () => {
-    let capturedCallback: ((p: IndexingProgress) => void) | null = null;
-
-    const triggerFn: TriggerFn = vi.fn().mockImplementation((onProgress) => {
-      capturedCallback = onProgress;
-      return new Promise(() => {}); // never resolves during test
-    });
-
-    const router = makeRouter(triggerFn);
-    const res = await router.request('/trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-
-    expect(res.status).toBe(202);
-    expect(capturedCallback).toBeDefined();
-
-    // Simulate progress callback firing
-    capturedCallback!(makeProgress({ stage: 'embedding', chunksIndexed: 25, chunksTotal: 100 }));
-
-    const state = indexingState.getState();
-    expect(state.stage).toBe('embedding');
-    expect(state.chunksIndexed).toBe(25);
-    expect(state.chunksTotal).toBe(100);
-  });
-
-  // T10: POST /trigger → observer registered before trigger fires is notified when progress callback invoked
-  it('T10: observer registered before trigger is notified when progress callback fires', async () => {
-    let capturedCallback: ((p: IndexingProgress) => void) | null = null;
-
-    const triggerFn: TriggerFn = vi.fn().mockImplementation((onProgress) => {
-      capturedCallback = onProgress;
-      return new Promise(() => {});
-    });
-
-    const observer = vi.fn() as unknown as IndexingObserver;
-
-    // Register observer BEFORE trigger
-    indexingState.subscribe(observer);
-
-    const router = makeRouter(triggerFn);
-    await router.request('/trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-
-    expect(capturedCallback).toBeDefined();
-
-    // Observer should NOT have been called yet (start() does not notify)
-    expect(observer).not.toHaveBeenCalled();
-
-    // Invoke captured callback → should notify observer
-    capturedCallback!(makeProgress({ stage: 'parsing', filesProcessed: 7, filesTotal: 20 }));
-
-    expect(observer).toHaveBeenCalledOnce();
-    const calls10 = (observer as ReturnType<typeof vi.fn>).mock.calls;
-    const snapshot10 = calls10[0]?.[0] as IndexingState;
-    expect(snapshot10.stage).toBe('parsing');
-    expect(snapshot10.filesProcessed).toBe(7);
   });
 });

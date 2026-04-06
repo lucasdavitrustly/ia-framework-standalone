@@ -2,14 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { DashboardClient } from '../api/client.ts';
 import type { ApiIndexingStatus } from '../api/client.ts';
 
-const STAGE_COLORS: Record<string, string> = {
-  walking: 'bg-yellow-900/50 text-yellow-300',
-  parsing: 'bg-blue-900/50 text-blue-300',
-  embedding: 'bg-purple-900/50 text-purple-300',
-  storing: 'bg-indigo-900/50 text-indigo-300',
-  done: 'bg-green-900/50 text-green-300',
-};
-
 const PIPELINE_STAGES = ['walking', 'parsing', 'embedding', 'storing'] as const;
 type PipelineStage = (typeof PIPELINE_STAGES)[number];
 
@@ -27,12 +19,17 @@ const STAGE_LABELS: Record<PipelineStage, string> = {
   storing: 'Storing',
 };
 
+const STAGE_COLORS: Record<string, string> = {
+  walking: 'bg-yellow-900/50 text-yellow-300',
+  parsing: 'bg-blue-900/50 text-blue-300',
+  embedding: 'bg-purple-900/50 text-purple-300',
+  storing: 'bg-indigo-900/50 text-indigo-300',
+  done: 'bg-green-900/50 text-green-300',
+};
+
 export default function IndexingPanel() {
   const [status, setStatus] = useState<ApiIndexingStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [triggering, setTriggering] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [triggerError, setTriggerError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function startPolling() {
@@ -63,31 +60,6 @@ export default function IndexingPanel() {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleTrigger() {
-    setTriggering(true);
-    setTriggerError(null);
-    try {
-      await DashboardClient.triggerIndexing({ incremental: false });
-      startPolling();
-    } catch (e: unknown) {
-      setTriggerError(e instanceof Error ? e.message : 'Failed to trigger indexing');
-    } finally {
-      setTriggering(false);
-    }
-  }
-
-  async function handleStop() {
-    setStopping(true);
-    setTriggerError(null);
-    try {
-      await DashboardClient.stopIndexing();
-    } catch (e: unknown) {
-      setTriggerError(e instanceof Error ? e.message : 'Failed to stop indexing');
-    } finally {
-      setStopping(false);
-    }
-  }
 
   const isRunning = status?.running ?? false;
   const isDone = status?.stage === 'done';
@@ -123,24 +95,12 @@ export default function IndexingPanel() {
       {/* Header row */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Indexing</h3>
-        <div className="flex items-center gap-2">
-          {isRunning && (
-            <button
-              onClick={() => void handleStop()}
-              disabled={stopping}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-700 text-white hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              {stopping ? 'Stopping…' : 'Stop'}
-            </button>
-          )}
-          <button
-            onClick={() => void handleTrigger()}
-            disabled={isRunning || triggering || loading}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {isRunning || triggering ? 'Indexing…' : 'Start Indexing'}
-          </button>
-        </div>
+        {isRunning && (
+          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-indigo-900/50 text-indigo-300">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+            Running
+          </span>
+        )}
       </div>
 
       {loading && <div className="h-4 bg-gray-800 rounded animate-pulse" />}
@@ -149,9 +109,16 @@ export default function IndexingPanel() {
         <>
           {/* Idle state — no stage set and not running */}
           {!isRunning && !isDone && status.stage === null && (
-            <div className="flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
-              <span className="text-sm text-gray-500">Idle</span>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+                <span className="text-sm text-gray-500">Idle — not yet indexed</span>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">
+                Run{' '}
+                <code className="text-gray-400 bg-gray-800 px-1 rounded">ia-framework index</code>{' '}
+                to start indexing
+              </p>
             </div>
           )}
 
@@ -161,7 +128,6 @@ export default function IndexingPanel() {
               {PIPELINE_STAGES.map((stage, index) => {
                 const isActive = index === currentStageIndex;
                 const isCompleted = index < currentStageIndex;
-                const isPending = index > currentStageIndex;
 
                 return (
                   <div key={stage} className="flex flex-col gap-1">
@@ -283,13 +249,6 @@ export default function IndexingPanel() {
             </p>
           )}
         </>
-      )}
-
-      {/* Trigger error */}
-      {triggerError && (
-        <div className="mt-2 p-2 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
-          {triggerError}
-        </div>
       )}
     </div>
   );

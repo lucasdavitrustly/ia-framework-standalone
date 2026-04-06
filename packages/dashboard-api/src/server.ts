@@ -4,14 +4,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MetricsStore } from '@ia-framework/observability';
 import { BenchmarkStore } from '@ia-framework/benchmark';
-import { createEmbeddingProvider } from '@ia-framework/embedding';
-import { QdrantVectorStore } from '@ia-framework/vector-store';
-import { IndexingPipeline } from '@ia-framework/indexer';
 import { DependencyGraph } from '@ia-framework/retrieval';
 import { ConfigWatcher } from './config-watcher.js';
 import { IndexingStateManager } from './indexing-state.js';
 import { createApp } from './app.js';
-import type { IndexingConfig } from '@ia-framework/indexer';
 
 export interface ServerOptions {
   port: number;
@@ -35,16 +31,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const indexingState = new IndexingStateManager();
 
   // Initialize embedding provider and vector store only when config is available
-  const embeddingProvider = config ? createEmbeddingProvider(config.embedding) : null;
-  const vectorStore = config
-    ? new QdrantVectorStore({
-        host: config.vectorStore.host,
-        port: config.vectorStore.port,
-        collectionName: config.vectorStore.collectionName,
-      })
-    : null;
-
-  const indexingPipeline = new IndexingPipeline();
+  const _config = config; // retained for future use
 
   // Set up dependency graph for building import adjacency during indexing
   const graphDbPath = join(frameworkDir, 'graph.sqlite');
@@ -56,48 +43,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
     dependencyGraph = undefined;
   }
 
-  // Build triggerIndexing function that uses the real providers
-  const triggerIndexing = async (
-    onProgress: (progress: import('@ia-framework/indexer').IndexingProgress) => void,
-    signal?: AbortSignal,
-  ): Promise<{ filesIndexed: number; chunksIndexed: number }> => {
-    const currentConfig = configWatcher.getConfig() ?? config;
-    if (!currentConfig) {
-      throw new Error('No project.json config found — cannot trigger indexing');
-    }
-    // Override Ollama baseUrl with env var so the dashboard Docker container can reach
-    // Ollama running on the host machine. project.json stores "http://localhost:11434"
-    // which is unreachable from inside Docker; docker-compose.yml sets OLLAMA_BASE_URL
-    // to "http://host.docker.internal:11434" (Docker Desktop macOS/Windows special hostname).
-    const ollamaBaseUrl = process.env['OLLAMA_BASE_URL'];
-    const embeddingConfig =
-      ollamaBaseUrl && currentConfig.embedding.provider === 'ollama'
-        ? { ...currentConfig.embedding, baseUrl: ollamaBaseUrl }
-        : currentConfig.embedding;
-    // Always construct a fresh provider so the OLLAMA_BASE_URL env var override takes
-    // effect — do NOT reuse the startup-time embeddingProvider which was created before
-    // the env var could be applied.
-    const currentEmbeddingProvider = createEmbeddingProvider(embeddingConfig);
-    const currentVectorStore =
-      vectorStore ??
-      new QdrantVectorStore({
-        host: currentConfig.vectorStore.host,
-        port: currentConfig.vectorStore.port,
-        collectionName: currentConfig.vectorStore.collectionName,
-      });
-    const indexingConfig: IndexingConfig = {
-      targetProjectPath: currentConfig.targetProjectPath,
-      frameworkDir,
-      collectionName: currentConfig.vectorStore.collectionName,
-      embeddingProvider: currentEmbeddingProvider,
-      vectorStore: currentVectorStore,
-      includePatterns: currentConfig.indexing?.includePatterns,
-      excludePatterns: currentConfig.indexing?.excludePatterns,
-      incremental: false,
-      dependencyGraph,
-    };
-    return indexingPipeline.run(indexingConfig, onProgress, signal);
-  };
+  void dependencyGraph; // may be used by future CLI-triggered indexing
 
   // Build Hono app
   const app = createApp({
@@ -105,7 +51,6 @@ export async function startServer(options: ServerOptions): Promise<void> {
     benchmarkStore,
     configWatcher,
     indexingState,
-    triggerIndexing,
     frameworkDir,
   });
 

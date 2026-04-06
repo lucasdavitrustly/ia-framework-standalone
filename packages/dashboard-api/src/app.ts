@@ -8,7 +8,6 @@ import type {
 import type { BenchmarkRun } from '@ia-framework/benchmark';
 import type { ProjectConfig } from '@ia-framework/core';
 import { IndexingStateManager } from './indexing-state.js';
-import type { TriggerFn } from './routes/indexing.js';
 import { statusRouter } from './routes/status.js';
 import { configRouter } from './routes/config.js';
 import { metricsRouter } from './routes/metrics.js';
@@ -33,7 +32,6 @@ export interface AppDependencies {
   benchmarkStore: BenchmarkStoreDep;
   configWatcher: { getConfig(): ProjectConfig | null };
   indexingState: IndexingStateManager;
-  triggerIndexing: TriggerFn;
   frameworkDir: string;
   /** Optional fetch override for testing */
   fetchFn?: typeof fetch;
@@ -42,7 +40,6 @@ export interface AppDependencies {
 export function createApp(deps: AppDependencies): Hono {
   const app = new Hono();
 
-  // Mount status route — passes configWatcher for dynamic host resolution and fetchFn for testability
   const statusDeps = {
     indexingState: deps.indexingState,
     frameworkDir: deps.frameworkDir,
@@ -56,7 +53,6 @@ export function createApp(deps: AppDependencies): Hono {
   const benchmarksApp = benchmarksRouter({ benchmarkStore: deps.benchmarkStore });
   const indexingApp = indexingRouter({
     indexingState: deps.indexingState,
-    triggerIndexing: deps.triggerIndexing,
     frameworkDir: deps.frameworkDir,
   });
 
