@@ -63,3 +63,13 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Files changed:** packages/cli/src/commands/index.command.ts, packages/cli/src/commands/search.command.ts, packages/cli/src/commands/status.command.ts, packages/mcp-server/src/bin.ts
 
 ---
+
+## ia-framework-global-install-no-indexing — install.sh triggered indexing on install and never linked the CLI globally; dashboard had no indexing trigger button
+
+- **Date:** 2026-04-06
+- **Error patterns:** global install, pnpm link, npm link, ia-framework command not found, indexing during install, install.sh, IndexingPanel, Start Indexing, dashboard trigger, Overview
+- **Root cause:** (1) install.sh Step 7 ran `node packages/cli/dist/bin.js index` directly, blocking until full indexing completed during install. (2) install.sh never ran `pnpm link --global` despite the CLI package having a `bin` field, so `ia-framework` was never available as a global command. (3) The IndexingPanel component (with a "Trigger Re-index" button backed by POST /api/indexing/trigger) existed but was not imported or rendered anywhere — Overview.tsx only showed a static status dot.
+- **Fix:** (1) Removed Step 7 (initial indexing) from install.sh. (2) Added `pnpm link --global --dir "${SCRIPT_DIR}/packages/cli"` as Step 3.5 in install.sh. (3) Updated install.sh success banner to reference `ia-framework` global commands. (4) Replaced the static indexing status indicator in Overview.tsx with the full IndexingPanel component. (5) Renamed IndexingPanel button label from "Trigger Re-index" to "Start Indexing".
+- **Files changed:** install.sh, apps/dashboard/src/pages/Overview.tsx, apps/dashboard/src/components/IndexingPanel.tsx
+
+---
