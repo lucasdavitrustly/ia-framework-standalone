@@ -32,29 +32,19 @@ export default function IndexingPanel() {
   const [loading, setLoading] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  function startPolling() {
-    if (intervalRef.current) return;
-    intervalRef.current = setInterval(() => {
-      DashboardClient.getIndexingStatus()
-        .then((s) => {
-          setStatus(s);
-          if (!s.running && intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-          }
-        })
-        .catch(() => {});
-    }, 2000);
-  }
-
   useEffect(() => {
+    // Fetch immediately on mount
     DashboardClient.getIndexingStatus()
-      .then((s) => {
-        setStatus(s);
-        if (s.running) startPolling();
-      })
+      .then((s) => setStatus(s))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    // Then poll unconditionally — detects when CLI indexing starts or finishes
+    intervalRef.current = setInterval(() => {
+      DashboardClient.getIndexingStatus()
+        .then((s) => setStatus(s))
+        .catch(() => {});
+    }, 2000);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
