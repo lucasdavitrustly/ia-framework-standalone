@@ -47,7 +47,35 @@ export class QdrantVectorStore implements VectorStore {
 
   async initialize(config: { textDimensions: number; codeDimensions: number }): Promise<void> {
     const existence = await this.client.collectionExists(this.collectionName);
-    if (existence.exists) return;
+    if (existence.exists) {
+      // Check for dimension mismatch — recreate if the stored dimensions differ.
+      // This happens when switching embedding models (e.g. nomic-embed-text 768d → qwen3 1024d).
+      const info = await this.client.getCollection(this.collectionName);
+      const vectors = info.config?.params?.vectors;
+      const textSize =
+        vectors &&
+        'text' in vectors &&
+        typeof vectors['text'] === 'object' &&
+        vectors['text'] !== null
+          ? (vectors['text'] as { size?: number }).size
+          : undefined;
+      const codeSize =
+        vectors &&
+        'code' in vectors &&
+        typeof vectors['code'] === 'object' &&
+        vectors['code'] !== null
+          ? (vectors['code'] as { size?: number }).size
+          : undefined;
+
+      const mismatch =
+        (textSize !== undefined && textSize !== config.textDimensions) ||
+        (codeSize !== undefined && codeSize !== config.codeDimensions);
+
+      if (!mismatch) return;
+
+      // Dimension mismatch — drop and recreate
+      await this.client.deleteCollection(this.collectionName);
+    }
 
     await this.client.createCollection(this.collectionName, {
       vectors: {
@@ -85,7 +113,7 @@ export class QdrantVectorStore implements VectorStore {
     });
 
     return results.map((r) => ({
-      id: ((r.payload as unknown as ChunkPayload).chunkId) ?? String(r.id),
+      id: (r.payload as unknown as ChunkPayload).chunkId ?? String(r.id),
       score: r.score,
       payload: r.payload as unknown as ChunkPayload,
       vectorName: options.vectorName,
@@ -114,10 +142,12 @@ export class QdrantVectorStore implements VectorStore {
 
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
     // Use `as unknown as` to satisfy strict union type — Qdrant accepts FilterSelector shape
-    const result = await (this.client.delete as unknown as (
-      name: string,
-      args: { wait: boolean; filter: Record<string, unknown> },
-    ) => Promise<{ deleted_count?: number }>)(this.collectionName, {
+    const result = await (
+      this.client.delete as unknown as (
+        name: string,
+        args: { wait: boolean; filter: Record<string, unknown> },
+      ) => Promise<{ deleted_count?: number }>
+    )(this.collectionName, {
       wait: true,
       filter,
     });
@@ -127,10 +157,12 @@ export class QdrantVectorStore implements VectorStore {
   async deleteByIds(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     // Use `as unknown as` to satisfy strict union type — Qdrant accepts PointIdsList shape
-    await (this.client.delete as unknown as (
-      name: string,
-      args: { wait: boolean; points: string[] },
-    ) => Promise<void>)(this.collectionName, {
+    await (
+      this.client.delete as unknown as (
+        name: string,
+        args: { wait: boolean; points: string[] },
+      ) => Promise<void>
+    )(this.collectionName, {
       wait: true,
       points: ids.map(toQdrantId),
     });

@@ -11,6 +11,9 @@ export const DEFAULT_DIMENSIONS: Record<string, number> = {
   'nomic-embed-text': 768,
   'mxbai-embed-large': 1024,
   'all-minilm': 384,
+  'qwen3-embedding:0.6b': 1024,
+  'qwen3-embedding:1.7b': 2048,
+  'qwen3-embedding:4b': 2560,
 };
 
 export function createEmbeddingProvider(config: EmbeddingProviderConfig): EmbeddingProvider {
