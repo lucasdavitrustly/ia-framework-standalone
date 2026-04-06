@@ -4,18 +4,17 @@ services:
     container_name: ia-framework-qdrant
     restart: unless-stopped
     ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
+      - '${QDRANT_HTTP_PORT:-6333}:6333'
+      - '${QDRANT_GRPC_PORT:-6334}:6334'
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
-      QDRANT__SERVICE__GRPC_PORT: "6334"
+      QDRANT__SERVICE__GRPC_PORT: '6334'
       QDRANT__LOG_LEVEL: INFO
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
-
 
   dashboard:
     build:
@@ -25,24 +24,39 @@ services:
     container_name: ia-framework-dashboard
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
+      - '${DASHBOARD_PORT:-3000}:3000'
     volumes:
       # Bind-mount the ia-framework .ia-framework/ directory into the container.
       # IA_FRAMEWORK_DIR must be set in the shell environment or .env file.
       # Example: IA_FRAMEWORK_DIR=/path/to/ia-framework/.ia-framework
-      - "${IA_FRAMEWORK_DIR}:/ia-framework-data"
+      - '${IA_FRAMEWORK_DIR}:/ia-framework-data'
     environment:
-      DASHBOARD_PORT: "3000"
-      IA_FRAMEWORK_DIR: "/ia-framework-data"
-      QDRANT_HOST: "qdrant"
-      QDRANT_PORT: "6333"
+      DASHBOARD_PORT: '3000'
+      IA_FRAMEWORK_DIR: '/ia-framework-data'
+      QDRANT_HOST: 'qdrant'
+      QDRANT_PORT: '6333'
+      # Ollama runs on the host machine. Docker Desktop (macOS/Windows) provides the
+      # special hostname host.docker.internal that resolves to the host. On Linux with
+      # Docker Engine, add `extra_hosts: ["host.docker.internal:host-gateway"]` or set
+      # OLLAMA_BASE_URL to the host's LAN IP manually.
+      OLLAMA_BASE_URL: 'http://host.docker.internal:11434'
       # NOTE: If project.json sets vectorStore.host=localhost, the dashboard container
       # cannot reach Qdrant at localhost (different container). Update project.json to
       # set vectorStore.host=qdrant (Docker service name) to enable the re-index trigger.
     depends_on:
       - qdrant
+    # host.docker.internal is provided automatically by Docker Desktop (macOS/Windows).
+    # On Linux with Docker Engine it must be added explicitly via extra_hosts.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/status').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/api/status').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

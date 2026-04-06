@@ -291,7 +291,18 @@ Browse available models: https://ollama.com/search
         console.log(`Model: ${config.embedding.model}`);
         console.log('');
 
-        let lastFile = '';
+        const BAR_WIDTH = 20;
+        const renderProgress = (progress: IndexingProgress): void => {
+          const pct =
+            progress.filesTotal > 0
+              ? Math.round((progress.filesProcessed / progress.filesTotal) * 100)
+              : 0;
+          const filled = Math.round((pct / 100) * BAR_WIDTH);
+          const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+          const line = `  [${bar}] ${String(pct).padStart(3)}%  ${progress.stage}  ${progress.filesProcessed}/${progress.filesTotal} files  ${progress.chunksIndexed} chunks`;
+          process.stdout.write(`\r\x1b[2K${line}`);
+        };
+
         const startedAt = new Date().toISOString();
         // Write initial "running" state so the dashboard can detect indexing started
         await writeIndexingProgress(frameworkDir, {
@@ -320,11 +331,7 @@ Browse available models: https://ollama.com/search
             dependencyGraph,
           },
           (progress: IndexingProgress) => {
-            const file = progress.currentFile ?? lastFile;
-            lastFile = file;
-            process.stdout.write(
-              `\r  ${progress.stage}: ${progress.filesProcessed}/${progress.filesTotal} files, ${progress.chunksIndexed} chunks${file ? ` — ${file.slice(-40)}` : ''}`,
-            );
+            renderProgress(progress);
             // Write progress to shared file so the dashboard API can pick it up
             void writeIndexingProgress(frameworkDir, {
               running: true,

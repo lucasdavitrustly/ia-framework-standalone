@@ -169,57 +169,70 @@ export default function IndexingPanel() {
                       )}
                     </div>
 
-                    {/* Progress indicator — only show for active stage */}
-                    {isActive && (
-                      <>
-                        {/* Parsing: files progress bar */}
-                        {stage === 'parsing' && (
-                          <div className="ml-6">
-                            <div className="flex justify-between text-xs text-gray-500 mb-1">
-                              <span>
-                                Files: {status.filesProcessed} / {status.filesTotal}
-                              </span>
-                              <span>{filesPct}%</span>
-                            </div>
-                            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                                style={{ width: `${filesPct}%` }}
-                              />
-                            </div>
-                            {status.currentFile && (
-                              <p className="mt-1 text-xs text-gray-600 truncate">
-                                {status.currentFile}
-                              </p>
-                            )}
-                          </div>
-                        )}
+                    {/* Progress bars — always rendered to avoid mount/unmount flash.
+                        Visibility controlled by opacity so CSS transitions work smoothly. */}
 
-                        {/* Embedding: chunks progress bar */}
-                        {stage === 'embedding' && (
-                          <div className="ml-6">
-                            <div className="flex justify-between text-xs text-gray-500 mb-1">
-                              <span>
-                                Chunks: {status.chunksIndexed} / {status.chunksTotal}
-                              </span>
-                              <span>{chunksPct}%</span>
-                            </div>
-                            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-purple-500 rounded-full transition-all duration-300"
-                                style={{ width: `${chunksPct}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
+                    {/* Parsing: files progress bar */}
+                    {stage === 'parsing' && (
+                      <div
+                        className="ml-6 transition-opacity duration-300"
+                        style={{ opacity: isActive ? 1 : 0 }}
+                      >
+                        <div className="flex justify-between text-xs text-gray-500 mb-1">
+                          <span>
+                            Files: {status.filesProcessed} / {status.filesTotal}
+                          </span>
+                          <span>{filesPct}%</span>
+                        </div>
+                        <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                            style={{ width: `${filesPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
 
-                        {/* Walking / Storing: indeterminate spinner */}
-                        {(stage === 'walking' || stage === 'storing') && (
-                          <div className="ml-6 h-1 w-full bg-gray-800 rounded-full overflow-hidden">
-                            <div className="h-full w-1/3 bg-yellow-400 rounded-full animate-pulse" />
-                          </div>
-                        )}
-                      </>
+                    {/* Embedding: chunks progress bar */}
+                    {stage === 'embedding' && (
+                      <div
+                        className="ml-6 transition-opacity duration-300"
+                        style={{ opacity: isActive ? 1 : 0 }}
+                      >
+                        <div className="flex justify-between text-xs text-gray-500 mb-1">
+                          <span>
+                            Chunks: {status.chunksIndexed} / {status.chunksTotal}
+                          </span>
+                          <span>{chunksPct}%</span>
+                        </div>
+                        <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-purple-500 rounded-full transition-all duration-300"
+                            style={{ width: `${chunksPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Walking / Storing: indeterminate sliding bar */}
+                    {(stage === 'walking' || stage === 'storing') && (
+                      <div
+                        className="ml-6 h-1 w-full bg-gray-800 rounded-full overflow-hidden transition-opacity duration-300"
+                        style={{ opacity: isActive ? 1 : 0 }}
+                      >
+                        <div
+                          className="h-full w-1/3 rounded-full"
+                          style={{
+                            background:
+                              stage === 'storing'
+                                ? 'rgb(129 140 248)' // indigo-400
+                                : 'rgb(250 204 21)', // yellow-400
+                            animation: isActive
+                              ? 'indeterminate-slide 1.4s ease-in-out infinite'
+                              : 'none',
+                          }}
+                        />
+                      </div>
                     )}
                   </div>
                 );
