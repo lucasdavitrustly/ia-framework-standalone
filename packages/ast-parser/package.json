@@ -22,9 +22,9 @@
   },
   "dependencies": {
     "@ia-framework/core": "workspace:*",
-    "tree-sitter": "^0.21.1",
-    "tree-sitter-java": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.2"
+    "tree-sitter": "^0.22.4",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-typescript": "^0.23.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
