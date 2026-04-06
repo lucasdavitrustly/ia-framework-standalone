@@ -13,3 +13,13 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Files changed:** packages/dashboard-api/Dockerfile
 
 ---
+
+## qdrant-unreachable-dashboard — Dashboard shows Qdrant unreachable despite Docker running
+
+- **Date:** 2026-04-06
+- **Error patterns:** Qdrant unreachable, Docker running, localhost, vectorStore host, qdrant status error, readyz, dashboard, container, QDRANT_HOST
+- **Root cause:** Two compounding bugs: (1) All install code paths (persister.ts DEFAULT_VECTOR_STORE, init-config.sh fallback template) defaulted vectorStore.host to "localhost", which is unreachable from inside Docker containers. (2) qdrantHost was captured once at server startup from config.vectorStore.host and frozen into the app closure — making it immune to both file-system config changes and the correct QDRANT_HOST=qdrant env var in docker-compose.yml, which was only used as a fallback when config was null.
+- **Fix:** (1) Changed default vectorStore.host to "qdrant" in persister.ts and init-config.sh. (2) Refactored status route to derive qdrantHost per-request (QDRANT_HOST env var > config.vectorStore.host > "localhost") instead of capturing it once at startup — removed static qdrantHost/qdrantPort from AppDependencies and passed configWatcher to the status route instead.
+- **Files changed:** packages/project-detector/src/persister.ts, scripts/init-config.sh, .ia-framework/project.json, packages/dashboard-api/src/routes/status.ts, packages/dashboard-api/src/app.ts, packages/dashboard-api/src/server.ts
+
+---
