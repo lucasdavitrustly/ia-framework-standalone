@@ -182,6 +182,7 @@ None — all blockers resolved:
 | #          | Description                                     | Date       | Commit  | Status   | Directory                                                                                                           |
 | ---------- | ----------------------------------------------- | ---------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
 | 260402-j1g | Add Ollama embedding model selection capability | 2026-04-02 | 661f679 | Verified | [260402-j1g-add-capability-of-ollama-to-change-betwe](./quick/260402-j1g-add-capability-of-ollama-to-change-betwe/) |
+| 260406-ms1 | Dashboard live-updating 4-stage pipeline view   | 2026-04-06 | 4b061fa | Complete | [260406-ms1-make-the-dashboard-live-updating-with-fi](./quick/260406-ms1-make-the-dashboard-live-updating-with-fi/) |
 
 ## Session Continuity
 
