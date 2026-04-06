@@ -105,7 +105,7 @@ init_config() {
     "dimensions": ${SELECTED_EMBED_DIMS:-768}
   },
   "vectorStore": {
-    "host": "localhost",
+    "host": "qdrant",
     "port": 6333,
     "collectionName": "codebase"
   },
