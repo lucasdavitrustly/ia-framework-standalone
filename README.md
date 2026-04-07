@@ -265,7 +265,7 @@ ia-framework search "database connection pool" --limit 5
 
 ### Step 8: Connect to OpenCode
 
-Add the MCP server to OpenCode's config at `~/.config/opencode/config.json`:
+Add the MCP server to OpenCode's config at `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -548,7 +548,7 @@ These MCP servers work well alongside ia-framework:
 
 ### Configuring Additional MCP Servers
 
-Add MCP servers to OpenCode's config at `~/.config/opencode/config.json`. Each server runs as a separate process and its tools become available alongside ia-framework's tools.
+Add MCP servers to OpenCode's config at `~/.config/opencode/opencode.json`. Each server runs as a separate process and its tools become available alongside ia-framework's tools.
 
 **Example — adding Context7 and Sequential Thinking alongside ia-framework:**
 
@@ -878,7 +878,7 @@ Currently supported: TypeScript, TSX, JavaScript, JSX, Python, Java.
 **MCP tools not appearing in OpenCode:**
 
 1. Verify `packages/mcp-server/dist/bin.js` exists (`pnpm build` if missing)
-2. Check `~/.config/opencode/config.json` has the correct paths
+2. Check `~/.config/opencode/opencode.json` has the correct paths
 3. Restart OpenCode completely
 
 **Search returns no results:**
