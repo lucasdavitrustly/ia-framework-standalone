@@ -3,11 +3,15 @@ import { Pool } from 'pg';
 import type { ChunkMetadata, ContextSource } from '@ia-framework/core';
 import type { DatabaseConfig, QueryResult } from './types.js';
 
-function tableChunkId(tableName: string): string {
-  return createHash('sha256').update(`db:${tableName}`).digest('hex').slice(0, 32);
+// System schemas to exclude from all queries
+const SYSTEM_SCHEMAS = `'information_schema', 'pg_catalog', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1'`;
+
+function tableChunkId(schema: string, tableName: string): string {
+  return createHash('sha256').update(`db:${schema}.${tableName}`).digest('hex').slice(0, 32);
 }
 
 interface TableRow {
+  table_schema: string;
   table_name: string;
   table_type: string;
 }
@@ -21,6 +25,7 @@ interface ColumnRow {
 }
 
 interface ForeignKeyRow {
+  table_schema: string;
   table_name: string;
   column_name: string;
   foreign_table_name: string;
@@ -49,7 +54,9 @@ export class PostgresSource implements ContextSource {
   async testConnection(): Promise<{ connected: boolean; tableCount: number }> {
     try {
       const result = await this.pool.query<{ count: string }>(
-        `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'`,
+        `SELECT COUNT(*) FROM information_schema.tables
+         WHERE table_type = 'BASE TABLE'
+           AND table_schema NOT IN (${SYSTEM_SCHEMAS})`,
       );
       const count = parseInt(result.rows[0]?.count ?? '0', 10);
       return { connected: true, tableCount: count };
@@ -59,21 +66,22 @@ export class PostgresSource implements ContextSource {
   }
 
   async getChunks(): Promise<ChunkMetadata[]> {
-    // Fetch all tables and views
+    // Fetch all tables and views across all non-system schemas
     const tablesResult = await this.pool.query<TableRow>(
-      `SELECT table_name, table_type
+      `SELECT table_schema, table_name, table_type
        FROM information_schema.tables
-       WHERE table_schema = 'public'
-       ORDER BY table_name`,
+       WHERE table_schema NOT IN (${SYSTEM_SCHEMAS})
+       ORDER BY table_schema, table_name`,
     );
 
     if (tablesResult.rows.length === 0) {
       return [];
     }
 
-    // Fetch all foreign keys in a single query
+    // Fetch all foreign keys across all non-system schemas in a single query
     const fkResult = await this.pool.query<ForeignKeyRow>(
       `SELECT
+        tc.table_schema,
         tc.table_name,
         kcu.column_name,
         ccu.table_name AS foreign_table_name,
@@ -83,55 +91,60 @@ export class PostgresSource implements ContextSource {
          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
        JOIN information_schema.constraint_column_usage AS ccu
          ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-       WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'`,
+       WHERE tc.constraint_type = 'FOREIGN KEY'
+         AND tc.table_schema NOT IN (${SYSTEM_SCHEMAS})`,
     );
 
-    // Group FKs by table
+    // Group FKs by "schema.table"
     const fksByTable = new Map<string, ForeignKeyRow[]>();
     for (const fk of fkResult.rows) {
-      const existing = fksByTable.get(fk.table_name) ?? [];
+      const key = `${fk.table_schema}.${fk.table_name}`;
+      const existing = fksByTable.get(key) ?? [];
       existing.push(fk);
-      fksByTable.set(fk.table_name, existing);
+      fksByTable.set(key, existing);
     }
 
     const chunks: ChunkMetadata[] = [];
     const indexedAt = new Date().toISOString();
 
     for (const table of tablesResult.rows) {
-      const tableName = table.table_name;
+      const { table_schema: schema, table_name: tableName } = table;
+      const qualifiedName = `${schema}.${tableName}`;
       const chunkType: ChunkMetadata['chunkType'] = table.table_type === 'VIEW' ? 'view' : 'table';
 
       // Fetch columns for this table
       const colResult = await this.pool.query<ColumnRow>(
         `SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
          FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = $1
+         WHERE table_schema = $1 AND table_name = $2
          ORDER BY ordinal_position`,
-        [tableName],
+        [schema, tableName],
       );
 
       // Format content
-      const lines: string[] = [`Table: ${tableName}`, 'Columns:'];
+      const lines: string[] = [`Table: ${qualifiedName}`, 'Columns:'];
       for (const col of colResult.rows) {
         const nullable = col.is_nullable === 'YES' ? '' : ' NOT NULL';
         lines.push(`  ${col.column_name}: ${col.data_type}${nullable}`);
       }
 
-      const tableFks = fksByTable.get(tableName) ?? [];
+      const tableFks = fksByTable.get(qualifiedName) ?? [];
       if (tableFks.length > 0) {
         lines.push('Foreign keys:');
         for (const fk of tableFks) {
-          lines.push(`  ${fk.table_name}.${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`);
+          lines.push(
+            `  ${qualifiedName}.${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`,
+          );
         }
       }
 
       chunks.push({
-        id: tableChunkId(tableName),
+        id: tableChunkId(schema, tableName),
         filePath: '__db__',
-        relativePath: tableName,
+        relativePath: qualifiedName,
         language: 'sql',
         chunkType,
-        name: tableName,
+        name: qualifiedName,
         content: lines.join('\n'),
         startLine: 0,
         endLine: 0,
