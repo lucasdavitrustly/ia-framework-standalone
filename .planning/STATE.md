@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 11-02-PLAN.md — chunkToDescription() + textVector/codeVector split
-last_updated: "2026-04-07T13:34:22.100Z"
+stopped_at: Completed 11-mrr-optimization-03-PLAN.md
+last_updated: "2026-04-07T13:51:43.010Z"
 progress:
   total_phases: 11
   completed_phases: 10
   total_plans: 34
-  completed_plans: 32
+  completed_plans: 33
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-31)
 ## Current Position
 
 Phase: 11 (mrr-optimization) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ _Updated after each plan completion_
 | Phase 10 P04 | 10min | 5 tasks | 3 files |
 | Phase 11-mrr-optimization P01 | 18min | 3 tasks | 5 files |
 | Phase 11-mrr-optimization P02 | 3min | 2 tasks | 4 files |
+| Phase 11-mrr-optimization P03 | 8 | 7 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -155,6 +156,9 @@ Recent decisions affecting current work:
 - [Phase 11-mrr-optimization]: validateCorpus uses async fs.access; Zod schema expectedFiles min(0) for negative queries; loadCorpus supports flat JSON array format; corpus file tracked via gitignore exception
 - [Phase 11-mrr-optimization]: ChunkLike structural type accepts both CodeChunk and ChunkMetadata for chunkToDescription() — avoids cross-package dependency while supporting DB context source chunks with extra chunkTypes ('table', 'view')
 - [Phase 11-mrr-optimization]: Embedding cost doubles (2x embedBatch calls) with prose descriptions — intentional for semantic quality; acceptable for Ollama (local), documented for OpenAI users
+- [Phase 11-mrr-optimization]: Hybrid search exposed as separate search_codebase_hybrid MCP tool (not a param on existing tool) for independent evaluation
+- [Phase 11-mrr-optimization]: computeTermFrequencySparseVector exported from @ia-framework/retrieval and imported by indexer (no circular dep)
+- [Phase 11-mrr-optimization]: SearchEngine.searchHybrid() falls back to search() when vectorStore.searchHybrid is absent for backward compat
 
 ### Pending Todos
 
@@ -185,6 +189,6 @@ None — all blockers resolved:
 
 ## Session Continuity
 
-Last session: 2026-04-07T13:34:22.097Z
-Stopped at: Completed 11-02-PLAN.md — chunkToDescription() + textVector/codeVector split
+Last session: 2026-04-07T13:51:43.007Z
+Stopped at: Completed 11-mrr-optimization-03-PLAN.md
 Resume file: None

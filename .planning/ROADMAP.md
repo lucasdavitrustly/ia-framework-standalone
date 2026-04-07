@@ -241,7 +241,7 @@ Plans:
 
 - [x] 11-01-PLAN.md — 30-query corpus: JSON schema, 6 categories × 5 queries, validateCorpus() TDD, CORPUS.md
 - [x] 11-02-PLAN.md — Fix text vector: chunkToDescription() helper (TDD), pipeline wiring, full re-index required
-- [ ] 11-03-PLAN.md — Hybrid search: BM25 sparse vectors in Qdrant, SearchEngine.searchHybrid(), search_codebase_hybrid MCP tool
+- [x] 11-03-PLAN.md — Hybrid search: BM25 sparse vectors in Qdrant, SearchEngine.searchHybrid(), search_codebase_hybrid MCP tool
 - [ ] 11-04-PLAN.md — Threshold tuning (post re-index), benchmark comparison, MCP default update, ROADMAP + STATE update
 
 ## Progress
@@ -261,4 +261,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 8. Monitoring Dashboard                       | 4/4            | Complete | 2026-04-01 |
 | 9. Database Context                           | 2/2            | Complete | 2026-04-01 |
 | 10. Advanced Retrieval & Workflow Integration | 4/4            | Complete | 2026-04-02 |
-| 11. MRR Quick Wins & Corpus Building          | 2/4 | In Progress|  |
+| 11. MRR Quick Wins & Corpus Building          | 3/4 | In Progress|  |
