@@ -5,7 +5,11 @@ import type { RetrievalResult } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 
 type Engine = {
-  search(query: { text: string; limit?: number; scoreThreshold?: number }): Promise<RetrievalResult[]>;
+  search(query: {
+    text: string;
+    limit?: number;
+    scoreThreshold?: number;
+  }): Promise<RetrievalResult[]>;
   searchWithExpansion(
     query: { text: string; limit?: number; scoreThreshold?: number },
     options?: { hops?: 0 | 1 | 2 },
@@ -61,7 +65,7 @@ export async function searchCodebaseHandler(
     {
       text: input.query,
       limit: input.limit ?? 10,
-      scoreThreshold: input.score_threshold ?? 0.5,
+      scoreThreshold: input.score_threshold ?? 0.3,
     },
     { hops: clampedHops },
   );
@@ -131,7 +135,7 @@ export function registerSearchCodebaseTool(
         score_threshold: z
           .number()
           .optional()
-          .describe('Minimum similarity score 0-1 (default: 0.5)'),
+          .describe('Minimum similarity score 0-1 (default: 0.3)'),
         expand_hops: z
           .number()
           .optional()
