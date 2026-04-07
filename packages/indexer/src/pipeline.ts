@@ -11,6 +11,7 @@ import {
   getCurrentCommit,
   getChangedFiles,
 } from './incremental.js';
+import { chunkToDescription } from './chunk-description.js';
 
 const logger = createLogger('indexer');
 
@@ -181,13 +182,17 @@ export class IndexingPipeline {
       }
 
       const batch = allChunks.slice(i, i + embeddingBatchSize);
-      const texts = batch.map((c) => c.content);
 
-      const vectors = await embeddingProvider.embedBatch(texts);
+      // Embed prose descriptions for text vectors (semantic search)
+      const textDescriptions = batch.map((c) => chunkToDescription(c));
+      const textVectors = await embeddingProvider.embedBatch(textDescriptions);
+
+      // Embed raw code for code vectors (identifier/keyword search)
+      const codeTexts = batch.map((c) => c.content);
+      const codeVectors = await embeddingProvider.embedBatch(codeTexts);
 
       for (let j = 0; j < batch.length; j++) {
         const chunk = batch[j]!;
-        const vector = vectors[j]!;
         const payload: ChunkPayload = {
           chunkId: chunk.id,
           filePath: chunk.filePath,
@@ -205,8 +210,8 @@ export class IndexingPipeline {
         };
         vectorPoints.push({
           id: chunk.id,
-          textVector: vector,
-          codeVector: vector, // Same model for both in Phase 3
+          textVector: textVectors[j]!, // prose description embedding
+          codeVector: codeVectors[j]!, // raw code embedding
           payload,
         });
       }
@@ -230,12 +235,15 @@ export class IndexingPipeline {
           // Embed source chunks in batches using same pipeline
           for (let i = 0; i < sourceChunks.length; i += embeddingBatchSize) {
             const batch = sourceChunks.slice(i, i + embeddingBatchSize);
-            const texts = batch.map((c) => c.content);
-            const vectors = await embeddingProvider.embedBatch(texts);
+
+            // For context sources, also split text vs code embedding
+            const textDescs = batch.map((c) => chunkToDescription(c));
+            const textVecs = await embeddingProvider.embedBatch(textDescs);
+            const codeTexts = batch.map((c) => c.content);
+            const codeVecs = await embeddingProvider.embedBatch(codeTexts);
 
             for (let j = 0; j < batch.length; j++) {
               const chunk = batch[j]!;
-              const vector = vectors[j]!;
               const payload: ChunkPayload = {
                 chunkId: chunk.id,
                 filePath: chunk.filePath,
@@ -253,8 +261,8 @@ export class IndexingPipeline {
               };
               vectorPoints.push({
                 id: chunk.id,
-                textVector: vector,
-                codeVector: vector,
+                textVector: textVecs[j]!, // prose description embedding
+                codeVector: codeVecs[j]!, // raw code embedding
                 payload,
               });
             }

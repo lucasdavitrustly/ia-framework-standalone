@@ -1,4 +1,17 @@
-import type { CodeChunk } from '@ia-framework/ast-parser';
+/**
+ * Minimal structural type for chunks accepted by chunkToDescription().
+ * Compatible with both CodeChunk (@ia-framework/ast-parser) and
+ * ChunkMetadata (@ia-framework/core) — the function uses only these fields.
+ */
+interface ChunkLike {
+  relativePath: string;
+  language: string;
+  chunkType: string;
+  name?: string | undefined;
+  parentName?: string | undefined;
+  exports: string[];
+  imports: string[];
+}
 
 /**
  * Generate a natural-language prose description of a code chunk for text embedding.
@@ -10,7 +23,7 @@ import type { CodeChunk } from '@ia-framework/ast-parser';
  * The codeVector embeds raw chunk.content (good for identifier matching).
  * The textVector embeds this description (good for semantic concept matching).
  */
-export function chunkToDescription(chunk: CodeChunk): string {
+export function chunkToDescription(chunk: ChunkLike): string {
   const parts: string[] = [];
   const file = chunk.relativePath;
   const lang = chunk.language;
