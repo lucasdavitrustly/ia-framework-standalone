@@ -136,6 +136,18 @@ export class BenchmarkStore {
     });
   }
 
+  /**
+   * Delete all benchmark runs and their query results from the database.
+   * Both tables are cleared atomically in a single transaction.
+   */
+  clearRuns(): void {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM benchmark_query_results').run();
+      this.db.prepare('DELETE FROM benchmark_runs').run();
+    });
+    transaction();
+  }
+
   /** Close the database connection. */
   close(): void {
     this.db.close();
