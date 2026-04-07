@@ -12,6 +12,7 @@ import {
   getChangedFiles,
 } from './incremental.js';
 import { chunkToDescription } from './chunk-description.js';
+import { computeTermFrequencySparseVector } from '@ia-framework/retrieval';
 
 const logger = createLogger('indexer');
 
@@ -212,6 +213,7 @@ export class IndexingPipeline {
           id: chunk.id,
           textVector: textVectors[j]!, // prose description embedding
           codeVector: codeVectors[j]!, // raw code embedding
+          sparseVector: computeTermFrequencySparseVector(chunk.content), // BM25 TF sparse
           payload,
         });
       }
@@ -263,6 +265,7 @@ export class IndexingPipeline {
                 id: chunk.id,
                 textVector: textVecs[j]!, // prose description embedding
                 codeVector: codeVecs[j]!, // raw code embedding
+                sparseVector: computeTermFrequencySparseVector(chunk.content), // BM25 TF sparse
                 payload,
               });
             }
