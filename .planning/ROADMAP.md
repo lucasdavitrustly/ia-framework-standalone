@@ -224,23 +224,25 @@ Plans:
 
 ### Phase 11: MRR Quick Wins & Corpus Building
 
-**Goal**: Improve RAG retrieval quality (MRR) through low-effort, high-impact optimizations and foundational benchmarking corpus
+**Goal**: Improve RAG retrieval quality (MRR) end-to-end — better corpus, better text vectors, hybrid search, and MCP integration so OpenCode sees the improvements
 **Depends on**: Phase 7 (Benchmarking System), Phase 4 (Retrieval & MCP Server)
-**Requirements**: BNCH-01 (completion)
+**Requirements**: BNCH-01 (completion), RETR-01 (quality improvement)
 **Success Criteria** (what must be TRUE):
 
-1. Benchmark corpus grows from 3 → 30 queries with balanced semantic, keyword, cross-file, and negative coverage
-2. Corpus is documented with category, intent, and expected files per query in JSON schema
-3. Score threshold is systematically tested (0.3, 0.4, 0.5, 0.6) and optimal value documented
-4. MRR metric is re-run with new corpus and threshold; baseline (Phase 10) vs optimized comparison is published
-5. All 30 queries pass validation (expected files actually exist, queries are distinct and realistic)
-6. Improvements to retrieval are measurable (before/after MRR comparison via `ia-framework benchmark compare`)
-   **Plans**: 2 plans
+1. Benchmark corpus grows from 3 → 30 queries with balanced semantic, keyword, cross-file, and negative coverage; all queries validated
+2. Text vector embeds a prose description of each chunk (not raw code) via `chunkToDescription()` helper in `@ia-framework/indexer`
+3. Hybrid search (BM25 sparse + dense + RRF) implemented in `SearchEngine.searchHybrid()` and exposed as `search_codebase_hybrid` MCP tool
+4. Score threshold is systematically tested (0.3, 0.4, 0.5, 0.6) and optimal value applied as MCP default
+5. Before/after MRR comparison published; measurable improvement over Phase 10 baseline
+6. All MCP changes are live for OpenCode in target project
+   **Plans**: 4 plans
 
 Plans:
 
-- [ ] 11-01-PLAN.md — Corpus design & implementation (schema, 30 queries, validation, documentation)
-- [ ] 11-02-PLAN.md — Threshold tuning, benchmark runs, comparison analysis, documentation
+- [ ] 11-01-PLAN.md — 30-query corpus: JSON schema, 6 categories × 5 queries, validateCorpus() TDD, CORPUS.md
+- [ ] 11-02-PLAN.md — Fix text vector: chunkToDescription() helper (TDD), pipeline wiring, full re-index required
+- [ ] 11-03-PLAN.md — Hybrid search: BM25 sparse vectors in Qdrant, SearchEngine.searchHybrid(), search_codebase_hybrid MCP tool
+- [ ] 11-04-PLAN.md — Threshold tuning (post re-index), benchmark comparison, MCP default update, ROADMAP + STATE update
 
 ## Progress
 
@@ -259,4 +261,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 8. Monitoring Dashboard                       | 4/4            | Complete | 2026-04-01 |
 | 9. Database Context                           | 2/2            | Complete | 2026-04-01 |
 | 10. Advanced Retrieval & Workflow Integration | 4/4            | Complete | 2026-04-02 |
-| 11. MRR Quick Wins & Corpus Building          | 2/2            | Planning | —          |
+| 11. MRR Quick Wins & Corpus Building          | 0/4            | Planned  | —          |
