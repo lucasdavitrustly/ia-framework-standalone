@@ -1,5 +1,5 @@
 import { access, readdir } from 'node:fs/promises';
-import { join, relative, extname } from 'node:path';
+import { join, relative, extname, basename } from 'node:path';
 import type { BenchmarkQuery } from './types.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -175,6 +175,38 @@ function extractJson(raw: string): unknown {
   return JSON.parse(stripped);
 }
 
+// ── Few-shot example builder ──────────────────────────────────────────────────
+
+/**
+ * Build dynamic few-shot query examples from the sampled file list.
+ * Uses actual directory and file names from the project so the LLM
+ * understands what "natural language developer question" means in context.
+ */
+export function buildFewShotExamples(grouped: Map<string, string[]>): string {
+  const dirs = [...grouped.keys()];
+  const firstDir = dirs[0] ?? 'src';
+  const firstFiles = grouped.get(firstDir) ?? [];
+  const secondDir = dirs[1] ?? dirs[0] ?? 'src';
+
+  // Extract a readable class/module name from the first file path
+  const firstFile = firstFiles[0] ?? `${firstDir}/index.ts`;
+  const secondFile = firstFiles[1] ?? firstFile;
+  const firstName = basename(firstFile).replace(/\.[^.]+$/, ''); // strip extension
+  const secondName = basename(secondFile).replace(/\.[^.]+$/, '');
+
+  const lines = [
+    'Good query examples — write queries like these (natural language, NOT SQL or code):',
+    `- sem:  "How does ${firstDir} handle its core processing flow?"`,
+    `- kw:   "${firstName} class"`,
+    `- xf:   "How do ${firstDir} and ${secondDir} exchange data?"`,
+    `- cx:   "Where is error handling implemented across the ${firstDir} module?"`,
+    `- neg:  "How does the system process cryptocurrency transactions?" (topic NOT in codebase — expectedFiles must be [])`,
+    `- edge: "What happens when ${secondName} receives an invalid or null input?"`,
+  ];
+
+  return lines.join('\n');
+}
+
 // ── Corpus generation ─────────────────────────────────────────────────────────
 
 /**
@@ -228,9 +260,25 @@ export async function generateCorpus(options: CorpusGeneratorOptions): Promise<B
 
   // Step 4: Build LLM prompt
   const systemPrompt =
-    'You are a benchmark corpus generator. Return ONLY a JSON array, no markdown, no explanations.';
+    'You are a benchmark corpus generator for a semantic code search system. ' +
+    'Write natural language questions a developer would type into a search box — ' +
+    'NOT SQL queries, NOT code snippets, NOT shell commands. ' +
+    'Return ONLY a valid JSON array, no markdown fences, no prose, no explanations.';
 
-  const userPrompt = `Given this project file structure:\n\n${fileList}\nGenerate exactly 30 benchmark queries for testing a code retrieval system. Return a JSON array of objects with exactly these fields: id, query, expectedFiles (array of relative file paths that MUST exist in the list above), description. Use these IDs: sem-01 to sem-05 (semantic), kw-01 to kw-05 (keyword/symbol), xf-01 to xf-05 (cross-file, use 2+ files in expectedFiles), cx-01 to cx-05 (complex multi-concept), neg-01 to neg-05 (negative — topics NOT present, use expectedFiles: []), edge-01 to edge-05 (edge case). All expectedFiles must be from the provided file list.`;
+  const fewShot = buildFewShotExamples(grouped);
+
+  const userPrompt =
+    `Given this project file structure:\n\n${fileList}\n` +
+    `${fewShot}\n\n` +
+    `Generate exactly 30 benchmark queries for testing a semantic code search system. ` +
+    `Queries must be natural language — questions or short phrases a developer would type into a search box. ` +
+    `Do NOT write SQL, code, or commands.\n` +
+    `Return a JSON array of objects with exactly these fields: ` +
+    `id, query, expectedFiles (array of relative file paths that MUST exist in the list above), description. ` +
+    `Use these IDs: sem-01 to sem-05 (semantic), kw-01 to kw-05 (keyword/symbol), ` +
+    `xf-01 to xf-05 (cross-file, use 2+ files in expectedFiles), cx-01 to cx-05 (complex multi-concept), ` +
+    `neg-01 to neg-05 (negative — topics NOT present, expectedFiles must be []), edge-01 to edge-05 (edge case). ` +
+    `All expectedFiles must be from the provided file list.`;
 
   // Step 5: Call LLM
   const rawResponse = await callCompletionApi(
