@@ -572,7 +572,7 @@ Add MCP servers to OpenCode's config at `~/.config/opencode/opencode.json`. Each
     }
   }
 }
-````
+```
 
 **Example — adding a PostgreSQL MCP server for direct database access:**
 
