@@ -415,13 +415,20 @@ Side-by-side comparison of two benchmark runs. Use IDs from `benchmark list`.
 
 ```bash
 ia-framework benchmark init-corpus [options]
-  --output <path>    Output path for corpus file (default: .ia-framework/benchmark-queries.json)
-  --count <n>        Number of queries to generate (default: 20)
-  --model <name>     Ollama model to use for generation (default: llama3.2 @ localhost:11434)
+  --corpus <path>    Output path for corpus file (default: .ia-framework/benchmark-queries.json)
+  --model <name>     Completion model (default: llama3.2 via local Ollama at localhost:11434)
+  --force            Overwrite existing corpus without backup prompt
   --config <path>    Path to project.json
 ```
 
-Generates a starter benchmark corpus by sampling indexed chunks from Qdrant and using a local Ollama LLM (`llama3.2` by default) to write natural language queries and expected files. If Ollama is unreachable on `localhost:11434`, the command prints a clear message suggesting `ollama pull llama3.2` and exits. Prevents accidentally running against the ia-framework repo itself — the target project path must differ from the framework directory.
+Generates a 30-query benchmark corpus using an LLM to write natural language queries and expected files tailored to your project. Defaults to a local Ollama LLM (`llama3.2`); pass `--model` to use a different model or provider. If Ollama is unreachable, the command prints setup instructions and exits. Backs up any existing corpus automatically before overwriting. Prevents accidentally targeting the ia-framework repo itself.
+
+```bash
+ia-framework benchmark clean [options]
+  --config <path>    Path to project.json
+```
+
+Deletes all benchmark runs from `benchmarks.sqlite`. Useful for resetting accumulated results after a major re-index or config change. The corpus file (`benchmark-queries.json`) is not affected.
 
 ---
 
@@ -753,6 +760,9 @@ ia-framework benchmark compare <run-id-1> <run-id-2>
 
 # View trend over time
 ia-framework benchmark history
+
+# Reset all stored runs (e.g. after a major re-index)
+ia-framework benchmark clean
 ```
 
 The benchmark corpus is a JSON file with queries and expected files:
