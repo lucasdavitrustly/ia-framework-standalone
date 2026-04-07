@@ -193,9 +193,10 @@ None — all blockers resolved:
 | 260407-fzq | Create CLI command to generate starter benchmark corpus                    | 2026-04-07 | 3a7a87e | Complete | [260407-fzq-create-cli-command-to-generate-starter-b](./quick/260407-fzq-create-cli-command-to-generate-starter-b/) |
 | 260407-gad | CLI corpus — default to local Ollama, guard target project path            | 2026-04-07 | d2893d8 | Complete | [260407-gad-cli-corpus-default-to-local-ollama-model](./quick/260407-gad-cli-corpus-default-to-local-ollama-model/) |
 | 260407-gjl | Update README with Phase 11 MRR opts, corpus CLI, Ollama defaults; open PR | 2026-04-07 | aea4bea | Complete | [260407-gjl-update-readme-md-with-phase-11-mrr-optim](./quick/260407-gjl-update-readme-md-with-phase-11-mrr-optim/) |
+| 260407-mrr | Add MRR guidance section to agents inject RAG_CONTENT template             | 2026-04-07 | f84eb9d | Complete | packages/cli/src/commands/agents.command.ts                                                                         |
 
 ## Session Continuity
 
 Last session: 2026-04-07T14:54:42Z
-Stopped at: Completed quick task 260407-gjl — README Phase 11 update + PR #15 opened
+Stopped at: Completed quick task 260407-mrr — MRR guidance added to agents inject RAG content
 Resume file: None
