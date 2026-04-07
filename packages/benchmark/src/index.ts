@@ -16,3 +16,5 @@ export {
   BenchmarkQueriesFlatSchema,
 } from './corpus.js';
 export type { CorpusValidationError } from './corpus.js';
+export { generateCorpus } from './corpus-generator.js';
+export type { CorpusGeneratorOptions } from './corpus-generator.js';
