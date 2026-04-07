@@ -706,7 +706,19 @@ function cleanSubcommand(): Command {
 
 export function benchmarkCommand(): Command {
   const benchmark = new Command('benchmark').description(
-    'Benchmark RAG retrieval quality (Hit@K, MRR, latency)',
+    'Benchmark RAG retrieval quality (Hit@K, MRR, latency) and manage query corpus',
+  );
+
+  benchmark.addHelpText(
+    'after',
+    `
+Corpus workflow:
+  1. ia-framework benchmark init-corpus   # generate queries with local Ollama
+  2. ia-framework benchmark run           # measure Hit@K and MRR
+  3. ia-framework benchmark list          # review results
+  4. ia-framework benchmark compare       # compare runs after tuning
+
+See docs/benchmark.md for full reference.`,
   );
 
   benchmark.addCommand(runSubcommand());
