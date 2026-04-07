@@ -10,6 +10,7 @@ import {
   BenchmarkStore,
   loadCorpus,
   scaffoldExampleCorpus,
+  validateCorpus,
   CorpusNotFoundError,
 } from '@ia-framework/benchmark';
 import type { BenchmarkConfig, BenchmarkRun, ConfigSnapshot } from '@ia-framework/benchmark';
@@ -33,7 +34,10 @@ function pad(str: string, len: number): string {
 }
 
 function formatDate(iso: string): string {
-  return iso.replace('T', ' ').replace(/\.\d+Z$/, '').replace('Z', '');
+  return iso
+    .replace('T', ' ')
+    .replace(/\.\d+Z$/, '')
+    .replace('Z', '');
 }
 
 // ── run subcommand ────────────────────────────────────────────────────────────
@@ -78,6 +82,15 @@ function runSubcommand(): Command {
               process.exit(0);
             }
             throw err;
+          }
+
+          // Validate corpus before running — exits 1 if any queries are invalid
+          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          if (validationErrors.length > 0) {
+            for (const err of validationErrors) {
+              console.error(`  [corpus] [${err.queryId}] ${err.error}`);
+            }
+            process.exit(1);
           }
 
           // Build SearchEngine
@@ -259,9 +272,7 @@ function historySubcommand(): Command {
         store.close();
 
         if (runs.length < 2) {
-          console.log(
-            'Not enough runs for trend (need ≥2). Run: ia-framework benchmark run',
-          );
+          console.log('Not enough runs for trend (need ≥2). Run: ia-framework benchmark run');
           return;
         }
 
@@ -396,8 +407,12 @@ function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
   const csA = runA.configSnapshot;
   const csB = runB.configSnapshot;
   console.log(row('Provider', csA.embeddingProvider, csB.embeddingProvider));
-  console.log(row('Model', truncate(csA.embeddingModel, COL_W), truncate(csB.embeddingModel, COL_W)));
-  console.log(row('Collection', truncate(csA.collectionName, COL_W), truncate(csB.collectionName, COL_W)));
+  console.log(
+    row('Model', truncate(csA.embeddingModel, COL_W), truncate(csB.embeddingModel, COL_W)),
+  );
+  console.log(
+    row('Collection', truncate(csA.collectionName, COL_W), truncate(csB.collectionName, COL_W)),
+  );
   console.log(row('Top-K', String(csA.topK), String(csB.topK)));
 
   const threshA = csA.scoreThreshold.toFixed(2) + (runA.isBaseline ? ' (baseline)' : '');
@@ -421,7 +436,9 @@ function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
   console.log(row('MRR', mrrAStr, runB.mrr.toFixed(2)));
 
   // Avg Latency
-  console.log(row('Avg Latency', `${Math.round(runA.avgLatencyMs)}ms`, `${Math.round(runB.avgLatencyMs)}ms`));
+  console.log(
+    row('Avg Latency', `${Math.round(runA.avgLatencyMs)}ms`, `${Math.round(runB.avgLatencyMs)}ms`),
+  );
 
   // Queries run
   console.log(row('Queries Run', String(runA.queries.length), String(runB.queries.length)));
