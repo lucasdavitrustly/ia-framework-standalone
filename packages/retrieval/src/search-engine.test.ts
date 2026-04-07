@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { SearchEngine } from './search-engine.js';
+import { SearchEngine, computeTermFrequencySparseVector } from './search-engine.js';
 import type { SearchEngineConfig } from './types.js';
 
 // Mock vector store search result helper
@@ -113,9 +113,7 @@ describe('SearchEngine', () => {
       makeMockResult('chunk-a', 0.6, 'text', { relativePath: 'src/a.ts' }),
       makeMockResult('chunk-b', 0.9, 'text', { relativePath: 'src/b.ts' }),
     ];
-    const results_code = [
-      makeMockResult('chunk-c', 0.75, 'code', { relativePath: 'src/c.ts' }),
-    ];
+    const results_code = [makeMockResult('chunk-c', 0.75, 'code', { relativePath: 'src/c.ts' })];
 
     (config.vectorStore.search as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(results_text)
@@ -189,9 +187,7 @@ describe('SearchEngine.searchWithExpansion', () => {
     return {
       embeddingProvider: { embed: mockEmbed, dimensions: 3 },
       vectorStore: { search: mockSearch },
-      ...(opts.withGraph
-        ? { dependencyGraph: { getNeighborFiles: mockGetNeighborFiles } }
-        : {}),
+      ...(opts.withGraph ? { dependencyGraph: { getNeighborFiles: mockGetNeighborFiles } } : {}),
     };
   }
 
@@ -337,5 +333,108 @@ describe('SearchEngine.searchWithExpansion', () => {
 
     expect(mockGetNeighborFiles).not.toHaveBeenCalled();
     expect(results).toHaveLength(1);
+  });
+});
+
+describe('SearchEngine.searchHybrid', () => {
+  const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+  const mockSearch = vi.fn().mockResolvedValue([]);
+  const mockSearchHybrid = vi.fn();
+
+  function makeHybridConfig(withHybrid: boolean): SearchEngineConfig {
+    const vectorStore: SearchEngineConfig['vectorStore'] = {
+      search: mockSearch,
+      ...(withHybrid ? { searchHybrid: mockSearchHybrid } : {}),
+    };
+    return {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore,
+    };
+  }
+
+  beforeEach(() => {
+    mockEmbed.mockReset().mockResolvedValue([0.1, 0.2, 0.3]);
+    mockSearch.mockReset().mockResolvedValue([]);
+    mockSearchHybrid.mockReset().mockResolvedValue([]);
+  });
+
+  test('searchHybrid() calls vectorStore.searchHybrid() with denseVector and non-empty sparseVector', async () => {
+    const mockResult = makeMockResult('chunk-hybrid', 0.9, 'text');
+    mockSearchHybrid.mockResolvedValue([mockResult]);
+
+    const cfg = makeHybridConfig(true);
+    const eng = new SearchEngine(cfg);
+
+    await eng.searchHybrid({ text: 'QdrantVectorStore search method', limit: 5 });
+
+    expect(mockSearchHybrid).toHaveBeenCalledOnce();
+    const [args] = mockSearchHybrid.mock.calls[0] as [
+      {
+        denseVector: number[];
+        sparseVector: { indices: number[]; values: number[] };
+        limit: number;
+      },
+    ];
+    expect(args.denseVector).toEqual([0.1, 0.2, 0.3]);
+    expect(args.sparseVector.indices.length).toBeGreaterThan(0);
+    expect(args.sparseVector.values.length).toBeGreaterThan(0);
+    expect(args.limit).toBe(5);
+  });
+
+  test('searchHybrid() falls back to search() when vectorStore.searchHybrid is undefined', async () => {
+    const baseResult = makeMockResult('chunk-fallback', 0.8, 'text');
+    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([]);
+
+    const cfg = makeHybridConfig(false);
+    const eng = new SearchEngine(cfg);
+
+    const results = await eng.searchHybrid({ text: 'some query' });
+
+    expect(mockSearchHybrid).not.toHaveBeenCalled();
+    expect(mockSearch).toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+    expect(results[0]!.chunkId).toBe('chunk-fallback');
+  });
+
+  test('searchHybrid() returns RetrievalResult[] with matchedVector=both', async () => {
+    const mockResult = makeMockResult('chunk-hybrid', 0.88, 'text');
+    mockSearchHybrid.mockResolvedValue([mockResult]);
+
+    const cfg = makeHybridConfig(true);
+    const eng = new SearchEngine(cfg);
+
+    const results = await eng.searchHybrid({ text: 'hybrid query' });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.matchedVector).toBe('both');
+    expect(results[0]!.score).toBe(0.88);
+    expect(results[0]!.chunkId).toBe('chunk-hybrid');
+  });
+});
+
+describe('computeTermFrequencySparseVector', () => {
+  test('tokenizes text and returns sorted indices with TF values', () => {
+    const result = computeTermFrequencySparseVector('the quick brown fox the');
+
+    // Should have unique tokens: "the", "quick", "brown", "fox"
+    // "the" appears twice, others once
+    expect(result.indices.length).toBeGreaterThan(0);
+    expect(result.values.length).toBe(result.indices.length);
+
+    // Indices must be sorted ascending
+    for (let i = 1; i < result.indices.length; i++) {
+      expect(result.indices[i]).toBeGreaterThan(result.indices[i - 1]!);
+    }
+
+    // The total sum of values should equal token count (4 unique tokens: the=2, quick=1, brown=1, fox=1 → sum=5)
+    const sum = result.values.reduce((a, b) => a + b, 0);
+    expect(sum).toBe(5);
+  });
+
+  test('returns empty indices and values for empty string', () => {
+    const result = computeTermFrequencySparseVector('');
+
+    expect(result.indices).toHaveLength(0);
+    expect(result.values).toHaveLength(0);
   });
 });
