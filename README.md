@@ -85,7 +85,7 @@ The installer will:
 1. **Check and install prerequisites** — Docker and Node.js 22+ are required (installer exits if they fail). Ollama and OpenCode are optional (installer warns and continues if they fail).
 2. Install **pnpm** if missing (`npm install -g pnpm`)
 3. Build all 14 packages (`pnpm install && pnpm build`)
-4. **Install `ia-framework` as a global CLI tool** — runs `pnpm link --global` so `ia-framework` is available from anywhere in your terminal
+4. **Install `ia-framework` as a global CLI tool** — runs `npm link` inside `packages/cli` so `ia-framework` is available from anywhere in your terminal. If linking fails, the CLI is still usable via `node /path/to/ia-framework/packages/cli/dist/bin.js`.
 5. **Select an embedding model** — shows your locally available Ollama models (with `[embed]` hints for known embedding models), lets you pick one or enter a custom name, and auto-pulls it if needed
 6. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
 7. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
@@ -96,9 +96,21 @@ After it completes:
 
 - **Dashboard:** http://localhost:3000
 - **Restart OpenCode** to load the MCP tools
-- **Start indexing** from the dashboard (Overview page → "Start Indexing" button) or run `ia-framework index` in your terminal
+- **Verify the CLI:** `ia-framework hello` — prints available commands and confirms the install is working
+- **Start indexing** by running `ia-framework index` in your terminal
 
-> Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready from the dashboard or CLI.
+> Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready.
+
+## Recent Improvements
+
+- **Graceful indexing stop** — `ia-framework index-stop` signals a running index job to halt cleanly after the current batch. The dashboard Stop button does the same.
+- **Dashboard live updates** — The dashboard polls for progress every 2 seconds and automatically reflects CLI-triggered indexing — no manual refresh needed.
+- **Multi-schema PostgreSQL indexing** — `db index` supports databases with multiple schemas.
+- **Embedding model switching** — Switch models at any time with `--model`; dimension discovery and collection migration are handled automatically.
+- **Qwen3 embedding support** — `qwen3-embedding:0.6b`, `1.7b`, and `4b` variants are recognized with correct dimensions (1024d, 2048d, 2560d).
+- **32KB+ file support** — tree-sitter upgrade removes the previous file size limit for large source files.
+
+---
 
 ## Manual Setup (Step by Step)
 
@@ -119,7 +131,26 @@ pnpm test        # 218 tests across 13 packages
 pnpm typecheck   # Type-check all packages
 ```
 
-### Step 2: Start Qdrant
+### Step 2: Install the CLI Globally
+
+```bash
+cd packages/cli
+npm link
+cd ../..
+
+# Verify
+ia-framework hello
+```
+
+This makes `ia-framework` available as a global command. If `npm link` fails due to permissions, you can run the CLI directly:
+
+```bash
+node /path/to/ia-framework/packages/cli/dist/bin.js <command>
+# Or set an alias in your shell profile:
+alias ia-framework="node /path/to/ia-framework/packages/cli/dist/bin.js"
+```
+
+### Step 3: Start Qdrant
 
 ```bash
 docker compose up -d qdrant
@@ -127,7 +158,7 @@ docker compose up -d qdrant
 
 Qdrant will be available at `http://localhost:6333`. Data persists in a named Docker volume (`ia-framework-qdrant-data`).
 
-### Step 3: Set Up Ollama (Local Embeddings)
+### Step 4: Set Up Ollama (Local Embeddings)
 
 ```bash
 # Install Ollama if you haven't: https://ollama.ai
@@ -139,9 +170,9 @@ ollama pull nomic-embed-text   # Download an embedding model (or any model you p
 
 You can skip specifying a model in the config — the `index` command will present an interactive model selection if none is configured (see [Embedding Models](#embedding-models)).
 
-Or skip Ollama entirely and use OpenAI embeddings by setting `OPENAI_API_KEY` and updating the config (see Step 4).
+Or skip Ollama entirely and use OpenAI embeddings by setting `OPENAI_API_KEY` and updating the config (see Step 5).
 
-### Step 4: Create the Configuration
+### Step 5: Create the Configuration
 
 Create `.ia-framework/project.json`:
 
@@ -211,7 +242,7 @@ Or set the API key via environment variable: `export OPENAI_API_KEY=sk-...`
 
 </details>
 
-### Step 5: Index Your Codebase
+### Step 6: Index Your Codebase
 
 ```bash
 ia-framework index
@@ -221,7 +252,7 @@ This walks your project, parses files with tree-sitter into AST-aware chunks, ge
 
 Subsequent runs are incremental — only modified files (detected via `git diff`) are re-indexed.
 
-### Step 6: Verify It Works
+### Step 7: Verify It Works
 
 ```bash
 # Check status (Qdrant connection, chunk count, config)
@@ -232,7 +263,7 @@ ia-framework search "authentication middleware"
 ia-framework search "database connection pool" --limit 5
 ```
 
-### Step 7: Connect to OpenCode
+### Step 8: Connect to OpenCode
 
 Add the MCP server to OpenCode's config at `~/.config/opencode/config.json`:
 
@@ -260,7 +291,7 @@ Restart OpenCode. The following tools are now available to your AI assistant:
 | `query_database`        | Execute SQL against a configured PostgreSQL database |
 | `index_database_schema` | Index database schema into Qdrant                    |
 
-### Step 8: Start the Dashboard (Optional)
+### Step 9: Start the Dashboard (Optional)
 
 ```bash
 docker compose up -d dashboard
@@ -276,7 +307,7 @@ Open http://localhost:3000 to see:
 - **Benchmarks** — Hit@K and MRR trends over time
 - **Indexing** — Trigger re-indexing, view progress
 
-### Step 9: Inject RAG Guidance (Optional)
+### Step 10: Inject RAG Guidance (Optional)
 
 This adds documentation to your target project telling AI assistants how to use the RAG tools:
 
@@ -293,47 +324,146 @@ ia-framework agents check
 
 ## CLI Reference
 
-All commands accept `--config <path>` to override the default config location (`.ia-framework/project.json`).
+All commands accept `--config <path>` to override the default config location (`.ia-framework/project.json`). The config path can also be set via the `IA_FRAMEWORK_CONFIG` environment variable.
 
+### Core Commands
+
+```bash
+ia-framework hello
 ```
-ia-framework <command>
 
-Commands:
-  index                          Index target project codebase into Qdrant
-    --force                      Re-index all files (skip incremental detection)
-    --model <name>               Override embedding model (auto-pulls if not installed,
-                                   auto-discovers dimensions, detects mismatches)
-    --config <path>              Path to project.json
+Verify the CLI is installed and working. Prints available commands and the dashboard URL. Run this after install to confirm everything is set up.
 
-  search <query>                 Semantic search with dependency graph expansion
-    --limit <n>                  Max results (default: 10)
-    --threshold <n>              Min similarity score 0-1 (default: 0.5)
-                                 Uses retrieval.expansionHops from config (0=off, 1=direct, 2=transitive)
-
-  status                         Show config, Qdrant connection, chunk count
-
-  benchmark run                  Run retrieval quality benchmarks (Hit@K, MRR)
-    --top-k <n>                  Top-K results to evaluate (default: 10)
-    --threshold <n>              Score threshold (default: 0.5)
-    --baseline                   Run as no-RAG baseline for comparison
-    --label <text>               Label for this run
-    --corpus <path>              Path to benchmark queries JSON
-
-  benchmark list                 List recent benchmark runs
-  benchmark history              ASCII chart of Hit@K trend
-  benchmark compare <id1> <id2>  Side-by-side comparison of two runs
-
-  db configure                   Interactive PostgreSQL connection setup
-  db connect                     Test database connection
-  db index                       Index database schema into Qdrant
-  db status                      Show database config and connection status
-
-  agents inject                  Inject RAG guidance into target project docs
-    --file <path>                Target file (overrides auto-detection)
-  agents check                   Check if RAG guidance is present
+```bash
+ia-framework index [options]
+  --force            Re-index all files (skip incremental detection)
+  --model <name>     Override embedding model for this run (auto-pulls if not installed,
+                     auto-discovers dimensions, detects collection mismatches)
+  --config <path>    Path to project.json
 ```
+
+Indexes your target project into Qdrant using AST-aware chunking. Subsequent runs are incremental — only files changed since the last indexed git commit are re-processed. Use `--force` to re-index everything.
+
+```bash
+ia-framework index-stop [options]
+  --config <path>    Path to project.json
+```
+
+Request graceful cancellation of a running index job. The indexer finishes its current batch then stops. The dashboard Stop button does the same thing.
+
+```bash
+ia-framework search <query> [options]
+  --limit <n>        Max results (default: 10)
+  --threshold <n>    Min similarity score 0–1 (default: 0.5)
+  --config <path>    Path to project.json
+
+# Examples
+ia-framework search "authentication middleware"
+ia-framework search "database connection pool" --limit 5 --threshold 0.7
+```
+
+Semantic search with dependency graph expansion. Results include 1–2 hops of imported files based on `retrieval.expansionHops` in config (0=off, 1=direct imports, 2=transitive).
+
+```bash
+ia-framework status [options]
+  --config <path>    Path to project.json
+```
+
+Shows current config, Qdrant connection status, indexed chunk count, last indexed git commit, and token usage summary.
+
+---
+
+### Benchmark Commands
+
+```bash
+ia-framework benchmark run [options]
+  --top-k <n>        Results to retrieve per query (default: 10)
+  --threshold <n>    Score threshold 0–1 (default: 0.5)
+  --baseline         Run as no-RAG baseline (sets threshold > 1.0 so nothing matches)
+  --label <text>     Human-readable label for this run
+  --corpus <path>    Path to benchmark-queries.json (default: .ia-framework/benchmark-queries.json)
+  --config <path>    Path to project.json
+```
+
+Runs retrieval benchmarks against the indexed codebase. On first run, auto-scaffolds an example corpus at `.ia-framework/benchmark-queries.json` — edit it to match your project, then re-run.
+
+```bash
+ia-framework benchmark list [options]
+  --config <path>    Path to project.json
+```
+
+Lists recent benchmark runs with ID, label, date, Hit@K, and MRR scores.
+
+```bash
+ia-framework benchmark history [options]
+  --config <path>    Path to project.json
+```
+
+Renders an ASCII chart of Hit@K scores over time to show retrieval quality trends.
+
+```bash
+ia-framework benchmark compare <run-id-1> <run-id-2> [options]
+  --config <path>    Path to project.json
+```
+
+Side-by-side comparison of two benchmark runs. Use IDs from `benchmark list`.
+
+---
+
+### Database Commands
+
+Only available after running `ia-framework db configure`. See [Database Context](#database-context-optional) for setup.
+
+```bash
+ia-framework db configure [options]
+  --config <path>    Path to project.json
+```
+
+Interactive prompt for PostgreSQL connection details (host, port, database, user, password, SSL). Saves to `.ia-framework/db.json`.
+
+```bash
+ia-framework db connect [options]
+  --config <path>    Path to project.json
+```
+
+Tests the database connection configured in `db.json` and prints a success or error message.
+
+```bash
+ia-framework db index [options]
+  --config <path>    Path to project.json
+```
+
+Indexes the PostgreSQL schema (tables, columns, types, relationships) into Qdrant. Supports multiple schemas. After this, `search_codebase` results will include database schema matches.
+
+```bash
+ia-framework db status [options]
+  --config <path>    Path to project.json
+```
+
+Shows the database configuration from `db.json` and current connection status.
+
+---
+
+### Agent Documentation Commands
+
+```bash
+ia-framework agents inject [options]
+  --file <path>      Target file (overrides auto-detection)
+  --config <path>    Path to project.json
+```
+
+Injects RAG tool guidance into your target project's `AGENTS.md` or `CLAUDE.md`. Auto-detects the file; use `--file` to target a specific path. Idempotent — safe to run multiple times.
+
+```bash
+ia-framework agents check [options]
+  --config <path>    Path to project.json
+```
+
+Checks whether RAG guidance has been injected into the target project's agent documentation.
 
 ## MCP Tools (Detailed)
+
+> These tools are automatically documented in your target project's `AGENTS.md` or `CLAUDE.md` when you run `ia-framework agents inject`. AI assistants in that project will find usage guidance there.
 
 ### search_codebase
 
@@ -787,6 +917,32 @@ If you see "Embedding model mismatch detected" during indexing, confirm the coll
 ```bash
 docker compose up -d dashboard
 docker compose logs dashboard    # Check for errors
+```
+
+**Stopping a long-running index:**
+
+```bash
+# From another terminal — signals the indexer to stop after the current batch
+ia-framework index-stop
+
+# Or click the Stop button in the dashboard at http://localhost:3000
+```
+
+**Dashboard not updating during CLI indexing:**
+
+The dashboard polls for progress every 2 seconds and should update automatically when `ia-framework index` is running. If it's not updating:
+
+1. Check that `.ia-framework/indexing-progress.json` exists and is being written during indexing
+2. Confirm the dashboard container is running: `docker compose ps`
+3. Hard-refresh the browser (Cmd+Shift+R / Ctrl+Shift+R)
+
+**Qdrant host resolution errors:**
+
+The CLI resolves Qdrant via `localhost` (or the `QDRANT_HOST` env var). The dashboard container uses the `qdrant` Docker service name. Both are correct by design — set `QDRANT_HOST=localhost` if running the CLI in an environment where `localhost` doesn't resolve to the Qdrant port.
+
+```bash
+# Override Qdrant host for the CLI
+QDRANT_HOST=127.0.0.1 ia-framework status
 ```
 
 ## License
