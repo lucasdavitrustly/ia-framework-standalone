@@ -437,4 +437,13 @@ describe('computeTermFrequencySparseVector', () => {
     expect(result.indices).toHaveLength(0);
     expect(result.values).toHaveLength(0);
   });
+
+  test('indices are always unique (no duplicates even on hash collision)', () => {
+    // Generate a large text with many tokens to maximise collision surface
+    const words = Array.from({ length: 200 }, (_, i) => `token${i}`).join(' ');
+    const result = computeTermFrequencySparseVector(words);
+
+    const uniqueIndices = new Set(result.indices);
+    expect(uniqueIndices.size).toBe(result.indices.length);
+  });
 });

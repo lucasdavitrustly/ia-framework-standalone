@@ -264,7 +264,9 @@ export class SearchEngine {
  * Qdrant applies IDF weighting server-side (modifier="idf") — we only need TF here.
  *
  * The hash function maps token strings to 32-bit integers in [0, 2^31-1].
- * Collision probability is negligible for short query strings (< 50 tokens).
+ * Hash collisions (two different tokens mapping to the same index) are handled
+ * by summing their TF values so the output always has unique, sorted indices,
+ * satisfying Qdrant's sparse vector validation ("indices must be unique").
  */
 export function computeTermFrequencySparseVector(text: string): {
   indices: number[];
@@ -282,15 +284,18 @@ export function computeTermFrequencySparseVector(text: string): {
     tf.set(token, (tf.get(token) ?? 0) + 1);
   }
 
-  // Map each token to a stable integer index using djb2 hash
-  const entries: Array<[number, number]> = [];
+  // Map each token to a stable integer index using djb2 hash.
+  // Merge collisions by summing their TF values (two different tokens
+  // that hash to the same index must produce a single entry, otherwise
+  // Qdrant rejects the sparse vector with "indices must be unique").
+  const indexMap = new Map<number, number>();
   for (const [token, count] of tf) {
     const idx = djb2Hash(token);
-    entries.push([idx, count]);
+    indexMap.set(idx, (indexMap.get(idx) ?? 0) + count);
   }
 
   // Sort by index for Qdrant (indices must be sorted ascending)
-  entries.sort((a, b) => a[0] - b[0]);
+  const entries = Array.from(indexMap.entries()).sort((a, b) => a[0] - b[0]);
 
   return {
     indices: entries.map((e) => e[0]),
