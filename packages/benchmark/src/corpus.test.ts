@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { readFile, writeFile, unlink, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadCorpus, scaffoldExampleCorpus, CorpusNotFoundError } from './corpus.js';
+import {
+  loadCorpus,
+  scaffoldExampleCorpus,
+  CorpusNotFoundError,
+  validateCorpus,
+} from './corpus.js';
 import type { BenchmarkQuery } from './types.js';
 import { ZodError } from 'zod';
 
@@ -96,7 +101,9 @@ describe('QueryCorpus', () => {
   });
 
   it('Test 6: scaffoldExampleCorpus() does NOT overwrite existing file', async () => {
-    const originalContent = JSON.stringify({ queries: [{ id: 'original', query: 'original query', expectedFiles: ['original.ts'] }] });
+    const originalContent = JSON.stringify({
+      queries: [{ id: 'original', query: 'original query', expectedFiles: ['original.ts'] }],
+    });
     await writeFile(corpusPath, originalContent, 'utf-8');
 
     // Should throw or no-op (wx flag = fail if exists)
@@ -105,5 +112,88 @@ describe('QueryCorpus', () => {
     // Original content should be unchanged
     const content = await readFile(corpusPath, 'utf-8');
     expect(content).toBe(originalContent);
+  });
+});
+
+// ── validateCorpus() tests ────────────────────────────────────────────────────
+
+describe('validateCorpus', () => {
+  let projectRoot: string;
+
+  beforeEach(async () => {
+    // Create a temp directory as fake project root with some real files
+    projectRoot = join(tmpdir(), `test-project-root-${Date.now()}`);
+    await mkdir(join(projectRoot, 'src'), { recursive: true });
+    await writeFile(join(projectRoot, 'src', 'auth.ts'), '// auth', 'utf-8');
+    await writeFile(join(projectRoot, 'src', 'config.ts'), '// config', 'utf-8');
+  });
+
+  afterEach(async () => {
+    try {
+      await rm(projectRoot, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  it('Test 7: empty corpus returns no errors (valid)', async () => {
+    const errors = await validateCorpus([], projectRoot);
+    expect(errors).toEqual([]);
+  });
+
+  it('Test 8: valid corpus with all files existing returns no errors', async () => {
+    const queries: BenchmarkQuery[] = [
+      { id: 'q1', query: 'auth logic', expectedFiles: ['src/auth.ts'] },
+      { id: 'q2', query: 'config loading', expectedFiles: ['src/config.ts'] },
+    ];
+    const errors = await validateCorpus(queries, projectRoot);
+    expect(errors).toEqual([]);
+  });
+
+  it('Test 9: duplicate query IDs produce an error entry', async () => {
+    const queries: BenchmarkQuery[] = [
+      { id: 'dup-id', query: 'first query', expectedFiles: [] },
+      { id: 'dup-id', query: 'second query', expectedFiles: [] },
+    ];
+    const errors = await validateCorpus(queries, projectRoot);
+    const dupErrors = errors.filter((e) => e.queryId === 'dup-id' && e.error.includes('Duplicate'));
+    expect(dupErrors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Test 10: empty query text produces an error entry', async () => {
+    const queries: BenchmarkQuery[] = [{ id: 'empty-query', query: '   ', expectedFiles: [] }];
+    const errors = await validateCorpus(queries, projectRoot);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ queryId: 'empty-query' });
+    expect(errors[0]?.error).toContain('empty');
+  });
+
+  it('Test 11: expectedFiles referencing a non-existent path produces an error entry', async () => {
+    const queries: BenchmarkQuery[] = [
+      { id: 'bad-file', query: 'some query', expectedFiles: ['src/nonexistent.ts'] },
+    ];
+    const errors = await validateCorpus(queries, projectRoot);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ queryId: 'bad-file' });
+    expect(errors[0]?.error).toContain('src/nonexistent.ts');
+  });
+
+  it('Test 12: queries with empty expectedFiles array are valid (negative queries)', async () => {
+    const queries: BenchmarkQuery[] = [
+      { id: 'neg-01', query: 'GraphQL resolvers mutations', expectedFiles: [] },
+      { id: 'neg-02', query: 'Kubernetes ingress pods', expectedFiles: [] },
+    ];
+    const errors = await validateCorpus(queries, projectRoot);
+    expect(errors).toEqual([]);
+  });
+
+  it('Test 13: multiple errors are returned together (no short-circuit)', async () => {
+    const queries: BenchmarkQuery[] = [
+      { id: 'bad-1', query: '', expectedFiles: ['src/missing1.ts'] },
+      { id: 'bad-2', query: 'ok query', expectedFiles: ['src/missing2.ts'] },
+    ];
+    const errors = await validateCorpus(queries, projectRoot);
+    // Should have at least 3 errors: empty query + 2 missing files
+    expect(errors.length).toBeGreaterThanOrEqual(3);
   });
 });
