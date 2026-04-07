@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
-import { writeFile, copyFile } from 'node:fs/promises';
+import { writeFile, copyFile, stat } from 'node:fs/promises';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -502,6 +502,32 @@ function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
   }
 }
 
+// ── init-corpus helpers ───────────────────────────────────────────────────────
+
+/**
+ * Detect if a given path is the ia-framework repo itself.
+ * Heuristic: the directory contains packages/, apps/, and turbo.json —
+ * the monorepo signature unique to this framework.
+ */
+async function isFrameworkRepo(targetPath: string): Promise<boolean> {
+  const markers = ['packages', 'apps', 'turbo.json'];
+  try {
+    const checks = await Promise.all(
+      markers.map((m) =>
+        stat(join(targetPath, m))
+          .then(() => true)
+          .catch(() => false),
+      ),
+    );
+    return checks.every(Boolean);
+  } catch {
+    return false;
+  }
+}
+
+const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
+const OLLAMA_DEFAULT_MODEL = 'llama3.2';
+
 // ── init-corpus subcommand ────────────────────────────────────────────────────
 
 function initCorpusSubcommand(): Command {
@@ -524,6 +550,18 @@ function initCorpusSubcommand(): Command {
           const config = await loadConfig(configPath);
           const corpusPath = options.corpus ?? join(frameworkDir, 'benchmark-queries.json');
 
+          // Guard: ensure target project is NOT the ia-framework repo itself
+          if (await isFrameworkRepo(config.targetProjectPath)) {
+            process.stderr.write(
+              `✗ targetProjectPath appears to be the ia-framework repo itself:\n` +
+                `  ${config.targetProjectPath}\n\n` +
+                `  Corpus generation must target YOUR project, not the ia-framework tool.\n` +
+                `  Update 'targetProjectPath' in ${configPath} to point at your project.\n`,
+            );
+            process.exit(1);
+            return;
+          }
+
           // Backup existing corpus if present
           if (existsSync(corpusPath)) {
             const backupPath = `${corpusPath}.bak`;
@@ -532,13 +570,61 @@ function initCorpusSubcommand(): Command {
           }
 
           // Determine completion model and base URL
-          const completionModel =
-            options.model ?? (config.embedding.provider === 'ollama' ? 'llama3.2' : 'gpt-4o-mini');
-          const completionBaseUrl = config.embedding.baseUrl ?? 'https://api.openai.com';
-          const completionApiKey = config.embedding.apiKey ?? '';
+          // When --model is NOT provided: always default to local Ollama regardless of embedding config
+          // When --model IS provided: use configured provider settings (user knows what they're doing)
+          const modelExplicit = options.model !== undefined;
 
+          let completionModel: string;
+          let completionBaseUrl: string;
+          let completionApiKey: string;
+
+          if (modelExplicit) {
+            // User explicitly specified a model — use configured provider settings
+            completionModel = options.model!;
+            completionBaseUrl =
+              config.embedding.baseUrl ??
+              (config.embedding.provider === 'ollama'
+                ? OLLAMA_DEFAULT_BASE_URL
+                : 'https://api.openai.com');
+            completionApiKey = config.embedding.apiKey ?? '';
+          } else {
+            // Default: always use local Ollama for corpus generation
+            completionModel = OLLAMA_DEFAULT_MODEL;
+            completionBaseUrl = OLLAMA_DEFAULT_BASE_URL;
+            completionApiKey = '';
+          }
+
+          // When using Ollama default, probe availability before attempting corpus generation
+          if (!modelExplicit) {
+            try {
+              const probeRes = await fetch(`${completionBaseUrl}/api/tags`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(3000),
+              });
+              if (!probeRes.ok) {
+                throw new Error(`HTTP ${probeRes.status}`);
+              }
+            } catch {
+              process.stderr.write(
+                `✗ Ollama not reachable at ${completionBaseUrl}\n` +
+                  `  To generate corpus with a local model:\n` +
+                  `  1. Install Ollama: https://ollama.com\n` +
+                  `  2. Pull the model: ollama pull ${completionModel}\n` +
+                  `  3. Re-run: ia-framework benchmark init-corpus\n` +
+                  `\n` +
+                  `  To use a cloud model instead, pass --model explicitly:\n` +
+                  `  ia-framework benchmark init-corpus --model gpt-4o-mini\n`,
+              );
+              process.exit(1);
+              return;
+            }
+          }
+
+          const modelSource = modelExplicit ? '(explicit --model)' : '(default local)';
           console.log(`Generating 30-query corpus for ${config.targetProjectPath}...`);
-          console.log(`Using completion model: ${completionModel} via ${completionBaseUrl}`);
+          console.log(
+            `Using completion model: ${completionModel} via ${completionBaseUrl} ${modelSource}`,
+          );
 
           const genOptions: CorpusGeneratorOptions = {
             targetProjectPath: config.targetProjectPath,
