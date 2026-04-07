@@ -2,16 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: shipped
-stopped_at: '/gsd:complete-milestone — audit finalized, all gaps resolved, 251 tests passing'
-last_updated: '2026-04-03T00:30:00.000Z'
-last_activity: 2026-04-03
+status: unknown
+stopped_at: Completed 11-01-PLAN.md — 30-query corpus + validateCorpus()
+last_updated: "2026-04-07T13:24:49.083Z"
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 10
-  total_plans: 30
-  completed_plans: 30
-  percent: 100
+  total_plans: 34
+  completed_plans: 31
 ---
 
 # Project State
@@ -21,17 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** v1.0 SHIPPED — audit complete, all gaps resolved, 251 tests passing
+**Current focus:** Phase 11 — mrr-optimization
 
 ## Current Position
 
-Phase: 10 of 10 (Advanced Retrieval & Workflow Integration) — COMPLETE
-Plan: 4 of 4 — all plans executed
-Status: v1.0 milestone shipped — audit finalized 2026-04-03
-
-Last activity: 2026-04-03
-
-Progress: [██████████] 100%
+Phase: 11 (mrr-optimization) — EXECUTING
+Plan: 2 of 4
 
 ## Performance Metrics
 
@@ -91,6 +84,7 @@ _Updated after each plan completion_
 | Phase 10 P02 | 15min | 5 tasks | 8 files |
 | Phase 10 P03 | 12min | 6 tasks | 5 files |
 | Phase 10 P04 | 10min | 5 tasks | 3 files |
+| Phase 11-mrr-optimization P01 | 18min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -157,6 +151,7 @@ Recent decisions affecting current work:
 - [Phase 10]: Marker-based idempotency for agent docs injection (<!-- ia-framework:rag-start/end -->)
 - [Phase 10]: DependencyGraph.getNeighborFiles() is sync but wrapped in async lambda in bin.ts to match SearchEngineConfig interface
 - [Phase 10]: mockReset() required instead of mockClear() — mockClear does NOT clear mockResolvedValueOnce queue
+- [Phase 11-mrr-optimization]: validateCorpus uses async fs.access; Zod schema expectedFiles min(0) for negative queries; loadCorpus supports flat JSON array format; corpus file tracked via gitignore exception
 
 ### Pending Todos
 
@@ -187,6 +182,6 @@ None — all blockers resolved:
 
 ## Session Continuity
 
-Last session: 2026-04-03T00:30:00.000Z
-Stopped at: /gsd:complete-milestone — audit finalized, all gaps resolved
+Last session: 2026-04-07T13:24:49.080Z
+Stopped at: Completed 11-01-PLAN.md — 30-query corpus + validateCorpus()
 Resume file: None
