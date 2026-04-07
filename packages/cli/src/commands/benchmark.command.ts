@@ -528,6 +528,45 @@ async function isFrameworkRepo(targetPath: string): Promise<boolean> {
 const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
 const OLLAMA_DEFAULT_MODEL = 'llama3.2';
 
+// ── Ollama model helpers ───────────────────────────────────────────────────────
+
+interface OllamaTagsResponse {
+  models: Array<{ name: string }>;
+}
+
+/**
+ * Returns true if the model name looks like an embedding-only model.
+ * Embedding models cannot generate chat completions.
+ */
+export function isEmbeddingModel(modelName: string): boolean {
+  const lower = modelName.toLowerCase();
+  return lower.includes('embed');
+}
+
+/**
+ * Given a parsed /api/tags response, return the best chat-capable model to use.
+ * Preference order:
+ *   1. The preferred model if it is installed
+ *   2. The first installed model that is NOT an embedding model
+ *   3. null if no suitable model exists
+ */
+export function selectChatModel(
+  tagsResponse: OllamaTagsResponse,
+  preferredModel: string,
+): string | null {
+  const models = tagsResponse.models ?? [];
+  const names = models.map((m) => m.name);
+
+  // Prefer the requested default if it is installed
+  if (names.includes(preferredModel)) {
+    return preferredModel;
+  }
+
+  // Fall back to the first non-embedding model
+  const chatModel = names.find((n) => !isEmbeddingModel(n));
+  return chatModel ?? null;
+}
+
 // ── init-corpus subcommand ────────────────────────────────────────────────────
 
 function initCorpusSubcommand(): Command {
@@ -596,6 +635,7 @@ function initCorpusSubcommand(): Command {
 
           // When using Ollama default, probe availability before attempting corpus generation
           if (!modelExplicit) {
+            let tagsData: OllamaTagsResponse;
             try {
               const probeRes = await fetch(`${completionBaseUrl}/api/tags`, {
                 method: 'GET',
@@ -604,6 +644,7 @@ function initCorpusSubcommand(): Command {
               if (!probeRes.ok) {
                 throw new Error(`HTTP ${probeRes.status}`);
               }
+              tagsData = (await probeRes.json()) as OllamaTagsResponse;
             } catch {
               process.stderr.write(
                 `✗ Ollama not reachable at ${completionBaseUrl}\n` +
@@ -618,6 +659,36 @@ function initCorpusSubcommand(): Command {
               process.exit(1);
               return;
             }
+
+            // Select the best available chat model from installed models
+            const selectedModel = selectChatModel(tagsData, completionModel);
+            if (selectedModel === null) {
+              const installedNames = (tagsData.models ?? []).map((m) => m.name);
+              const installedList =
+                installedNames.length > 0
+                  ? `Installed models: ${installedNames.join(', ')}`
+                  : 'No models installed.';
+              process.stderr.write(
+                `✗ No chat-capable model found in Ollama.\n` +
+                  `  ${installedList}\n\n` +
+                  `  Pull a chat model and retry:\n` +
+                  `    ollama pull ${completionModel}\n` +
+                  `\n` +
+                  `  Or use a cloud model instead:\n` +
+                  `    ia-framework benchmark init-corpus --model gpt-4o-mini\n`,
+              );
+              process.exit(1);
+              return;
+            }
+
+            if (selectedModel !== completionModel) {
+              console.log(
+                `ℹ Model '${completionModel}' not found. Using '${selectedModel}' instead.`,
+              );
+              console.log(`  (Pull '${completionModel}' with: ollama pull ${completionModel})`);
+            }
+
+            completionModel = selectedModel;
           }
 
           const modelSource = modelExplicit ? '(explicit --model)' : '(default local)';

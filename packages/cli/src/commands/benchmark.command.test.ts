@@ -21,7 +21,7 @@ vi.mock('@ia-framework/benchmark', async (importOriginal) => {
 });
 
 // ── Import the command factory after mocks ────────────────────────────────────
-import { benchmarkCommand } from './benchmark.command.js';
+import { benchmarkCommand, isEmbeddingModel, selectChatModel } from './benchmark.command.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -152,5 +152,77 @@ describe('benchmark clean', () => {
 
     expect(exitCode).toBe(1);
     expect(err.join('\n')).toMatch(/clean failed|disk full/i);
+  });
+});
+
+// ── isEmbeddingModel ──────────────────────────────────────────────────────────
+
+describe('isEmbeddingModel', () => {
+  it('returns true for models with "embed" in the name (lowercase)', () => {
+    expect(isEmbeddingModel('nomic-embed-text')).toBe(true);
+  });
+
+  it('returns true for Ollama embedding models with "embed" in the name (mixed case)', () => {
+    expect(isEmbeddingModel('mxbai-Embed-large')).toBe(true);
+  });
+
+  it('returns true for qwen3-embedding models', () => {
+    expect(isEmbeddingModel('qwen3-embedding:0.6b')).toBe(true);
+  });
+
+  it('returns false for chat models (llama3.2)', () => {
+    expect(isEmbeddingModel('llama3.2')).toBe(false);
+  });
+
+  it('returns false for chat models (mistral)', () => {
+    expect(isEmbeddingModel('mistral')).toBe(false);
+  });
+
+  it('returns false for chat models (phi4)', () => {
+    expect(isEmbeddingModel('phi4')).toBe(false);
+  });
+
+  it('returns false for chat models (gemma3:4b)', () => {
+    expect(isEmbeddingModel('gemma3:4b')).toBe(false);
+  });
+});
+
+// ── selectChatModel ───────────────────────────────────────────────────────────
+
+describe('selectChatModel', () => {
+  it('returns the preferred model when it is installed', () => {
+    const tags = { models: [{ name: 'llama3.2' }, { name: 'mistral' }] };
+    expect(selectChatModel(tags, 'llama3.2')).toBe('llama3.2');
+  });
+
+  it('returns the preferred model even when embedding models are also installed', () => {
+    const tags = {
+      models: [{ name: 'qwen3-embedding:0.6b' }, { name: 'llama3.2' }],
+    };
+    expect(selectChatModel(tags, 'llama3.2')).toBe('llama3.2');
+  });
+
+  it('falls back to first non-embedding model when preferred is not installed', () => {
+    const tags = {
+      models: [{ name: 'qwen3-embedding:0.6b' }, { name: 'mistral' }],
+    };
+    expect(selectChatModel(tags, 'llama3.2')).toBe('mistral');
+  });
+
+  it('returns null when only embedding models are installed', () => {
+    const tags = {
+      models: [{ name: 'qwen3-embedding:0.6b' }, { name: 'nomic-embed-text' }],
+    };
+    expect(selectChatModel(tags, 'llama3.2')).toBeNull();
+  });
+
+  it('returns null when no models are installed (empty list)', () => {
+    const tags = { models: [] };
+    expect(selectChatModel(tags, 'llama3.2')).toBeNull();
+  });
+
+  it('handles missing models property gracefully', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+    expect(selectChatModel({} as any, 'llama3.2')).toBeNull();
   });
 });
