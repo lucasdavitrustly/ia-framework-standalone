@@ -156,7 +156,10 @@ describe('validateCorpus', () => {
       { id: 'dup-id', query: 'second query', expectedFiles: [] },
     ];
     const errors = await validateCorpus(queries, projectRoot);
-    const dupErrors = errors.filter((e) => e.queryId === 'dup-id' && e.error.includes('Duplicate'));
+    const dupErrors = errors.filter(
+      (e: { queryId: string; error: string }) =>
+        e.queryId === 'dup-id' && e.error.includes('Duplicate'),
+    );
     expect(dupErrors.length).toBeGreaterThanOrEqual(1);
   });
 

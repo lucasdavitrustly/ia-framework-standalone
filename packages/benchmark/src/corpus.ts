@@ -1,4 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { z } from 'zod';
 import type { BenchmarkQuery } from './types.js';
 
@@ -11,18 +13,29 @@ export class CorpusNotFoundError extends Error {
   }
 }
 
+// ── Validation error type ─────────────────────────────────────────────────────
+
+export interface CorpusValidationError {
+  queryId: string;
+  error: string;
+}
+
 // ── Zod schema ────────────────────────────────────────────────────────────────
 
 const BenchmarkQuerySchema = z.object({
   id: z.string().min(1),
   query: z.string().min(1),
-  expectedFiles: z.array(z.string()).min(1),
+  // Allow empty arrays for negative queries (topics not in the codebase)
+  expectedFiles: z.array(z.string()).min(0),
   description: z.string().optional(),
 });
 
 export const BenchmarkQueriesFileSchema = z.object({
   queries: z.array(BenchmarkQuerySchema),
 });
+
+// Flat JSON array format (primary format for corpus files)
+export const BenchmarkQueriesFlatSchema = z.array(BenchmarkQuerySchema);
 
 // ── Example corpus content ────────────────────────────────────────────────────
 
@@ -60,6 +73,7 @@ const EXAMPLE_CORPUS = JSON.stringify(
 
 /**
  * Load benchmark queries from a JSON file.
+ * Supports both flat JSON array format and wrapped `{ queries: [...] }` format.
  *
  * @param filePath - Absolute path to the benchmark-queries.json file
  * @returns Array of validated BenchmarkQuery objects
@@ -79,6 +93,13 @@ export async function loadCorpus(filePath: string): Promise<BenchmarkQuery[]> {
   }
 
   const parsed: unknown = JSON.parse(content);
+
+  // Support flat JSON array format (primary) or wrapped { queries: [...] } format
+  if (Array.isArray(parsed)) {
+    const validated = BenchmarkQueriesFlatSchema.parse(parsed);
+    return validated as BenchmarkQuery[];
+  }
+
   const validated = BenchmarkQueriesFileSchema.parse(parsed);
   // Cast required due to exactOptionalPropertyTypes: Zod infers `description?: string | undefined`
   // while BenchmarkQuery uses exactOptionalPropertyTypes-compatible `description?: string`
@@ -94,6 +115,47 @@ export async function loadCorpus(filePath: string): Promise<BenchmarkQuery[]> {
  */
 export async function scaffoldExampleCorpus(filePath: string): Promise<void> {
   await writeFile(filePath, EXAMPLE_CORPUS, { encoding: 'utf-8', flag: 'wx' });
+}
+
+/**
+ * Validate a loaded corpus against the project root.
+ * Checks: unique IDs, non-empty query text, file existence for non-empty expectedFiles.
+ * Empty expectedFiles arrays are valid (negative test queries).
+ * Returns all errors found (empty array = valid corpus).
+ *
+ * @param queries - Array of BenchmarkQuery objects to validate
+ * @param projectRoot - Absolute path to the project root for resolving expectedFiles
+ * @returns Array of CorpusValidationError objects (empty if corpus is valid)
+ */
+export async function validateCorpus(
+  queries: BenchmarkQuery[],
+  projectRoot: string,
+): Promise<CorpusValidationError[]> {
+  const errors: CorpusValidationError[] = [];
+  const seenIds = new Set<string>();
+
+  for (const q of queries) {
+    if (seenIds.has(q.id)) {
+      errors.push({ queryId: q.id, error: `Duplicate query ID: "${q.id}"` });
+    }
+    seenIds.add(q.id);
+
+    if (!q.query.trim()) {
+      errors.push({ queryId: q.id, error: 'Query text is empty' });
+    }
+
+    // Skip file-existence check for negative queries (expectedFiles=[])
+    for (const relPath of q.expectedFiles) {
+      const absPath = path.join(projectRoot, relPath);
+      try {
+        await fs.access(absPath);
+      } catch {
+        errors.push({ queryId: q.id, error: `Expected file not found: ${relPath}` });
+      }
+    }
+  }
+
+  return errors;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
