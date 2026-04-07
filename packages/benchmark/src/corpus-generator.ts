@@ -143,7 +143,10 @@ async function callCompletionApi(
       model,
       messages,
       temperature: 0.7,
-      max_tokens: 4096,
+      // 16384 tokens provides ample headroom for a 30-query corpus even with
+      // long file paths (e.g. Java monorepos). The previous value of 4096 was
+      // too low and caused JSON truncation mid-string for larger projects.
+      max_tokens: 16384,
     }),
   });
 
