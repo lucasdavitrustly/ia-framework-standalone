@@ -7,6 +7,8 @@ import type {
   SearchResult,
   CollectionInfo,
   ChunkPayload,
+  HybridSearchOptions,
+  SparseVector,
 } from './interface.js';
 
 /**
@@ -82,6 +84,11 @@ export class QdrantVectorStore implements VectorStore {
         text: { size: config.textDimensions, distance: 'Cosine' },
         code: { size: config.codeDimensions, distance: 'Cosine' },
       },
+      sparse_vectors: {
+        sparse: {
+          modifier: 'idf', // Qdrant computes IDF server-side; client sends TF
+        },
+      },
     });
   }
 
@@ -95,6 +102,7 @@ export class QdrantVectorStore implements VectorStore {
         vector: {
           text: p.textVector,
           code: p.codeVector,
+          ...(p.sparseVector ? { sparse: p.sparseVector } : {}),
         },
         payload: { ...p.payload },
       })),
@@ -132,12 +140,60 @@ export class QdrantVectorStore implements VectorStore {
       codeDim = namedVectors['code']?.size ?? 0;
     }
 
+    // Check if sparse vector exists
+    const sparseVectors = (info.config?.params as Record<string, unknown> | undefined)
+      ?.sparse_vectors;
+    const hasSparseVector =
+      sparseVectors != null &&
+      typeof sparseVectors === 'object' &&
+      'sparse' in (sparseVectors as object);
+
     return {
       name: this.collectionName,
       pointCount: info.points_count ?? 0,
       vectorDimensions: { text: textDim, code: codeDim },
       status: String(info.status ?? 'unknown'),
+      hasSparseVector,
     };
+  }
+
+  async searchHybrid(options: HybridSearchOptions): Promise<SearchResult[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const results = await (this.client.query as any)(this.collectionName, {
+      prefetch: [
+        {
+          query: { nearest: options.denseVector },
+          using: 'text',
+          limit: options.limit * 3,
+        },
+        {
+          query: { nearest: options.denseVector },
+          using: 'code',
+          limit: options.limit * 3,
+        },
+        {
+          query: { nearest: options.sparseVector as SparseVector },
+          using: 'sparse',
+          limit: options.limit * 3,
+        },
+      ],
+      query: { fusion: 'rrf' },
+      limit: options.limit,
+      with_payload: true,
+      ...(options.filter !== undefined ? { filter: options.filter } : {}),
+    });
+
+    // client.query() returns { result: ScoredPoint[] } or the array directly
+    const points: Array<{ id: unknown; score: number; payload: unknown }> = Array.isArray(results)
+      ? results
+      : ((results as { result: unknown[] }).result ?? []);
+
+    return points.map((r) => ({
+      id: (r.payload as ChunkPayload).chunkId ?? String(r.id),
+      score: r.score,
+      payload: r.payload as ChunkPayload,
+      vectorName: 'text' as const, // RRF fusion — no single vector name
+    }));
   }
 
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
