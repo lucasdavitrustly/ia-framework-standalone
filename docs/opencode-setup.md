@@ -14,14 +14,14 @@ If you need to configure OpenCode manually (or the automatic setup failed):
 
 OpenCode's config lives at:
 
-- **macOS/Linux**: `~/.config/opencode/config.json`
-- **Custom XDG**: `$XDG_CONFIG_HOME/opencode/config.json`
+- **macOS/Linux**: `~/.config/opencode/opencode.json`
+- **Custom XDG**: `$XDG_CONFIG_HOME/opencode/opencode.json`
 
 Create the file if it doesn't exist.
 
 ### 2. Add the ia-framework MCP server
 
-Add the following to your `config.json`:
+Add the following to your `opencode.json`:
 
 ```json
 {
@@ -75,11 +75,11 @@ Close and reopen OpenCode. The ia-framework MCP tools should now appear.
 
 Once configured, OpenCode will have access to these tools:
 
-| Tool | Description |
-|------|-------------|
-| `search_codebase` | Semantic search across indexed code chunks |
-| `get_file` | Retrieve all indexed chunks for a specific file |
-| `get_dependencies` | Get chunks related to a file's imports |
+| Tool               | Description                                     |
+| ------------------ | ----------------------------------------------- |
+| `search_codebase`  | Semantic search across indexed code chunks      |
+| `get_file`         | Retrieve all indexed chunks for a specific file |
+| `get_dependencies` | Get chunks related to a file's imports          |
 
 ## Using IA_FRAMEWORK_CONFIG
 
@@ -98,17 +98,20 @@ This allows running multiple ia-framework configurations (e.g., for different pr
 ## Troubleshooting
 
 **MCP tools not appearing in OpenCode:**
+
 1. Verify the `bin.js` path is correct and the file exists
 2. Check that `pnpm build` has been run
 3. Restart OpenCode completely
 4. Check OpenCode logs for MCP connection errors
 
 **Search returns no results:**
+
 1. Ensure codebase is indexed: `node packages/cli/dist/bin.js index`
 2. Check Qdrant is running: `node packages/cli/dist/bin.js status`
 3. Verify the config file path in `IA_FRAMEWORK_CONFIG`
 
 **Qdrant not reachable:**
+
 ```bash
 docker compose up -d qdrant
 ```
