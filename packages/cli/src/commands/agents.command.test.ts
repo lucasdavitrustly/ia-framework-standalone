@@ -141,6 +141,19 @@ describe('agents inject', () => {
     expect(content).toContain('search_codebase');
   });
 
+  // Test 3c: search_codebase_hybrid is present in injected content
+  it('includes search_codebase_hybrid tool in injected content', async () => {
+    const agentsPath = join(targetDir, 'AGENTS.md');
+    await writeFile(agentsPath, '# Project\n');
+
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
+
+    const content = await readFile(agentsPath, 'utf-8');
+    expect(content).toContain('search_codebase_hybrid');
+    expect(content).toContain('BM25');
+    expect(content).toContain('Reciprocal Rank Fusion');
+  });
+
   // Test 4: Exits with error when config load fails
   it('exits with error when config load fails', async () => {
     mockLoadConfig.mockRejectedValue(new Error('config not found'));

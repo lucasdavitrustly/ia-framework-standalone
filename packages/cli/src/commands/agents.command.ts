@@ -15,6 +15,11 @@ codebase context during AI-assisted development:
   finding architectural patterns, existing interfaces, and related code.
   Parameters: \`query\` (required), \`limit\` (default 10), \`score_threshold\` (default 0.5),
   \`expand_hops\` (0=no expansion, 1=direct imports, 2=transitive)
+- \`search_codebase_hybrid\` — Hybrid retrieval combining BM25 sparse keyword
+  search + dense semantic search via Reciprocal Rank Fusion (RRF). Better than
+  \`search_codebase\` when the query mixes exact identifiers (class/function names)
+  with semantic concepts. Use \`search_codebase\` for pure semantic queries.
+  Parameters: \`query\` (required), \`limit\` (default 10)
 - \`get_file\` — Retrieve all indexed content for a specific file by path.
   Use when you need the full context of a file before modifying it.
 - \`get_dependencies\` — Get imports and exports for a file. Use before
@@ -26,6 +31,8 @@ codebase context during AI-assisted development:
 - **Before modifying code:** search for related files and understand dependencies
 - **Before planning features:** search for existing patterns and interfaces
 - **Before refactoring:** get_dependencies to understand the impact surface
+- **Mixed queries (name + concept):** use search_codebase_hybrid when you know a
+  specific class or function name but also want semantically related results
 
 ### Token-conscious usage
 
