@@ -15,6 +15,11 @@ codebase context during AI-assisted development:
   finding architectural patterns, existing interfaces, and related code.
   Parameters: \`query\` (required), \`limit\` (default 10), \`score_threshold\` (default 0.5),
   \`expand_hops\` (0=no expansion, 1=direct imports, 2=transitive)
+- \`search_codebase_hybrid\` — Hybrid retrieval combining BM25 sparse keyword
+  search + dense semantic search via Reciprocal Rank Fusion (RRF). Better than
+  \`search_codebase\` when the query mixes exact identifiers (class/function names)
+  with semantic concepts. Use \`search_codebase\` for pure semantic queries.
+  Parameters: \`query\` (required), \`limit\` (default 10)
 - \`get_file\` — Retrieve all indexed content for a specific file by path.
   Use when you need the full context of a file before modifying it.
 - \`get_dependencies\` — Get imports and exports for a file. Use before
@@ -26,25 +31,14 @@ codebase context during AI-assisted development:
 - **Before modifying code:** search for related files and understand dependencies
 - **Before planning features:** search for existing patterns and interfaces
 - **Before refactoring:** get_dependencies to understand the impact surface
+- **Mixed queries (name + concept):** use search_codebase_hybrid when you know a
+  specific class or function name but also want semantically related results
 
 ### Token-conscious usage
 
 - Use \`limit: 3-5\` for quick lookups, \`limit: 10\` for deep exploration
 - Raise \`score_threshold\` to 0.7 for precise matches
-- Skip RAG for tasks that don't need codebase context (doc updates, config changes)
-
-### RAG quality — MRR
-
-ia-framework tracks **Mean Reciprocal Rank (MRR)** to measure retrieval quality.
-MRR is the average of 1/rank for the first relevant result across benchmark queries:
-
-- **MRR 1.0** — correct chunk is always the top result
-- **MRR 0.5** — correct chunk is typically ranked 2nd
-- **MRR < 0.3** — retrieval needs tuning (re-index, adjust score_threshold, or improve query phrasing)
-
-Run \`ia-framework benchmark run\` after re-indexing or config changes to track MRR
-over time. Results are stored in \`.ia-framework/metrics.sqlite\` and visible in the
-dashboard. Use \`ia-framework benchmark compare <run-a> <run-b>\` to compare runs.`;
+- Skip RAG for tasks that don't need codebase context (doc updates, config changes)`;
 
 function getConfigPath(options: { config?: string }): string {
   return (

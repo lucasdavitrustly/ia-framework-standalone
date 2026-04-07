@@ -141,18 +141,17 @@ describe('agents inject', () => {
     expect(content).toContain('search_codebase');
   });
 
-  // Test 3b: MRR section is present in injected content
-  it('includes MRR quality guidance in injected content', async () => {
+  // Test 3c: search_codebase_hybrid is present in injected content
+  it('includes search_codebase_hybrid tool in injected content', async () => {
     const agentsPath = join(targetDir, 'AGENTS.md');
     await writeFile(agentsPath, '# Project\n');
 
     await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
 
     const content = await readFile(agentsPath, 'utf-8');
-    expect(content).toContain('Mean Reciprocal Rank');
-    expect(content).toContain('MRR');
-    expect(content).toContain('ia-framework benchmark run');
-    expect(content).toContain('ia-framework benchmark compare');
+    expect(content).toContain('search_codebase_hybrid');
+    expect(content).toContain('BM25');
+    expect(content).toContain('Reciprocal Rank Fusion');
   });
 
   // Test 4: Exits with error when config load fails
