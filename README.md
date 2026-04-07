@@ -489,7 +489,6 @@ export function validateToken(req: Request): AuthResult {
   // ...
 }
 ```
-````
 
 ### 2. src/auth/types.ts (AuthResult) — score: 0.82 [text] ← expanded via dependency graph
 
@@ -499,7 +498,6 @@ export interface AuthResult {
   userId?: string;
 }
 ```
-
 ````
 
 The `[both]`, `[text]`, `[code]` tags show which vector matched. Expanded results (from the dependency graph) appear alongside direct matches so the AI gets the full context.
@@ -508,25 +506,25 @@ The `[both]`, `[text]`, `[code]` tags show which vector matched. Expanded result
 
 Retrieves all indexed chunks for a file in reading order.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | string | Relative file path (e.g., `src/auth/middleware.ts`) |
+| Parameter | Type   | Description                                         |
+| --------- | ------ | --------------------------------------------------- |
+| `path`    | string | Relative file path (e.g., `src/auth/middleware.ts`) |
 
 ### get_dependencies
 
 Returns imports and exports for a file.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | string | Relative file path |
+| Parameter | Type   | Description        |
+| --------- | ------ | ------------------ |
+| `path`    | string | Relative file path |
 
 ### query_database
 
 Executes SQL against a configured PostgreSQL database. Only available if `db.json` is configured via `ia-framework db configure`.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `sql` | string | SQL query to execute |
+| Parameter | Type   | Description          |
+| --------- | ------ | -------------------- |
+| `sql`     | string | SQL query to execute |
 
 ### index_database_schema
 
@@ -540,11 +538,11 @@ ia-framework's MCP server provides codebase search tools, but OpenCode supports 
 
 These MCP servers work well alongside ia-framework:
 
-| MCP Server | Purpose | What it adds |
-|------------|---------|--------------|
-| **[Context7](https://github.com/upstash/context7)** | Documentation retrieval | Up-to-date docs for any library — no more hallucinated APIs |
-| **[Sequential Thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** | Structured reasoning | Multi-step problem decomposition for complex tasks |
-| **PostgreSQL** (built-in) | Database context | Schema-aware SQL queries via ia-framework's `query_database` and `index_database_schema` tools |
+| MCP Server                                                                                                  | Purpose                 | What it adds                                                                                   |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| **[Context7](https://github.com/upstash/context7)**                                                         | Documentation retrieval | Up-to-date docs for any library — no more hallucinated APIs                                    |
+| **[Sequential Thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** | Structured reasoning    | Multi-step problem decomposition for complex tasks                                             |
+| **PostgreSQL** (built-in)                                                                                   | Database context        | Schema-aware SQL queries via ia-framework's `query_database` and `index_database_schema` tools |
 
 ### Configuring Additional MCP Servers
 
