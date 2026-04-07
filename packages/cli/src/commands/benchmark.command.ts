@@ -675,6 +675,33 @@ function initCorpusSubcommand(): Command {
     );
 }
 
+// ── clean subcommand ──────────────────────────────────────────────────────────
+
+function cleanSubcommand(): Command {
+  return new Command('clean')
+    .description('Delete all benchmark runs from the database')
+    .option('-c, --config <path>', 'Path to project.json config')
+    .action(async (options: { config?: string }) => {
+      const logger = createLogger('cli:benchmark:clean');
+      const configPath = getConfigPath(options);
+      const frameworkDir = dirname(configPath);
+
+      try {
+        mkdirSync(frameworkDir, { recursive: true });
+        const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
+        const store = new BenchmarkStore(benchmarksDbPath);
+        store.clearRuns();
+        store.close();
+
+        console.log('✓ Deleted all benchmark runs from the database.');
+      } catch (error) {
+        process.stderr.write(`✗ benchmark clean failed: ${String(error)}\n`);
+        logger.error({ error }, 'Benchmark clean failed');
+        process.exit(1);
+      }
+    });
+}
+
 // ── benchmarkCommand ──────────────────────────────────────────────────────────
 
 export function benchmarkCommand(): Command {
@@ -687,6 +714,7 @@ export function benchmarkCommand(): Command {
   benchmark.addCommand(historySubcommand());
   benchmark.addCommand(compareSubcommand());
   benchmark.addCommand(initCorpusSubcommand());
+  benchmark.addCommand(cleanSubcommand());
 
   return benchmark;
 }

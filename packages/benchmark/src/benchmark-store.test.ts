@@ -83,7 +83,13 @@ describe('BenchmarkStore', () => {
   it('Test 3: saveRun() with 3 QueryResults inserts 3 rows in benchmark_query_results', () => {
     const queries: QueryResult[] = [
       makeQueryResult({ queryId: 'q1', query: 'auth', hit: true, rank: 1, reciprocalRank: 1.0 }),
-      makeQueryResult({ queryId: 'q2', query: 'config', hit: false, rank: Infinity, reciprocalRank: 0 }),
+      makeQueryResult({
+        queryId: 'q2',
+        query: 'config',
+        hit: false,
+        rank: Infinity,
+        reciprocalRank: 0,
+      }),
       makeQueryResult({ queryId: 'q3', query: 'types', hit: true, rank: 2, reciprocalRank: 0.5 }),
     ];
     const run = makeRun({ queries, hitAtK: 2 / 3, mrr: 0.5 });
@@ -101,9 +107,21 @@ describe('BenchmarkStore', () => {
   });
 
   it('Test 4: listRuns() returns runs ordered by timestamp DESC, newest first', async () => {
-    const run1 = makeRun({ runId: crypto.randomUUID(), timestamp: '2026-01-01T00:00:00.000Z', label: 'oldest' });
-    const run2 = makeRun({ runId: crypto.randomUUID(), timestamp: '2026-06-01T00:00:00.000Z', label: 'newest' });
-    const run3 = makeRun({ runId: crypto.randomUUID(), timestamp: '2026-03-01T00:00:00.000Z', label: 'middle' });
+    const run1 = makeRun({
+      runId: crypto.randomUUID(),
+      timestamp: '2026-01-01T00:00:00.000Z',
+      label: 'oldest',
+    });
+    const run2 = makeRun({
+      runId: crypto.randomUUID(),
+      timestamp: '2026-06-01T00:00:00.000Z',
+      label: 'newest',
+    });
+    const run3 = makeRun({
+      runId: crypto.randomUUID(),
+      timestamp: '2026-03-01T00:00:00.000Z',
+      label: 'middle',
+    });
 
     store.saveRun(run1);
     store.saveRun(run2);
@@ -125,5 +143,39 @@ describe('BenchmarkStore', () => {
     const run = makeRun();
     store.saveRun(run);
     expect(() => store.close()).not.toThrow();
+  });
+
+  it('Test 7: clearRuns() deletes all rows from benchmark_runs and benchmark_query_results', () => {
+    const run1 = makeRun({ runId: crypto.randomUUID() });
+    const run2 = makeRun({ runId: crypto.randomUUID() });
+    store.saveRun(run1);
+    store.saveRun(run2);
+
+    // Confirm data exists before clearing
+    expect(store.listRuns()).toHaveLength(2);
+
+    store.clearRuns();
+
+    expect(store.listRuns()).toHaveLength(0);
+    expect(store.getRunById(run1.runId)).toBeNull();
+    expect(store.getRunById(run2.runId)).toBeNull();
+  });
+
+  it('Test 8: clearRuns() on an empty store does not throw', () => {
+    expect(store.listRuns()).toHaveLength(0);
+    expect(() => store.clearRuns()).not.toThrow();
+  });
+
+  it('Test 9: saveRun() works normally after clearRuns()', () => {
+    const run1 = makeRun({ runId: crypto.randomUUID() });
+    store.saveRun(run1);
+    store.clearRuns();
+
+    const run2 = makeRun({ runId: crypto.randomUUID() });
+    store.saveRun(run2);
+
+    const runs = store.listRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.runId).toBe(run2.runId);
   });
 });
