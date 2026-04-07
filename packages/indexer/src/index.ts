@@ -9,3 +9,4 @@ export {
   getLastEmbeddingModel,
   saveLastIndexedCommit,
 } from './incremental.js';
+export { chunkToDescription } from './chunk-description.js';
