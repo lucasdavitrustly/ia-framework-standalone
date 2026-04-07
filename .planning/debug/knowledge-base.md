@@ -104,7 +104,15 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
-## ia-framework-global-install-no-indexing — install.sh triggered indexing on install and never linked the CLI globally; dashboard had no indexing trigger button
+## benchmark-init-corpus-ollama-404 — init-corpus 404s when default Ollama model (llama3.2) is not pulled
+
+- **Date:** 2026-04-07
+- **Error patterns:** benchmark init-corpus, Completion API error 404, model not found, llama3.2, Ollama, not_found_error, ollama pull
+- **Root cause:** `OLLAMA_DEFAULT_MODEL = 'llama3.2'` was hardcoded in `benchmark.command.ts`. The Ollama availability probe checked only if `/api/tags` returned HTTP 200 (Ollama is running) but never verified the specific model was pulled. The subsequent `/v1/chat/completions` call with model=llama3.2 failed with HTTP 404 when llama3.2 was not installed.
+- **Fix:** After the successful `/api/tags` probe, parse the response model list. Priority: (1) use llama3.2 if installed, (2) fall back to first non-embedding model (filtered by `isEmbeddingModel()` checking for "embed" in name) with a console notice, (3) exit with actionable error if only embedding models are installed. Added `isEmbeddingModel()` and `selectChatModel()` helpers (exported, tested).
+- **Files changed:** packages/cli/src/commands/benchmark.command.ts, packages/cli/src/commands/benchmark.command.test.ts
+
+---
 
 - **Date:** 2026-04-06
 - **Error patterns:** global install, pnpm link, npm link, ia-framework command not found, indexing during install, install.sh, IndexingPanel, Start Indexing, dashboard trigger, Overview
