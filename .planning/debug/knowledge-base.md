@@ -94,6 +94,16 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
+## fix-broken-readme-md — Premature 4-backtick closing fence causes entire second half of README to render as raw code
+
+- **Date:** 2026-04-06
+- **Error patterns:** README broken, markdown rendering, tables broken, lists broken, code blocks broken, backtick fence, unclosed code block, GitHub rendering
+- **Root cause:** A premature 4-backtick closing fence at line 492 closed a ````markdown block (opened at line 481) before the full example MCP response was complete. This left an orphaned unclosed 4-backtick fence at line 503, causing GitHub to render everything from line 505 to EOF (445 lines) as raw code — breaking all headers, tables, lists, and code blocks in the second half of the README.
+- **Fix:** Removed the premature `fence at line 492. The` at line 503 became the correct closing fence, properly enclosing the full example response (both result entries with their inner triple-backtick code blocks).
+- **Files changed:** README.md
+
+---
+
 ## ia-framework-global-install-no-indexing — install.sh triggered indexing on install and never linked the CLI globally; dashboard had no indexing trigger button
 
 - **Date:** 2026-04-06
