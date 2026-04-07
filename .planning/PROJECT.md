@@ -12,7 +12,11 @@ AI that actually understands the codebase — better context means better code o
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] AST-aware codebase indexing with language-specific parsing strategies — Validated in Phase 11: MRR Quick Wins & Corpus Building
+- [x] Semantic search with dependency graph expansion for context retrieval — Validated in Phase 11: MRR Quick Wins & Corpus Building
+- [x] MCP server for OpenCode — explicit RAG queries — Validated in Phase 11: MRR Quick Wins & Corpus Building
+- [x] End-to-end benchmark system — run coding tasks, measure compile/test pass rate — Validated in Phase 11: MRR Quick Wins & Corpus Building
+- [x] Provider-agnostic embedding support (cloud LLMs, local models via Ollama) — Validated in Phase 11: MRR Quick Wins & Corpus Building
 
 ### Active
 
@@ -71,26 +75,27 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 
 ## Key Decisions
 
-| Decision | Rationale | Outcome |
-|----------|-----------|---------|
-| Qdrant for vector storage | Mature, Docker-native, good TypeScript client, runs locally | — Pending |
-| Provider-agnostic embeddings | Let developers choose LLM/embedding provider (cloud or local) | — Pending |
-| Monorepo structure | All components co-located, simpler dependency management | — Pending |
-| MCP + auto-context (configurable) | Both retrieval modes available, benchmarkable against each other | — Pending |
-| Clone anywhere + install script | No npm publish needed, simple distribution for internal tool | — Pending |
-| Standalone architecture | Framework lives outside target project, GSD artifacts belong to target | — Pending |
-| AST-aware + dependency graph | Better retrieval than generic text chunking — understands code structure | — Pending |
-| Jest for testing | Widely used, good TypeScript support, team familiarity | ⚠️ Revisit — switching to Vitest per research |
-| Vitest over Jest | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API | — Pending |
-| Dual-vector search | Text + code embeddings per point — avoids missing ~40% of queries | — Pending |
-| Full code quality enforcement | Framework practices what it preaches — clean code standards | — Pending |
-| Dashboard for benchmarks | Visual benchmark history more actionable than CLI output | — Pending |
+| Decision                          | Rationale                                                                       | Outcome                                       |
+| --------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
+| Qdrant for vector storage         | Mature, Docker-native, good TypeScript client, runs locally                     | — Pending                                     |
+| Provider-agnostic embeddings      | Let developers choose LLM/embedding provider (cloud or local)                   | — Pending                                     |
+| Monorepo structure                | All components co-located, simpler dependency management                        | — Pending                                     |
+| MCP + auto-context (configurable) | Both retrieval modes available, benchmarkable against each other                | — Pending                                     |
+| Clone anywhere + install script   | No npm publish needed, simple distribution for internal tool                    | — Pending                                     |
+| Standalone architecture           | Framework lives outside target project, GSD artifacts belong to target          | — Pending                                     |
+| AST-aware + dependency graph      | Better retrieval than generic text chunking — understands code structure        | — Pending                                     |
+| Jest for testing                  | Widely used, good TypeScript support, team familiarity                          | ⚠️ Revisit — switching to Vitest per research |
+| Vitest over Jest                  | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API | — Pending                                     |
+| Dual-vector search                | Text + code embeddings per point — avoids missing ~40% of queries               | — Pending                                     |
+| Full code quality enforcement     | Framework practices what it preaches — clean code standards                     | — Pending                                     |
+| Dashboard for benchmarks          | Visual benchmark history more actionable than CLI output                        | — Pending                                     |
 
 ## Evolution
 
 This document evolves at phase transitions and milestone boundaries.
 
 **After each phase transition** (via `/gsd-transition`):
+
 1. Requirements invalidated? → Move to Out of Scope with reason
 2. Requirements validated? → Move to Validated with phase reference
 3. New requirements emerged? → Add to Active
@@ -98,10 +103,12 @@ This document evolves at phase transitions and milestone boundaries.
 5. "What This Is" still accurate? → Update if drifted
 
 **After each milestone** (via `/gsd-complete-milestone`):
+
 1. Full review of all sections
 2. Core Value check — still the right priority?
 3. Audit Out of Scope — reasons still valid?
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-31 after research (switched Jest → Vitest, added dual-vector decision, standalone architecture)*
+
+_Last updated: 2026-04-07 — Phase 11 complete. Milestone v1.0 complete (11/11 phases, 34/34 plans). Hybrid BM25+dense search with RRF fusion added, 30-query corpus built, score threshold tuned to 0.3 for maximum recall. Core RAG pipeline validated against real codebases._
