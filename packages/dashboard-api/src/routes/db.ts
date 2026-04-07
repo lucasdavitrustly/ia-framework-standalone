@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { Hono } from 'hono';
 import { loadDbConfig, PostgresSource, DbConfigNotFoundError } from '@ia-framework/db-context';
 
@@ -16,7 +17,7 @@ export function dbRouter(deps: DbRouteDeps): Hono {
     // Try to load DB config
     let config: Awaited<ReturnType<typeof loadDbConfig>>;
     try {
-      config = await loadDbConfigFn(deps.frameworkDir);
+      config = await loadDbConfigFn(join(deps.frameworkDir, 'db.json'));
     } catch (err) {
       if (err instanceof DbConfigNotFoundError) {
         return c.json({ configured: false, connected: false, tableCount: null });
@@ -31,7 +32,12 @@ export function dbRouter(deps: DbRouteDeps): Hono {
       if (connected) {
         return c.json({ configured: true, connected: true, tableCount });
       } else {
-        return c.json({ configured: true, connected: false, tableCount: null, error: 'Connection failed' });
+        return c.json({
+          configured: true,
+          connected: false,
+          tableCount: null,
+          error: 'Connection failed',
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

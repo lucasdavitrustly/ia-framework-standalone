@@ -35,6 +35,9 @@ services:
       IA_FRAMEWORK_DIR: '/ia-framework-data'
       QDRANT_HOST: 'qdrant'
       QDRANT_PORT: '6333'
+      # When the dashboard reads db.json, 'localhost' would point to the container itself.
+      # DB_HOST overrides the host field so the dashboard can reach the host machine's Postgres.
+      DB_HOST: 'host.docker.internal'
       # Ollama runs on the host machine. Docker Desktop (macOS/Windows) provides the
       # special hostname host.docker.internal that resolves to the host. On Linux with
       # Docker Engine, add `extra_hosts: ["host.docker.internal:host-gateway"]` or set

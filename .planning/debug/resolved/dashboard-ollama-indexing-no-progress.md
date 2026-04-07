@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Dashboard's Start Indexing button triggers an indexing session with Ollama but no progress is ever shown in the dashboard and the CLI is unaware of the session happening."
 created: 2026-04-06T00:00:00Z
 updated: 2026-04-06T00:10:00Z

@@ -17,5 +17,14 @@ export async function loadDbConfig(configPath: string): Promise<DatabaseConfig> 
     throw new DbConfigNotFoundError(configPath);
   }
   const parsed: unknown = JSON.parse(raw);
-  return DatabaseConfigSchema.parse(parsed);
+  const config = DatabaseConfigSchema.parse(parsed);
+
+  // Allow the host to be overridden via environment variable.
+  // This is used by the Docker dashboard container, which cannot reach
+  // 'localhost' (the host machine) and must use 'host.docker.internal' instead.
+  if (process.env.DB_HOST) {
+    config.host = process.env.DB_HOST;
+  }
+
+  return config;
 }

@@ -64,6 +64,36 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
+## dashboard-db-not-connected — Dashboard always shows "database not connected" despite db.json being present
+
+- **Date:** 2026-04-07
+- **Error patterns:** database not connected, not configured, db.json, EISDIR, DbConfigNotFoundError, dashboard, db route, frameworkDir, loadDbConfig, path
+- **Root cause:** `packages/dashboard-api/src/routes/db.ts` passed `deps.frameworkDir` (a directory) to `loadDbConfig()` which expects a full file path. `readFile(directory)` throws `EISDIR`, caught and re-thrown as `DbConfigNotFoundError`, causing the API to always return `{configured:false}`. Tests didn't catch it because they mock `loadDbConfigFn` at the call site.
+- **Fix:** Changed the call to `loadDbConfigFn(join(deps.frameworkDir, 'db.json'))`, matching established convention throughout the codebase (CLI, MCP server). Added `import { join } from 'node:path'`.
+- **Files changed:** packages/dashboard-api/src/routes/db.ts
+
+---
+
+## db-json-host-conflict — db.json needs `localhost` for CLI but `host.docker.internal` for Docker dashboard
+
+- **Date:** 2026-04-07
+- **Error patterns:** db.json, localhost, host.docker.internal, Docker, dashboard, PostgreSQL, connection refused, ECONNREFUSED, host mismatch, container
+- **Root cause:** `db.json` stores `"host": "localhost"` which is correct for the CLI (host process) but wrong for the dashboard API running inside Docker, where `localhost` resolves to the container itself. This caused the dashboard to be unable to reach the host Postgres even after the db-not-connected path bug was fixed. Users were manually toggling `db.json` between `localhost` and `host.docker.internal`.
+- **Fix:** Added `DB_HOST` env var override in `loader.ts` — after parsing `db.json`, if `process.env.DB_HOST` is set, it overrides the host field. Added `DB_HOST: host.docker.internal` to the dashboard service environment in `docker-compose.yml`. `db.json` now permanently stores `localhost` for CLI use. Two new tests cover both the override and no-override paths.
+- **Files changed:** packages/db-context/src/loader.ts, packages/db-context/src/postgres-source.test.ts, docker-compose.yml
+
+---
+
+## postgres-source-public-schema-only — PostgreSQL indexing only returned 2 tables (public schema) instead of all 509 across 22 schemas
+
+- **Date:** 2026-04-07
+- **Error patterns:** 2 tables, public schema only, multi-schema, 22 schemas, 509 tables, getChunks, information_schema, table_schema, postgres-source, indexing, db index
+- **Root cause:** `PostgresSource.getChunks()` hard-coded `WHERE table_schema = 'public'` in all three SQL queries (tables, columns, foreign keys). Only the 2 tables in the `public` schema were indexed; the other 507 tables across 21 schemas were silently ignored. `testConnection()` had the same bug — it only counted public schema tables.
+- **Fix:** Replaced all `WHERE table_schema = 'public'` clauses with `WHERE table_schema NOT IN (system_schemas)` covering all non-system schemas. Added `table_schema` to `SELECT` and `TableRow`/`ForeignKeyRow` interfaces. Updated chunk IDs, names, and FK keys to use qualified `schema.table` names to prevent collisions across schemas. Updated all affected tests (15 total, +2 new for multi-schema behaviour).
+- **Files changed:** packages/db-context/src/postgres-source.ts, packages/db-context/src/postgres-source.test.ts
+
+---
+
 ## ia-framework-global-install-no-indexing — install.sh triggered indexing on install and never linked the CLI globally; dashboard had no indexing trigger button
 
 - **Date:** 2026-04-06
