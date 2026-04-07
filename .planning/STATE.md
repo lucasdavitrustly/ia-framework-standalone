@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Completed 11-mrr-optimization-03-PLAN.md
-last_updated: "2026-04-07T13:51:43.010Z"
+status: complete
+stopped_at: Completed 11-mrr-optimization-04-PLAN.md (Phase 11 DONE — v1.0 milestone complete)
+last_updated: '2026-04-07T14:25:00.000Z'
 progress:
   total_phases: 11
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 34
-  completed_plans: 33
+  completed_plans: 34
 ---
 
 # Project State
@@ -23,8 +23,8 @@ See: .planning/PROJECT.md (updated 2026-03-31)
 
 ## Current Position
 
-Phase: 11 (mrr-optimization) — EXECUTING
-Plan: 4 of 4
+Phase: 11 (mrr-optimization) — COMPLETE ✓
+Plan: 4 of 4 — ALL DONE — v1.0 milestone shipped
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ _Updated after each plan completion_
 | Phase 11-mrr-optimization P01 | 18min | 3 tasks | 5 files |
 | Phase 11-mrr-optimization P02 | 3min | 2 tasks | 4 files |
 | Phase 11-mrr-optimization P03 | 8 | 7 tasks | 11 files |
+| Phase 11-mrr-optimization P04 | 35min | 5 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -159,6 +160,9 @@ Recent decisions affecting current work:
 - [Phase 11-mrr-optimization]: Hybrid search exposed as separate search_codebase_hybrid MCP tool (not a param on existing tool) for independent evaluation
 - [Phase 11-mrr-optimization]: computeTermFrequencySparseVector exported from @ia-framework/retrieval and imported by indexer (no circular dep)
 - [Phase 11-mrr-optimization]: SearchEngine.searchHybrid() falls back to search() when vectorStore.searchHybrid is absent for backward compat
+- [Phase 11-mrr-optimization]: djb2 hash collisions in sparse vectors fixed via indexMap merge (sum TF values) — prevents Qdrant 422 "indices must be unique"
+- [Phase 11-mrr-optimization]: Threshold sweep 0.3/0.4/0.5 tied at MRR=0.50; 0.3 chosen (max recall at equal precision); 0.6 worse (MRR 0.46)
+- [Phase 11-mrr-optimization]: MCP default scoreThreshold lowered from 0.5 → 0.3 based on benchmark evidence
 
 ### Pending Todos
 
@@ -189,6 +193,6 @@ None — all blockers resolved:
 
 ## Session Continuity
 
-Last session: 2026-04-07T13:51:43.007Z
-Stopped at: Completed 11-mrr-optimization-03-PLAN.md
+Last session: 2026-04-07T14:25:00.000Z
+Stopped at: Completed 11-mrr-optimization-04-PLAN.md — v1.0 milestone COMPLETE
 Resume file: None
