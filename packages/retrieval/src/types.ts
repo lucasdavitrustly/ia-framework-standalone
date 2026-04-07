@@ -85,13 +85,42 @@ export interface SearchEngineConfig {
         vectorName: 'text' | 'code';
       }>
     >;
+    /** Optional: hybrid search combining dense + sparse + RRF. Falls back to search() if absent. */
+    searchHybrid?(options: {
+      denseVector: number[];
+      sparseVector: { indices: number[]; values: number[] };
+      limit: number;
+      filter?: Record<string, unknown> | undefined;
+    }): Promise<
+      Array<{
+        id: string;
+        score: number;
+        payload: {
+          chunkId: string;
+          filePath: string;
+          relativePath: string;
+          language: string;
+          chunkType: string;
+          name?: string | undefined;
+          content: string;
+          startLine: number;
+          endLine: number;
+          imports: string[];
+          exports: string[];
+          indexedAt: string;
+        };
+        vectorName: 'text' | 'code';
+      }>
+    >;
   };
   /** Default number of results (default: 10) */
   defaultLimit?: number | undefined;
   /** Default score threshold (default: 0.5) */
   defaultScoreThreshold?: number | undefined;
   /** Optional dependency graph for expanding results along import edges */
-  dependencyGraph?: {
-    getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]>;
-  } | undefined;
+  dependencyGraph?:
+    | {
+        getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]>;
+      }
+    | undefined;
 }

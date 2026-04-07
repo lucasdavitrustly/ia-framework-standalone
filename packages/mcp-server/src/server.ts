@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
+import { registerSearchCodebaseHybridTool } from './tools/search-codebase-hybrid.js';
 import { registerGetFileTool } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
 import { registerQueryDatabaseTool } from './tools/query-database.js';
@@ -39,6 +40,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     sessionId: config.sessionId,
     defaultExpansionHops: config.defaultExpansionHops,
   });
+  registerSearchCodebaseHybridTool(server, config.searchEngine);
   registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);
 

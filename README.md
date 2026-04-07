@@ -103,6 +103,10 @@ After it completes:
 
 ## Recent Improvements
 
+- **Hybrid search (MRR-optimized)** — New `search_codebase_hybrid` MCP tool combines BM25 sparse vectors with dense semantic vectors and fuses results with Reciprocal Rank Fusion (RRF). Use it alongside `search_codebase` for higher recall on exact-match queries.
+- **MRR-tuned score threshold** — Default `score_threshold` lowered from 0.5 → 0.3 based on a benchmark sweep (tested 0.3/0.4/0.5/0.6); 0.3 delivers max recall at equal precision (MRR=0.50 across the range, 0.6 dropped to MRR=0.46).
+- **Prose-description embeddings** — Text vectors now embed a structured prose description of each chunk (name, type, file, signature, docstring) instead of raw source. Improves semantic search quality, especially for non-text-heavy code.
+- **Corpus generator CLI** — `ia-framework benchmark init-corpus` generates a starter benchmark corpus using an LLM to write queries from your indexed chunks — no manual editing to get started.
 - **Graceful indexing stop** — `ia-framework index-stop` signals a running index job to halt cleanly after the current batch. The dashboard Stop button does the same.
 - **Dashboard live updates** — The dashboard polls for progress every 2 seconds and automatically reflects CLI-triggered indexing — no manual refresh needed.
 - **Multi-schema PostgreSQL indexing** — `db index` supports databases with multiple schemas.
@@ -283,13 +287,14 @@ Add the MCP server to OpenCode's config at `~/.config/opencode/opencode.json`:
 
 Restart OpenCode. The following tools are now available to your AI assistant:
 
-| MCP Tool                | Description                                          |
-| ----------------------- | ---------------------------------------------------- |
-| `search_codebase`       | Semantic search with dependency graph expansion      |
-| `get_file`              | Retrieve all indexed chunks for a specific file      |
-| `get_dependencies`      | Get imports and exports for a file                   |
-| `query_database`        | Execute SQL against a configured PostgreSQL database |
-| `index_database_schema` | Index database schema into Qdrant                    |
+| MCP Tool                 | Description                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `search_codebase`        | Semantic search with dependency graph expansion                                       |
+| `search_codebase_hybrid` | Hybrid BM25 + semantic search with RRF fusion — higher recall for exact-match queries |
+| `get_file`               | Retrieve all indexed chunks for a specific file                                       |
+| `get_dependencies`       | Get imports and exports for a file                                                    |
+| `query_database`         | Execute SQL against a configured PostgreSQL database                                  |
+| `index_database_schema`  | Index database schema into Qdrant                                                     |
 
 ### Step 9: Start the Dashboard (Optional)
 
@@ -354,7 +359,7 @@ Request graceful cancellation of a running index job. The indexer finishes its c
 ```bash
 ia-framework search <query> [options]
   --limit <n>        Max results (default: 10)
-  --threshold <n>    Min similarity score 0–1 (default: 0.5)
+  --threshold <n>    Min similarity score 0–1 (default: 0.3; MRR-tuned)
   --config <path>    Path to project.json
 
 # Examples
@@ -407,6 +412,16 @@ ia-framework benchmark compare <run-id-1> <run-id-2> [options]
 ```
 
 Side-by-side comparison of two benchmark runs. Use IDs from `benchmark list`.
+
+```bash
+ia-framework benchmark init-corpus [options]
+  --output <path>    Output path for corpus file (default: .ia-framework/benchmark-queries.json)
+  --count <n>        Number of queries to generate (default: 20)
+  --model <name>     Ollama model to use for generation (default: llama3.2 @ localhost:11434)
+  --config <path>    Path to project.json
+```
+
+Generates a starter benchmark corpus by sampling indexed chunks from Qdrant and using a local Ollama LLM (`llama3.2` by default) to write natural language queries and expected files. If Ollama is unreachable on `localhost:11434`, the command prints a clear message suggesting `ollama pull llama3.2` and exits. Prevents accidentally running against the ia-framework repo itself — the target project path must differ from the framework directory.
 
 ---
 
@@ -473,7 +488,7 @@ The primary tool. AI assistants call this to find relevant code for the task at 
 | ----------------- | ------ | -------- | ----------------------------------------------------------------- |
 | `query`           | string | required | Natural language search query                                     |
 | `limit`           | number | 10       | Maximum number of results                                         |
-| `score_threshold` | number | 0.5      | Minimum similarity score (0-1)                                    |
+| `score_threshold` | number | 0.3      | Minimum similarity score (0-1); tuned via MRR benchmark sweep     |
 | `expand_hops`     | number | 1        | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive |
 
 **Example response:**
@@ -501,6 +516,19 @@ export interface AuthResult {
 ````
 
 The `[both]`, `[text]`, `[code]` tags show which vector matched. Expanded results (from the dependency graph) appear alongside direct matches so the AI gets the full context.
+
+### search_codebase_hybrid
+
+Combines BM25 sparse vectors (term frequency) with dense semantic vectors and fuses the ranked lists using Reciprocal Rank Fusion (RRF). Best for queries that mix semantic intent with exact identifiers.
+
+| Parameter         | Type   | Default  | Description                                                       |
+| ----------------- | ------ | -------- | ----------------------------------------------------------------- |
+| `query`           | string | required | Natural language search query                                     |
+| `limit`           | number | 10       | Maximum number of results                                         |
+| `score_threshold` | number | 0.3      | Minimum similarity score (0-1)                                    |
+| `expand_hops`     | number | 1        | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive |
+
+Falls back to standard semantic search if sparse vectors are not yet indexed (e.g., on older collections indexed before Phase 11).
 
 ### get_file
 
@@ -808,7 +836,7 @@ Validated by Zod on load — malformed files produce clear error messages.
 
 ### Limitations
 
-The corpus is fully manual. There is no automatic generation from the codebase — you need to know your project well enough to write queries and their expected answers. This is intentional: the corpus defines what "correct retrieval" means for _your_ project, which requires human judgment.
+The corpus can be bootstrapped with `benchmark init-corpus`, which uses a local Ollama LLM to draft queries from sampled chunks. Treat the output as a starting point — review each query and expected file list to ensure they reflect real developer intent before using for metrics. The corpus still requires human judgment to be meaningful.
 
 ## Database Context (Optional)
 

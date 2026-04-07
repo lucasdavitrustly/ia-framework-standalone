@@ -59,7 +59,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Benchmarking
 
-- [ ] **BNCH-01**: Developer can run end-to-end benchmarks that measure AI output quality (compile + test pass rate)
+- [x] **BNCH-01**: Developer can run end-to-end benchmarks that measure AI output quality (compile + test pass rate)
 - [x] **BNCH-02**: Benchmarks compare across embedding models, chunking strategies, and retrieval modes
 - [x] **BNCH-03**: Benchmark runs are stored with timestamps and config snapshots for historical comparison
 - [x] **BNCH-04**: Benchmark includes a no-RAG baseline to prove RAG actually helps

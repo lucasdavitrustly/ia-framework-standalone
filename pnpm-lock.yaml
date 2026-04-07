@@ -307,6 +307,9 @@ importers:
       '@ia-framework/embedding':
         specifier: workspace:*
         version: link:../embedding
+      '@ia-framework/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
       '@ia-framework/vector-store':
         specifier: workspace:*
         version: link:../vector-store
@@ -1001,7 +1004,6 @@ packages:
   '@rolldown/binding-darwin-arm64@1.0.0-rc.12':
     resolution: {integrity: sha512-cFYr6zTG/3PXXF3pUO+umXxt1wkRK/0AYT8lDwuqvRC+LuKYWSAQAQZjCWDQpAH172ZV6ieYrNnFzVVcnSflAg==}
     engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [arm64]
     os: [darwin]
 
   '@rolldown/binding-darwin-x64@1.0.0-rc.12':

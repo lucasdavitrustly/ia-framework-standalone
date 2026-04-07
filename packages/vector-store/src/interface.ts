@@ -21,6 +21,16 @@ export interface ChunkPayload {
 }
 
 /**
+ * A term-frequency sparse vector for BM25 hybrid search.
+ * Indices map tokens to integer positions; values are term counts (TF).
+ * Qdrant applies IDF weighting server-side when modifier="idf" is configured.
+ */
+export interface SparseVector {
+  indices: number[];
+  values: number[];
+}
+
+/**
  * A point to be stored in Qdrant with dual named vectors.
  */
 export interface VectorPoint {
@@ -30,8 +40,24 @@ export interface VectorPoint {
   textVector: number[];
   /** Code embedding (from code-specialized embedding model) */
   codeVector: number[];
+  /** Optional BM25 sparse vector. Required when collection has sparse_vectors config. */
+  sparseVector?: SparseVector | undefined;
   /** Metadata payload */
   payload: ChunkPayload;
+}
+
+/**
+ * Options for hybrid search (dense + sparse + RRF fusion).
+ */
+export interface HybridSearchOptions {
+  /** Dense query vector (embedded from the query text) */
+  denseVector: number[];
+  /** BM25 term-frequency sparse vector computed from the query text */
+  sparseVector: SparseVector;
+  /** Maximum results to return after RRF fusion */
+  limit: number;
+  /** Optional Qdrant filter for payload field filtering */
+  filter?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -70,6 +96,7 @@ export interface CollectionInfo {
   pointCount: number;
   vectorDimensions: { text: number; code: number };
   status: string;
+  hasSparseVector: boolean; // true if 'sparse' named sparse vector exists
 }
 
 /**
@@ -94,6 +121,13 @@ export interface VectorStore {
    * Returns results sorted by score descending.
    */
   search(queryVector: number[], options: SearchOptions): Promise<SearchResult[]>;
+
+  /**
+   * Hybrid search combining dense text, dense code, and BM25 sparse vectors via RRF fusion.
+   * Requires the collection to have been initialized with a sparse vector named "sparse".
+   * Returns results sorted by RRF-fused score descending.
+   */
+  searchHybrid(options: HybridSearchOptions): Promise<SearchResult[]>;
 
   /**
    * Get metadata about the collection (point count, status, etc.).

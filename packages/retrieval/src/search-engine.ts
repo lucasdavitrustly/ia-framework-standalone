@@ -219,4 +219,98 @@ export class SearchEngine {
 
     return results.map((raw) => toRetrievalResult(raw, 'text'));
   }
+
+  /**
+   * Hybrid search combining dense text, dense code, and BM25 sparse vectors via RRF fusion.
+   * Uses Qdrant's query() API with prefetch + RRF to combine rankings from all three vectors.
+   *
+   * Falls back to plain search() if the vector store does not support searchHybrid.
+   *
+   * @param query - RetrievalQuery (same type as search())
+   */
+  async searchHybrid(query: RetrievalQuery): Promise<RetrievalResult[]> {
+    const { embeddingProvider, vectorStore } = this.config;
+
+    // Fall back to plain search if hybrid is not supported by this store
+    if (!vectorStore.searchHybrid) {
+      return this.search(query);
+    }
+
+    const limit = query.limit ?? this.config.defaultLimit ?? 10;
+
+    // Embed the query text into a dense vector
+    const denseVector = await embeddingProvider.embed(query.text);
+
+    // Compute TF sparse vector from the query text (client-side BM25 input)
+    const sparseVector = computeTermFrequencySparseVector(query.text);
+
+    const results = await vectorStore.searchHybrid({
+      denseVector,
+      sparseVector,
+      limit,
+      filter: query.filter,
+    });
+
+    return results.map((raw) => toRetrievalResult(raw, 'both'));
+  }
+}
+
+/**
+ * Compute a term-frequency sparse vector from a text string.
+ *
+ * Tokenizes the text into lowercase alphanumeric tokens, counts occurrences,
+ * and maps each unique token to a stable integer index using a simple hash.
+ *
+ * Qdrant applies IDF weighting server-side (modifier="idf") — we only need TF here.
+ *
+ * The hash function maps token strings to 32-bit integers in [0, 2^31-1].
+ * Hash collisions (two different tokens mapping to the same index) are handled
+ * by summing their TF values so the output always has unique, sorted indices,
+ * satisfying Qdrant's sparse vector validation ("indices must be unique").
+ */
+export function computeTermFrequencySparseVector(text: string): {
+  indices: number[];
+  values: number[];
+} {
+  // Tokenize: lowercase, split on non-alphanumeric, filter short tokens
+  const tokens = text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 2);
+
+  // Count term frequencies
+  const tf = new Map<string, number>();
+  for (const token of tokens) {
+    tf.set(token, (tf.get(token) ?? 0) + 1);
+  }
+
+  // Map each token to a stable integer index using djb2 hash.
+  // Merge collisions by summing their TF values (two different tokens
+  // that hash to the same index must produce a single entry, otherwise
+  // Qdrant rejects the sparse vector with "indices must be unique").
+  const indexMap = new Map<number, number>();
+  for (const [token, count] of tf) {
+    const idx = djb2Hash(token);
+    indexMap.set(idx, (indexMap.get(idx) ?? 0) + count);
+  }
+
+  // Sort by index for Qdrant (indices must be sorted ascending)
+  const entries = Array.from(indexMap.entries()).sort((a, b) => a[0] - b[0]);
+
+  return {
+    indices: entries.map((e) => e[0]),
+    values: entries.map((e) => e[1]),
+  };
+}
+
+/**
+ * djb2 hash — fast, simple, good distribution for short strings.
+ * Returns a non-negative 31-bit integer.
+ */
+function djb2Hash(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+  }
+  return hash & 0x7fffffff; // clamp to 31 bits (Qdrant max sparse index)
 }

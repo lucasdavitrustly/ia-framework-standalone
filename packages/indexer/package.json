@@ -25,6 +25,7 @@
     "@ia-framework/ast-parser": "workspace:*",
     "@ia-framework/embedding": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
+    "@ia-framework/retrieval": "workspace:*",
     "tinyglobby": "^0.2.10",
     "ignore": "^6.0.2"
   },

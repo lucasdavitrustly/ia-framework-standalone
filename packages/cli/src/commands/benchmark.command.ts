@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
+import { writeFile, copyFile, stat } from 'node:fs/promises';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -10,9 +11,17 @@ import {
   BenchmarkStore,
   loadCorpus,
   scaffoldExampleCorpus,
+  validateCorpus,
   CorpusNotFoundError,
+  generateCorpus,
 } from '@ia-framework/benchmark';
-import type { BenchmarkConfig, BenchmarkRun, ConfigSnapshot } from '@ia-framework/benchmark';
+import type {
+  BenchmarkConfig,
+  BenchmarkRun,
+  ConfigSnapshot,
+  CorpusGeneratorOptions,
+  BenchmarkQuery,
+} from '@ia-framework/benchmark';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -33,7 +42,10 @@ function pad(str: string, len: number): string {
 }
 
 function formatDate(iso: string): string {
-  return iso.replace('T', ' ').replace(/\.\d+Z$/, '').replace('Z', '');
+  return iso
+    .replace('T', ' ')
+    .replace(/\.\d+Z$/, '')
+    .replace('Z', '');
 }
 
 // ── run subcommand ────────────────────────────────────────────────────────────
@@ -78,6 +90,15 @@ function runSubcommand(): Command {
               process.exit(0);
             }
             throw err;
+          }
+
+          // Validate corpus before running — exits 1 if any queries are invalid
+          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          if (validationErrors.length > 0) {
+            for (const err of validationErrors) {
+              console.error(`  [corpus] [${err.queryId}] ${err.error}`);
+            }
+            process.exit(1);
           }
 
           // Build SearchEngine
@@ -259,9 +280,7 @@ function historySubcommand(): Command {
         store.close();
 
         if (runs.length < 2) {
-          console.log(
-            'Not enough runs for trend (need ≥2). Run: ia-framework benchmark run',
-          );
+          console.log('Not enough runs for trend (need ≥2). Run: ia-framework benchmark run');
           return;
         }
 
@@ -396,8 +415,12 @@ function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
   const csA = runA.configSnapshot;
   const csB = runB.configSnapshot;
   console.log(row('Provider', csA.embeddingProvider, csB.embeddingProvider));
-  console.log(row('Model', truncate(csA.embeddingModel, COL_W), truncate(csB.embeddingModel, COL_W)));
-  console.log(row('Collection', truncate(csA.collectionName, COL_W), truncate(csB.collectionName, COL_W)));
+  console.log(
+    row('Model', truncate(csA.embeddingModel, COL_W), truncate(csB.embeddingModel, COL_W)),
+  );
+  console.log(
+    row('Collection', truncate(csA.collectionName, COL_W), truncate(csB.collectionName, COL_W)),
+  );
   console.log(row('Top-K', String(csA.topK), String(csB.topK)));
 
   const threshA = csA.scoreThreshold.toFixed(2) + (runA.isBaseline ? ' (baseline)' : '');
@@ -421,7 +444,9 @@ function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
   console.log(row('MRR', mrrAStr, runB.mrr.toFixed(2)));
 
   // Avg Latency
-  console.log(row('Avg Latency', `${Math.round(runA.avgLatencyMs)}ms`, `${Math.round(runB.avgLatencyMs)}ms`));
+  console.log(
+    row('Avg Latency', `${Math.round(runA.avgLatencyMs)}ms`, `${Math.round(runB.avgLatencyMs)}ms`),
+  );
 
   // Queries run
   console.log(row('Queries Run', String(runA.queries.length), String(runB.queries.length)));
@@ -477,6 +502,179 @@ function printComparison(runA: BenchmarkRun, runB: BenchmarkRun): void {
   }
 }
 
+// ── init-corpus helpers ───────────────────────────────────────────────────────
+
+/**
+ * Detect if a given path is the ia-framework repo itself.
+ * Heuristic: the directory contains packages/, apps/, and turbo.json —
+ * the monorepo signature unique to this framework.
+ */
+async function isFrameworkRepo(targetPath: string): Promise<boolean> {
+  const markers = ['packages', 'apps', 'turbo.json'];
+  try {
+    const checks = await Promise.all(
+      markers.map((m) =>
+        stat(join(targetPath, m))
+          .then(() => true)
+          .catch(() => false),
+      ),
+    );
+    return checks.every(Boolean);
+  } catch {
+    return false;
+  }
+}
+
+const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
+const OLLAMA_DEFAULT_MODEL = 'llama3.2';
+
+// ── init-corpus subcommand ────────────────────────────────────────────────────
+
+function initCorpusSubcommand(): Command {
+  return new Command('init-corpus')
+    .description('Generate a 30-query benchmark corpus tailored to your project using an LLM')
+    .option('-c, --config <path>', 'Path to project.json config')
+    .option('--corpus <path>', 'Output path for benchmark-queries.json')
+    .option(
+      '--model <model>',
+      'Completion model to use (default: gpt-4o-mini for OpenAI, llama3.2 for Ollama)',
+    )
+    .option('--force', 'Overwrite existing corpus without backup prompt')
+    .action(
+      async (options: { config?: string; corpus?: string; model?: string; force?: boolean }) => {
+        const logger = createLogger('cli:benchmark:init-corpus');
+        const configPath = getConfigPath(options);
+        const frameworkDir = dirname(configPath);
+
+        try {
+          const config = await loadConfig(configPath);
+          const corpusPath = options.corpus ?? join(frameworkDir, 'benchmark-queries.json');
+
+          // Guard: ensure target project is NOT the ia-framework repo itself
+          if (await isFrameworkRepo(config.targetProjectPath)) {
+            process.stderr.write(
+              `✗ targetProjectPath appears to be the ia-framework repo itself:\n` +
+                `  ${config.targetProjectPath}\n\n` +
+                `  Corpus generation must target YOUR project, not the ia-framework tool.\n` +
+                `  Update 'targetProjectPath' in ${configPath} to point at your project.\n`,
+            );
+            process.exit(1);
+            return;
+          }
+
+          // Backup existing corpus if present
+          if (existsSync(corpusPath)) {
+            const backupPath = `${corpusPath}.bak`;
+            await copyFile(corpusPath, backupPath);
+            console.log(`✓ Backed up existing corpus to ${backupPath}`);
+          }
+
+          // Determine completion model and base URL
+          // When --model is NOT provided: always default to local Ollama regardless of embedding config
+          // When --model IS provided: use configured provider settings (user knows what they're doing)
+          const modelExplicit = options.model !== undefined;
+
+          let completionModel: string;
+          let completionBaseUrl: string;
+          let completionApiKey: string;
+
+          if (modelExplicit) {
+            // User explicitly specified a model — use configured provider settings
+            completionModel = options.model!;
+            completionBaseUrl =
+              config.embedding.baseUrl ??
+              (config.embedding.provider === 'ollama'
+                ? OLLAMA_DEFAULT_BASE_URL
+                : 'https://api.openai.com');
+            completionApiKey = config.embedding.apiKey ?? '';
+          } else {
+            // Default: always use local Ollama for corpus generation
+            completionModel = OLLAMA_DEFAULT_MODEL;
+            completionBaseUrl = OLLAMA_DEFAULT_BASE_URL;
+            completionApiKey = '';
+          }
+
+          // When using Ollama default, probe availability before attempting corpus generation
+          if (!modelExplicit) {
+            try {
+              const probeRes = await fetch(`${completionBaseUrl}/api/tags`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(3000),
+              });
+              if (!probeRes.ok) {
+                throw new Error(`HTTP ${probeRes.status}`);
+              }
+            } catch {
+              process.stderr.write(
+                `✗ Ollama not reachable at ${completionBaseUrl}\n` +
+                  `  To generate corpus with a local model:\n` +
+                  `  1. Install Ollama: https://ollama.com\n` +
+                  `  2. Pull the model: ollama pull ${completionModel}\n` +
+                  `  3. Re-run: ia-framework benchmark init-corpus\n` +
+                  `\n` +
+                  `  To use a cloud model instead, pass --model explicitly:\n` +
+                  `  ia-framework benchmark init-corpus --model gpt-4o-mini\n`,
+              );
+              process.exit(1);
+              return;
+            }
+          }
+
+          const modelSource = modelExplicit ? '(explicit --model)' : '(default local)';
+          console.log(`Generating 30-query corpus for ${config.targetProjectPath}...`);
+          console.log(
+            `Using completion model: ${completionModel} via ${completionBaseUrl} ${modelSource}`,
+          );
+
+          const genOptions: CorpusGeneratorOptions = {
+            targetProjectPath: config.targetProjectPath,
+            completionBaseUrl,
+            completionApiKey,
+            completionModel,
+          };
+
+          const queries = await generateCorpus(genOptions);
+
+          // Write corpus as flat JSON array (2-space pretty-print)
+          await writeFile(corpusPath, JSON.stringify(queries, null, 2), { encoding: 'utf-8' });
+
+          // Validate corpus — warn but don't fail
+          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          if (validationErrors.length > 0) {
+            console.log('\nValidation warnings (non-fatal):');
+            for (const err of validationErrors) {
+              console.log(`  [${err.queryId}] ${err.error}`);
+            }
+          }
+
+          // Count queries by category prefix
+          const counts = {
+            semantic: queries.filter((q) => q.id.startsWith('sem-')).length,
+            keyword: queries.filter((q) => q.id.startsWith('kw-')).length,
+            'cross-file': queries.filter((q) => q.id.startsWith('xf-')).length,
+            complex: queries.filter((q) => q.id.startsWith('cx-')).length,
+            negative: queries.filter((q) => q.id.startsWith('neg-')).length,
+            'edge-case': queries.filter((q) => q.id.startsWith('edge-')).length,
+          };
+
+          console.log(`\n✓ Generated ${queries.length}-query corpus → ${corpusPath}`);
+          console.log('\nCategories:');
+          console.log(`  semantic:    ${counts['semantic']} queries`);
+          console.log(`  keyword:     ${counts['keyword']} queries`);
+          console.log(`  cross-file:  ${counts['cross-file']} queries`);
+          console.log(`  complex:     ${counts['complex']} queries`);
+          console.log(`  negative:    ${counts['negative']} queries`);
+          console.log(`  edge-case:   ${counts['edge-case']} queries`);
+          console.log('\nRun: ia-framework benchmark run');
+        } catch (error) {
+          process.stderr.write(`✗ benchmark init-corpus failed: ${String(error)}\n`);
+          logger.error({ error }, 'Benchmark init-corpus failed');
+          process.exit(1);
+        }
+      },
+    );
+}
+
 // ── benchmarkCommand ──────────────────────────────────────────────────────────
 
 export function benchmarkCommand(): Command {
@@ -488,6 +686,7 @@ export function benchmarkCommand(): Command {
   benchmark.addCommand(listSubcommand());
   benchmark.addCommand(historySubcommand());
   benchmark.addCommand(compareSubcommand());
+  benchmark.addCommand(initCorpusSubcommand());
 
   return benchmark;
 }

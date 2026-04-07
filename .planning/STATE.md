@@ -2,16 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: shipped
-stopped_at: '/gsd:complete-milestone — audit finalized, all gaps resolved, 251 tests passing'
-last_updated: '2026-04-03T00:30:00.000Z'
-last_activity: 2026-04-03
+status: unknown
+stopped_at: Completed 11-mrr-optimization-04-PLAN.md — v1.0 milestone COMPLETE
+last_updated: '2026-04-07T14:28:35.582Z'
 progress:
-  total_phases: 10
-  completed_phases: 10
-  total_plans: 30
-  completed_plans: 30
-  percent: 100
+  total_phases: 11
+  completed_phases: 11
+  total_plans: 34
+  completed_plans: 34
 ---
 
 # Project State
@@ -21,17 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** v1.0 SHIPPED — audit complete, all gaps resolved, 251 tests passing
+**Current focus:** Phase 11 — mrr-optimization
 
 ## Current Position
 
-Phase: 10 of 10 (Advanced Retrieval & Workflow Integration) — COMPLETE
-Plan: 4 of 4 — all plans executed
-Status: v1.0 milestone shipped — audit finalized 2026-04-03
-
-Last activity: 2026-04-03
-
-Progress: [██████████] 100%
+Phase: 11
+Plan: Not started
 
 ## Performance Metrics
 
@@ -91,6 +84,10 @@ _Updated after each plan completion_
 | Phase 10 P02 | 15min | 5 tasks | 8 files |
 | Phase 10 P03 | 12min | 6 tasks | 5 files |
 | Phase 10 P04 | 10min | 5 tasks | 3 files |
+| Phase 11-mrr-optimization P01 | 18min | 3 tasks | 5 files |
+| Phase 11-mrr-optimization P02 | 3min | 2 tasks | 4 files |
+| Phase 11-mrr-optimization P03 | 8 | 7 tasks | 11 files |
+| Phase 11-mrr-optimization P04 | 35min | 5 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -157,6 +154,15 @@ Recent decisions affecting current work:
 - [Phase 10]: Marker-based idempotency for agent docs injection (<!-- ia-framework:rag-start/end -->)
 - [Phase 10]: DependencyGraph.getNeighborFiles() is sync but wrapped in async lambda in bin.ts to match SearchEngineConfig interface
 - [Phase 10]: mockReset() required instead of mockClear() — mockClear does NOT clear mockResolvedValueOnce queue
+- [Phase 11-mrr-optimization]: validateCorpus uses async fs.access; Zod schema expectedFiles min(0) for negative queries; loadCorpus supports flat JSON array format; corpus file tracked via gitignore exception
+- [Phase 11-mrr-optimization]: ChunkLike structural type accepts both CodeChunk and ChunkMetadata for chunkToDescription() — avoids cross-package dependency while supporting DB context source chunks with extra chunkTypes ('table', 'view')
+- [Phase 11-mrr-optimization]: Embedding cost doubles (2x embedBatch calls) with prose descriptions — intentional for semantic quality; acceptable for Ollama (local), documented for OpenAI users
+- [Phase 11-mrr-optimization]: Hybrid search exposed as separate search_codebase_hybrid MCP tool (not a param on existing tool) for independent evaluation
+- [Phase 11-mrr-optimization]: computeTermFrequencySparseVector exported from @ia-framework/retrieval and imported by indexer (no circular dep)
+- [Phase 11-mrr-optimization]: SearchEngine.searchHybrid() falls back to search() when vectorStore.searchHybrid is absent for backward compat
+- [Phase 11-mrr-optimization]: djb2 hash collisions in sparse vectors fixed via indexMap merge (sum TF values) — prevents Qdrant 422 "indices must be unique"
+- [Phase 11-mrr-optimization]: Threshold sweep 0.3/0.4/0.5 tied at MRR=0.50; 0.3 chosen (max recall at equal precision); 0.6 worse (MRR 0.46)
+- [Phase 11-mrr-optimization]: MCP default scoreThreshold lowered from 0.5 → 0.3 based on benchmark evidence
 
 ### Pending Todos
 
@@ -179,14 +185,16 @@ None — all blockers resolved:
 
 ### Quick Tasks Completed
 
-| #          | Description                                     | Date       | Commit  | Status   | Directory                                                                                                           |
-| ---------- | ----------------------------------------------- | ---------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| 260402-j1g | Add Ollama embedding model selection capability | 2026-04-02 | 661f679 | Verified | [260402-j1g-add-capability-of-ollama-to-change-betwe](./quick/260402-j1g-add-capability-of-ollama-to-change-betwe/) |
-| 260406-ms1 | Dashboard live-updating 4-stage pipeline view   | 2026-04-06 | 4b061fa | Complete | [260406-ms1-make-the-dashboard-live-updating-with-fi](./quick/260406-ms1-make-the-dashboard-live-updating-with-fi/) |
-| 260406-n9z | Add stop indexing capability — CLI + dashboard  | 2026-04-06 | -       | Complete | [260406-n9z-add-stop-indexing-capability-cli-command](./quick/260406-n9z-add-stop-indexing-capability-cli-command/) |
+| #          | Description                                                     | Date       | Commit  | Status   | Directory                                                                                                           |
+| ---------- | --------------------------------------------------------------- | ---------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| 260402-j1g | Add Ollama embedding model selection capability                 | 2026-04-02 | 661f679 | Verified | [260402-j1g-add-capability-of-ollama-to-change-betwe](./quick/260402-j1g-add-capability-of-ollama-to-change-betwe/) |
+| 260406-ms1 | Dashboard live-updating 4-stage pipeline view                   | 2026-04-06 | 4b061fa | Complete | [260406-ms1-make-the-dashboard-live-updating-with-fi](./quick/260406-ms1-make-the-dashboard-live-updating-with-fi/) |
+| 260406-n9z | Add stop indexing capability — CLI + dashboard                  | 2026-04-06 | -       | Complete | [260406-n9z-add-stop-indexing-capability-cli-command](./quick/260406-n9z-add-stop-indexing-capability-cli-command/) |
+| 260407-fzq | Create CLI command to generate starter benchmark corpus         | 2026-04-07 | 3a7a87e | Complete | [260407-fzq-create-cli-command-to-generate-starter-b](./quick/260407-fzq-create-cli-command-to-generate-starter-b/) |
+| 260407-gad | CLI corpus — default to local Ollama, guard target project path | 2026-04-07 | d2893d8 | Complete | [260407-gad-cli-corpus-default-to-local-ollama-model](./quick/260407-gad-cli-corpus-default-to-local-ollama-model/) |
 
 ## Session Continuity
 
-Last session: 2026-04-03T00:30:00.000Z
-Stopped at: /gsd:complete-milestone — audit finalized, all gaps resolved
+Last session: 2026-04-07T14:48:26Z
+Stopped at: Completed quick task 260407-gad — CLI corpus default to Ollama + target project guard
 Resume file: None
