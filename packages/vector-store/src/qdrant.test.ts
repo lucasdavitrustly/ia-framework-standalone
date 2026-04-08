@@ -284,7 +284,8 @@ describe('QdrantVectorStore', () => {
         indexedAt: '2026-04-01T00:00:00Z',
       },
     };
-    mockQuery.mockResolvedValue({ result: [mockResult] });
+    // client.query() returns { points: ScoredPoint[] } (Schemas['QueryResponse'])
+    mockQuery.mockResolvedValue({ points: [mockResult] });
 
     const denseVector = [0.1, 0.2, 0.3];
     const sparseVector = { indices: [100, 200], values: [1, 2] };
@@ -312,7 +313,7 @@ describe('QdrantVectorStore', () => {
   });
 
   it('Test 13: searchHybrid() passes { fusion: rrf } as the top-level query', async () => {
-    mockQuery.mockResolvedValue({ result: [] });
+    mockQuery.mockResolvedValue({ points: [] });
 
     await store.searchHybrid({
       denseVector: [0.1, 0.2, 0.3],
