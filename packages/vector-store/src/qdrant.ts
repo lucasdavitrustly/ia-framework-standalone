@@ -183,10 +183,10 @@ export class QdrantVectorStore implements VectorStore {
       ...(options.filter !== undefined ? { filter: options.filter } : {}),
     });
 
-    // client.query() returns { result: ScoredPoint[] } or the array directly
+    // client.query() returns { points: ScoredPoint[] } (Schemas['QueryResponse'])
     const points: Array<{ id: unknown; score: number; payload: unknown }> = Array.isArray(results)
       ? results
-      : ((results as { result: unknown[] }).result ?? []);
+      : ((results as { points: unknown[] }).points ?? []);
 
     return points.map((r) => ({
       id: (r.payload as ChunkPayload).chunkId ?? String(r.id),
