@@ -114,6 +114,16 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
+## mcp-search-returns-empty — search_codebase_hybrid always returns empty array despite indexed data
+
+- **Date:** 2026-04-08
+- **Error patterns:** search_codebase_hybrid, empty results, no results, hybrid search, silent empty, searchHybrid, client.query, points, result, qdrant, BM25, RRF
+- **Root cause:** QdrantVectorStore.searchHybrid() read `results.result` to unwrap the client.query() response, but the @qdrant/js-client-rest SDK v1.17.0 returns `{ points: ScoredPoint[] }` (Schemas['QueryResponse']), not `{ result: [...] }`. Since `results.result` is always undefined, the `?? []` fallback returned an empty array for every hybrid search call. The test mocks also used the wrong shape `{ result: [] }` so the bug was never caught by tests.
+- **Fix:** Changed `(results as { result: unknown[] }).result ?? []` to `(results as { points: unknown[] }).points ?? []` in QdrantVectorStore.searchHybrid(). Also fixed test mocks in qdrant.test.ts (Tests 12 and 13) to use `{ points: [...] }`.
+- **Files changed:** packages/vector-store/src/qdrant.ts, packages/vector-store/src/qdrant.test.ts
+
+---
+
 - **Date:** 2026-04-06
 - **Error patterns:** global install, pnpm link, npm link, ia-framework command not found, indexing during install, install.sh, IndexingPanel, Start Indexing, dashboard trigger, Overview
 - **Root cause:** (1) install.sh Step 7 ran `node packages/cli/dist/bin.js index` directly, blocking until full indexing completed during install. (2) install.sh never ran `pnpm link --global` despite the CLI package having a `bin` field, so `ia-framework` was never available as a global command. (3) The IndexingPanel component (with a "Trigger Re-index" button backed by POST /api/indexing/trigger) existed but was not imported or rendered anywhere — Overview.tsx only showed a static status dot.
