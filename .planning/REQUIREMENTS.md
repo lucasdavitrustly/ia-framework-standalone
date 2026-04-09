@@ -251,42 +251,42 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase    | Status  |
 | ----------- | -------- | ------- |
 | INDX-13     | Phase 12 | Pending |
-| INDX-10     | —        | Pending |
-| INDX-11     | —        | Pending |
-| INDX-12     | —        | Pending |
-| INDX-14     | —        | Pending |
-| INDX-15     | —        | Pending |
-| INDX-16     | —        | Pending |
-| INDX-17     | —        | Pending |
-| RETR-07     | —        | Pending |
-| RETR-08     | —        | Pending |
-| RETR-09     | —        | Pending |
-| RETR-10     | —        | Pending |
-| RETR-11     | —        | Pending |
-| CLIE-01     | —        | Pending |
-| CLIE-02     | —        | Pending |
-| CLIE-03     | —        | Pending |
-| DASH-07     | —        | Pending |
-| DASH-08     | —        | Pending |
-| DASH-09     | —        | Pending |
-| DASH-10     | —        | Pending |
-| DASH-11     | —        | Pending |
-| DASH-12     | —        | Pending |
-| DASH-13     | —        | Pending |
-| DASH-14     | —        | Pending |
-| DASH-15     | —        | Pending |
-| DASH-16     | —        | Pending |
-| DASH-17     | —        | Pending |
-| DASH-18     | —        | Pending |
+| INDX-14     | Phase 13 | Pending |
+| INDX-15     | Phase 13 | Pending |
+| INDX-16     | Phase 13 | Pending |
+| INDX-17     | Phase 13 | Pending |
+| INDX-10     | Phase 14 | Pending |
+| INDX-11     | Phase 14 | Pending |
+| INDX-12     | Phase 14 | Pending |
+| CLIE-01     | Phase 14 | Pending |
+| CLIE-02     | Phase 14 | Pending |
+| CLIE-03     | Phase 14 | Pending |
+| RETR-07     | Phase 14 | Pending |
+| RETR-08     | Phase 15 | Pending |
+| RETR-09     | Phase 15 | Pending |
+| RETR-10     | Phase 15 | Pending |
+| RETR-11     | Phase 15 | Pending |
+| DASH-07     | Phase 16 | Pending |
+| DASH-08     | Phase 16 | Pending |
+| DASH-09     | Phase 16 | Pending |
+| DASH-10     | Phase 16 | Pending |
+| DASH-12     | Phase 17 | Pending |
+| DASH-13     | Phase 17 | Pending |
+| DASH-14     | Phase 17 | Pending |
+| DASH-11     | Phase 18 | Pending |
+| DASH-15     | Phase 18 | Pending |
+| DASH-16     | Phase 18 | Pending |
+| DASH-17     | Phase 18 | Pending |
+| DASH-18     | Phase 18 | Pending |
 
 **Coverage:**
 
 - v1.0 requirements: 54 total (51 complete, 1 partial, 1 deferred, 1 unchecked)
 - v1.1 requirements: 28 total
-- v1.1 mapped to phases: 1 (INDX-13 → Phase 12)
-- v1.1 unmapped: 27 (will be mapped during roadmap creation)
+- v1.1 mapped to phases: 28/28 ✓
+- v1.1 unmapped: 0
 
 ---
 
 _Requirements defined: 2026-03-31_
-_Last updated: 2026-04-09 — v1.1 requirements added (28 new), INDX-13 spike as GO/NO-GO gate_
+_Last updated: 2026-04-09 — v1.1 roadmap created, all 28 requirements mapped to Phases 12-18_

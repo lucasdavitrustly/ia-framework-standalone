@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
-status: research
-stopped_at: Milestone v1.1 started — PROJECT.md updated, research phase beginning
+status: planning
+stopped_at: Roadmap created — 7 phases (12-18), 28 requirements mapped, ready to plan Phase 12
 last_updated: '2026-04-09T00:00:00.000Z'
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,12 +19,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Milestone v1.1 — Research phase (pre-roadmap)
+**Current focus:** Phase 12 — LLM Chunking Spike (GO/NO-GO gate)
 
 ## Current Position
 
-Phase: Pre-roadmap (research)
-Plan: N/A
+Phase: 12 of 18 (LLM Chunking Spike)
+Plan: N/A — phase not yet planned
+Status: Ready to plan
+Last activity: 2026-04-09 — Roadmap created for v1.1 (Phases 12-18)
+
+Progress: [░░░░░░░░░░] 0%
 
 ## v1.0 Performance Summary
 
@@ -63,18 +67,14 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-None — v1.1 research phase starting.
+None.
 
 ### Blockers/Concerns
 
-None currently.
-
-### Quick Tasks Completed (v1.0)
-
-See v1.0 STATE.md archive for full history (7 quick tasks completed).
+- INDX-13 spike is GO/NO-GO gate — if spike fails, INDX-10/11/12 descope and milestone pivots
 
 ## Session Continuity
 
 Last session: 2026-04-09
-Stopped at: Milestone v1.1 started — research phase beginning
+Stopped at: Roadmap created for v1.1 — ready to plan Phase 12 (LLM Chunking Spike)
 Resume file: None
