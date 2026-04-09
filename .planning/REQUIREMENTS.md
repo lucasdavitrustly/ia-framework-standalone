@@ -3,9 +3,9 @@
 **Defined:** 2026-03-31
 **Core Value:** AI that actually understands the codebase — better context means better code output.
 
-## v1 Requirements
+## v1.0 Requirements (Complete)
 
-Requirements for initial release. Each maps to roadmap phases.
+Requirements shipped in v1.0. All verified and complete unless noted.
 
 ### Installation
 
@@ -45,7 +45,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **RETR-01**: Developer can query indexed codebase via semantic search and get relevant code results
 - [x] **RETR-02**: MCP server exposes RAG tools (search_codebase, get_file, get_dependencies) for OpenCode
 - [x] **RETR-03**: Retrieval expands results 1-2 hops along the dependency graph to include types, interfaces, and utilities
-- [ ] **RETR-04**: Auto-context mode prepends relevant codebase context to prompts automatically
+- [ ] **RETR-04**: Auto-context mode prepends relevant codebase context to prompts automatically — Deferred to v2
 - [x] **RETR-05**: Developer can configure retrieval mode: MCP-only, auto-context, or both
 - [x] **RETR-06**: All retrieval runs fully locally — queries and results never leave the developer's machine
 
@@ -88,9 +88,63 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **WKFL-02**: GSD execution phases automatically inject relevant code context from RAG
 - [x] **WKFL-03**: GSD workflows can use online LLMs for reasoning and code generation
 
+## v1.1 Requirements
+
+Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
+
+**Critical dependency:** INDX-13 (LLM chunking spike) is a GO/NO-GO gate. It must complete first. If the spike fails, LLM-specific requirements (INDX-10, INDX-11, INDX-12) are descoped and the milestone pivots.
+
+### Indexing
+
+- [ ] **INDX-13**: Time-boxed spike validates LLM chunking quality, latency, and Ollama structured output feasibility — GO/NO-GO gate before all other v1.1 work proceeds
+- [ ] **INDX-10**: Developer can index codebase using LLM-based semantic chunking via Ollama as alternative to AST
+- [ ] **INDX-11**: LLM chunking identifies semantic boundaries and generates prose summaries per chunk in a single pass
+- [ ] **INDX-12**: LLM chunking results are cached by file content hash to avoid re-processing unchanged files
+- [ ] **INDX-14**: Embedding pipeline processes multiple batches concurrently via p-queue
+- [ ] **INDX-15**: Embedding concurrency adapts to provider type (Ollama: 2-3, OpenAI: 5-10)
+- [ ] **INDX-16**: Indexing pipeline emits progress events (phase, completed, total) for CLI and dashboard consumption
+- [ ] **INDX-17**: Embedding concurrency is configurable via project.json
+
+### Retrieval
+
+- [ ] **RETR-07**: Each indexing strategy stores chunks in a separate Qdrant collection ({project}-ast, {project}-llm)
+- [ ] **RETR-08**: MCP search tools (search_codebase, search_codebase_hybrid) query all active collections
+- [ ] **RETR-09**: Cross-collection results are merged via Reciprocal Rank Fusion for fair ranking
+- [ ] **RETR-10**: Each search result is tagged with source strategy (ast/llm) for provenance
+- [ ] **RETR-11**: Search works normally when only one collection exists (backward compatible)
+
+### CLI
+
+- [ ] **CLIE-01**: Developer can select indexing strategy via `--strategy ast|llm` flag at index time
+- [ ] **CLIE-02**: CLI verifies configured Ollama model is available before starting LLM indexing
+- [ ] **CLIE-03**: CLI prompts interactive Ollama model selection when configured model is missing
+
+### Dashboard
+
+- [ ] **DASH-07**: Dashboard provides search page with query input, ranked results, scores, file paths, and code previews
+- [ ] **DASH-08**: Dashboard search allows selecting which collection(s) to query (AST, LLM, both)
+- [ ] **DASH-09**: Dashboard shows per-query metrics (latency, chunks scanned, score distribution) alongside results
+- [ ] **DASH-10**: Dashboard supports A/B comparison — same query against AST vs LLM collections side-by-side
+- [ ] **DASH-11**: Dashboard visualizes strategy comparison scores (MRR, P@K) via radar/bar charts
+- [ ] **DASH-12**: Dashboard persists search history with results, scores, and timestamps
+- [ ] **DASH-13**: Dashboard allows replaying past queries to compare results before/after re-indexing
+- [ ] **DASH-14**: Dashboard search history is filterable by date, strategy, query text, minimum score
+- [ ] **DASH-15**: Dashboard shows RAG quality trend charts (MRR, latency, chunk relevance over time)
+- [ ] **DASH-16**: Dashboard shows aggregate strategy comparison (avg MRR, avg latency, avg chunks per strategy)
+- [ ] **DASH-17**: Dashboard shows token usage breakdown by strategy (indexing vs query, per strategy)
+- [ ] **DASH-18**: Dashboard shows score distribution visualizations (histograms across queries and strategies)
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
+
+### Auto-Context
+
+- **RETR-04**: Auto-context mode prepends relevant codebase context to prompts automatically — deferred (OpenCode lacks MCP Resources/Prompts support)
+
+### LLM Chunking Resilience
+
+- **LCHK-01**: If LLM chunking fails for a file, fall back to AST chunking for that file in the LLM collection
 
 ### Jira Integration
 
@@ -113,20 +167,27 @@ Deferred to future release. Tracked but not in current roadmap.
 
 Explicitly excluded. Documented to prevent scope creep.
 
-| Feature                           | Reason                                                                        |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| Own IDE / editor                  | OpenCode is the primary interface — framework provides infrastructure, not UI |
-| Code completion / autocomplete    | AI client's responsibility — framework improves context, not suggestions      |
-| Own chat interface                | OpenCode has full TUI chat — building another is redundant                    |
-| Multi-tenancy / authentication    | Internal single-user tool — no auth needed                                    |
-| npm / binary distribution         | Git clone + ./install.sh sufficient for internal use                          |
-| Proactive task suggestion         | Unreliable without deep understanding — be reactive, not intrusive            |
-| Cloud-hosted RAG                  | RAG must run fully locally for codebase privacy                               |
-| Sending codebase to external APIs | Privacy constraint — only GSD reasoning uses online LLMs                      |
+| Feature                               | Reason                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------- |
+| Own IDE / editor                      | OpenCode is the primary interface — framework provides infrastructure, not UI |
+| Code completion / autocomplete        | AI client's responsibility — framework improves context, not suggestions      |
+| Own chat interface                    | OpenCode has full TUI chat — building another is redundant                    |
+| Multi-tenancy / authentication        | Internal single-user tool — no auth needed                                    |
+| npm / binary distribution             | Git clone + ./install.sh sufficient for internal use                          |
+| Proactive task suggestion             | Unreliable without deep understanding — be reactive, not intrusive            |
+| Cloud-hosted RAG                      | RAG must run fully locally for codebase privacy                               |
+| Sending codebase to external APIs     | Privacy constraint — only GSD reasoning uses online LLMs                      |
+| Cloud LLM chunking (OpenAI/Anthropic) | Deferred to v3 — v1.1 focuses on local Ollama only                            |
+| Custom chunking prompt templates      | Framework owns the chunking prompt — user tweaks via config, not raw prompts  |
+| Real-time re-chunking on file save    | LLM chunking is too slow for real-time — use explicit index command           |
+| Automatic strategy recommendation     | Show data (A/B, analytics), let developer decide — premature automation       |
+| Embedding model fine-tuning UI        | Swap models via config + benchmark — no fine-tuning infrastructure            |
 
 ## Traceability
 
 Which phases cover which requirements. Updated during roadmap creation.
+
+### v1.0 Traceability
 
 | Requirement | Phase       | Status                           |
 | ----------- | ----------- | -------------------------------- |
@@ -185,17 +246,47 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WKFL-02     | Phase 10    | Complete                         |
 | WKFL-03     | Phase 10    | Complete                         |
 
+### v1.1 Traceability
+
+| Requirement | Phase    | Status  |
+| ----------- | -------- | ------- |
+| INDX-13     | Phase 12 | Pending |
+| INDX-10     | —        | Pending |
+| INDX-11     | —        | Pending |
+| INDX-12     | —        | Pending |
+| INDX-14     | —        | Pending |
+| INDX-15     | —        | Pending |
+| INDX-16     | —        | Pending |
+| INDX-17     | —        | Pending |
+| RETR-07     | —        | Pending |
+| RETR-08     | —        | Pending |
+| RETR-09     | —        | Pending |
+| RETR-10     | —        | Pending |
+| RETR-11     | —        | Pending |
+| CLIE-01     | —        | Pending |
+| CLIE-02     | —        | Pending |
+| CLIE-03     | —        | Pending |
+| DASH-07     | —        | Pending |
+| DASH-08     | —        | Pending |
+| DASH-09     | —        | Pending |
+| DASH-10     | —        | Pending |
+| DASH-11     | —        | Pending |
+| DASH-12     | —        | Pending |
+| DASH-13     | —        | Pending |
+| DASH-14     | —        | Pending |
+| DASH-15     | —        | Pending |
+| DASH-16     | —        | Pending |
+| DASH-17     | —        | Pending |
+| DASH-18     | —        | Pending |
+
 **Coverage:**
 
-- v1 requirements: 54 total
-- Mapped to phases: 54
-- Complete: 51
-- Partial: 1 (BNCH-01)
-- Deferred to v2: 1 (RETR-04)
-- Unchecked: 1 (BNCH-01 checkbox — intentionally partial)
-- Unmapped: 0
+- v1.0 requirements: 54 total (51 complete, 1 partial, 1 deferred, 1 unchecked)
+- v1.1 requirements: 28 total
+- v1.1 mapped to phases: 1 (INDX-13 → Phase 12)
+- v1.1 unmapped: 27 (will be mapped during roadmap creation)
 
 ---
 
 _Requirements defined: 2026-03-31_
-_Last updated: 2026-04-03 — synced traceability table with actual implementation status across all phases_
+_Last updated: 2026-04-09 — v1.1 requirements added (28 new), INDX-13 spike as GO/NO-GO gate_
