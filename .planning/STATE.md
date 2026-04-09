@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: planning
-stopped_at: Roadmap created — 7 phases (12-18), 28 requirements mapped, ready to plan Phase 12
+stopped_at: Phase 12 discuss-phase complete — 25 decisions captured, ready to plan
 last_updated: '2026-04-09T00:00:00.000Z'
 progress:
   total_phases: 7
@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 
 Phase: 12 of 18 (LLM Chunking Spike)
 Plan: N/A — phase not yet planned
-Status: Ready to plan
-Last activity: 2026-04-09 — Roadmap created for v1.1 (Phases 12-18)
+Status: Discussed — ready to plan
+Last activity: 2026-04-09 — Discuss-phase complete (25 decisions in 12-CONTEXT.md)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -76,5 +76,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-09
-Stopped at: Roadmap created for v1.1 — ready to plan Phase 12 (LLM Chunking Spike)
-Resume file: None
+Stopped at: Phase 12 discuss-phase complete — 25 decisions captured in 12-CONTEXT.md, ready for /gsd-plan-phase 12
+Resume file: .planning/phases/12-llm-chunking-spike/12-CONTEXT.md
