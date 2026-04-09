@@ -1,709 +1,748 @@
-# Architecture Patterns
+# Architecture Research — v1.1 Feature Integration
 
 **Domain:** AI-assisted development framework with local RAG
-**Researched:** 2026-03-31
+**Researched:** 2026-04-09
+**Confidence:** HIGH
 
-## Recommended Architecture
+## Context
 
-### High-Level System Overview
+This document covers the **integration architecture for v1.1 features** into the existing ia-framework monorepo. It does NOT redesign existing components — it specifies how 5 new capabilities slot into the current system.
 
-The ia-framework is a **pipeline-oriented system** with three runtime modes:
+### New Features
 
-1. **Batch mode** (Indexing): Walk codebase files, parse ASTs, generate embeddings, store in Qdrant
-2. **Interactive mode** (MCP Server): Receive queries from OpenCode via stdio, retrieve context from Qdrant, return formatted results
-3. **Monitoring mode** (Dashboard): Serve web UI showing indexing health, token usage, and benchmark trends
+1. **LLM-based Chunking** — Alternative chunking strategy using Ollama to generate semantic descriptions
+2. **Parallel Embedding** — Concurrent embedding via `p-queue` instead of sequential batches
+3. **Multi-Collection Qdrant** — Separate collections for AST and LLM chunks
+4. **Dual-Collection MCP Search** — Search across both collections with source tagging
+5. **Dashboard Search & Analytics** — Search UI and per-collection analytics in the dashboard
 
-These modes share core libraries but run as separate processes. The MCP server is spawned by OpenCode as a subprocess. The dashboard runs as a Docker container alongside Qdrant. Indexing runs as a CLI command or is triggered by file watchers.
+### Existing System (Verified by Source Analysis)
 
-```
-                         ┌─────────────────────────────┐
-                         │        Developer             │
-                         │     (uses OpenCode)          │
-                         └──────────┬──────────────────┘
-                                    │ stdio (JSON-RPC 2.0)
-                                    ▼
-                         ┌──────────────────────┐
-                         │     MCP Server        │
-                         │  (spawned subprocess) │
-                         │                      │
-                         │  Tools:              │
-                         │  - search_codebase   │
-                         │  - get_context       │
-                         │  - index_status      │
-                         │                      │
-                         │  Resources:          │
-                         │  - project_config    │
-                         └───────┬──────────────┘
-                                 │ in-process calls
-                                 ▼
-                    ┌────────────────────────┐
-                    │      RAG Engine         │
-                    │                        │
-                    │  1. Embed query        │
-                    │  2. Semantic search    │
-                    │  3. Dependency expand  │
-                    │  4. Re-rank & format   │
-                    └───┬────────────┬───────┘
-                        │            │
-            ┌───────────▼──┐   ┌────▼──────────────┐
-            │   Qdrant      │   │ Embedding Provider │
-            │  (Docker)     │   │ (OpenAI / Ollama)  │
-            │  localhost:   │   │                    │
-            │  6333         │   └────────────────────┘
-            └───────▲───────┘
-                    │ HTTP REST
-     ┌──────────────┼──────────────┐
-     │              │              │
-┌────┴─────┐  ┌────┴─────┐  ┌────┴──────┐
-│ Indexing  │  │Dashboard │  │ Benchmark │
-│ Pipeline  │  │ (Docker) │  │  Runner   │
-│           │  │          │  │           │
-│ parse →   │  │ reads    │  │ runs AI   │
-│ chunk →   │  │ stats +  │  │ tasks →   │
-│ embed →   │  │ metrics  │  │ measures  │
-│ store     │  │          │  │ pass rate │
-└───────────┘  └──────────┘  └───────────┘
-```
+| Component         | Package                  | Current State                                                                               |
+| ----------------- | ------------------------ | ------------------------------------------------------------------------------------------- |
+| IndexingPipeline  | `packages/indexer`       | Sequential: walkFiles → parseFile → chunkToDescription → embedBatch → upsertBatch           |
+| QdrantVectorStore | `packages/vector-store`  | Parameterized on `collectionName`. Named vectors: text, code, sparse                        |
+| EmbeddingProvider | `packages/embedding`     | Interface with `embed()`, `embedBatch()`, `dimensions`. Factory creates OpenAI/Ollama       |
+| SearchEngine      | `packages/retrieval`     | Takes single vectorStore + embeddingProvider. Has `search()`, `searchHybrid()`, `getFile()` |
+| MCP Server        | `packages/mcp-server`    | Uses local duck-typed `Engine` interfaces, not SearchEngine directly                        |
+| Dashboard API     | `packages/dashboard-api` | Hono-based. Serves status, config, metrics, benchmarks, indexing. **No search capability**  |
+| Dashboard UI      | `apps/dashboard`         | React/Vite SPA. 4 pages: Overview, Benchmarks, Config, TokenUsage                           |
+| CLI               | `packages/cli`           | `index` command with --force, --config, --model. Single pipeline, single collection         |
+| MetricsStore      | `packages/observability` | SQLite-backed. Tracks RagEvents with query, latency, tokens, chunks                         |
+| Config            | `packages/core`          | `ProjectConfig` with Zod schema validation                                                  |
 
-### Monorepo Structure
-
-Use Turborepo with pnpm workspaces. Organize by the standard `apps/` + `packages/` convention.
+## System Overview — v1.1 Changes
 
 ```
-ia-framework/
-├── apps/
-│   ├── mcp-server/              # OpenCode MCP server (stdio entry point)
-│   │   ├── src/
-│   │   │   ├── index.ts         # McpServer setup, tool registration
-│   │   │   ├── tools/           # Individual MCP tool handlers
-│   │   │   └── resources/       # MCP resource handlers
-│   │   └── package.json
-│   │
-│   ├── dashboard/               # Monitoring web application (Docker)
-│   │   ├── src/
-│   │   │   ├── server.ts        # Fastify backend
-│   │   │   ├── routes/          # API routes
-│   │   │   └── public/          # Static frontend assets
-│   │   ├── Dockerfile
-│   │   └── package.json
-│   │
-│   └── cli/                     # CLI commands (index, benchmark, status)
-│       ├── src/
-│       │   ├── index.ts         # CLI entry point
-│       │   └── commands/        # Individual commands
-│       └── package.json
-│
-├── packages/
-│   ├── core/                    # Shared types, config loader, utilities
-│   │   ├── src/
-│   │   │   ├── types/           # Shared TypeScript interfaces
-│   │   │   ├── config.ts        # Config file read/write
-│   │   │   └── logger.ts        # Structured logging
-│   │   └── package.json
-│   │
-│   ├── project-detector/        # Auto-detect project language, framework, etc.
-│   │   ├── src/
-│   │   │   ├── detectors/       # Per-language/framework detectors
-│   │   │   └── index.ts         # Orchestrates detection
-│   │   └── package.json
-│   │
-│   ├── ast-parser/              # Tree-sitter abstraction layer
-│   │   ├── src/
-│   │   │   ├── parsers/         # Per-language parser strategies
-│   │   │   ├── chunker.ts       # AST-aware chunk generation
-│   │   │   └── index.ts         # Parser factory
-│   │   └── package.json
-│   │
-│   ├── embedding/               # Provider-agnostic embedding abstraction
-│   │   ├── src/
-│   │   │   ├── providers/       # OpenAI, Ollama, etc.
-│   │   │   ├── interface.ts     # EmbeddingProvider interface
-│   │   │   └── index.ts         # Provider factory
-│   │   └── package.json
-│   │
-│   ├── indexer/                 # Codebase indexing pipeline
-│   │   ├── src/
-│   │   │   ├── pipeline.ts      # Orchestrates index stages
-│   │   │   ├── file-walker.ts   # Discovers source files
-│   │   │   ├── incremental.ts   # Git-based change detection
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── rag/                     # Retrieval + context assembly
-│   │   ├── src/
-│   │   │   ├── retriever.ts     # Semantic search + expansion
-│   │   │   ├── dependency-graph.ts  # Import/export graph traversal
-│   │   │   ├── context-builder.ts   # Format context for LLM
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── metrics/                 # Token tracking + benchmark storage
-│   │   ├── src/
-│   │   │   ├── token-tracker.ts
-│   │   │   ├── benchmark-store.ts
-│   │   │   ├── storage.ts       # SQLite abstraction
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   └── vector-store/            # Qdrant client abstraction
-│       ├── src/
-│       │   ├── qdrant.ts        # Qdrant-specific implementation
-│       │   ├── interface.ts     # VectorStore interface
-│       │   └── index.ts
-│       └── package.json
-│
-├── installer/                   # install.sh + TypeScript installer logic
-│   ├── install.sh               # Entry point (bash bootstrap)
-│   ├── src/
-│   │   ├── index.ts             # Main installer orchestration
-│   │   ├── checks.ts            # Environment verification
-│   │   └── setup.ts             # Docker, config, integration setup
-│   └── package.json
-│
-├── docker/
-│   ├── docker-compose.yml       # Qdrant + Dashboard
-│   └── qdrant/
-│       └── config.yaml          # Qdrant configuration
-│
-├── turbo.json                   # Turborepo pipeline config
-├── pnpm-workspace.yaml          # Workspace definition
-├── package.json                 # Root package.json
-└── tsconfig.base.json           # Shared TypeScript config
+┌───────────────────────────────────────────────────────────────────────┐
+│                          Indexing Pipeline                            │
+│                                                                       │
+│  walkFiles → ┬─ AstChunkingStrategy ──→ embedBatch ──→ upsert       │
+│              │  (existing behavior)      (parallel)    (ast-collection)│
+│              │                                                        │
+│              └─ LlmChunkingStrategy ──→ embedBatch ──→ upsert  [NEW] │
+│                 (Ollama chat API)        (parallel)    (llm-collection)│
+└───────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                       Qdrant (Docker)                                  │
+│                                                                       │
+│  ┌──────────────────┐    ┌──────────────────┐                         │
+│  │ {name} collection│    │ {name}-llm       │  [NEW]                  │
+│  │ AST chunks       │    │ LLM chunks       │                         │
+│  │ code vectors     │    │ semantic vectors  │                         │
+│  └──────────────────┘    └──────────────────┘                         │
+└───────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                   MultiCollectionSearchEngine [NEW]                    │
+│                                                                       │
+│  ┌─────────────────┐    ┌─────────────────┐                           │
+│  │ SearchEngine     │    │ SearchEngine     │                          │
+│  │ (ast collection) │    │ (llm collection) │                          │
+│  └────────┬────────┘    └────────┬────────┘                           │
+│           │      parallel query  │                                    │
+│           └──────────┬───────────┘                                    │
+│                      ▼                                                │
+│           merge + source tag + dedup                                  │
+│           graceful degradation (single collection OK)                 │
+└───────────────────────────────────────────────────────────────────────┘
+                              │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+┌──────────────────────┐  ┌──────────────────────────────┐
+│  MCP Server          │  │  Dashboard API         [NEW] │
+│  (search_codebase)   │  │  GET /api/search             │
+│  (search_hybrid)     │  │  GET /api/analytics/         │
+│  → uses Multi engine │  │    collections               │
+└──────────────────────┘  └──────────────────────────────┘
 ```
 
-### Component Boundaries
+## Component Boundaries — New & Modified
 
-| Component | Responsibility | Communicates With | Communication Method |
-|-----------|---------------|-------------------|---------------------|
-| **core** | Shared types, config, logging | All other packages | In-process imports |
-| **project-detector** | Detect language, framework, tools | core, filesystem | In-process + file reads |
-| **ast-parser** | Parse source → AST nodes → semantic chunks | core, tree-sitter grammars | In-process + WASM/native |
-| **embedding** | Convert text → vectors | core, external APIs | HTTP to OpenAI/Ollama |
-| **vector-store** | Store/search vectors in Qdrant | core, Qdrant Docker | HTTP REST to localhost:6333 |
-| **indexer** | Orchestrate: walk → parse → embed → store | ast-parser, embedding, vector-store | In-process pipeline |
-| **rag** | Retrieve relevant context for queries | embedding, vector-store, core | In-process + HTTP to Qdrant |
-| **metrics** | Track tokens, store benchmark results | core, SQLite | In-process + file I/O |
-| **mcp-server** | Expose RAG tools to OpenCode | rag, metrics, core | stdio (JSON-RPC) to OpenCode |
-| **dashboard** | Web UI for monitoring | vector-store, metrics | HTTP to Qdrant + SQLite reads |
-| **cli** | CLI commands for indexing, benchmarks | indexer, rag, metrics | In-process |
-| **installer** | Setup environment, Docker, config | project-detector, core | Bash + child processes |
+### New Components
 
-### Data Flow
+| Component                     | Package                  | Responsibility                                           | Communicates With              |
+| ----------------------------- | ------------------------ | -------------------------------------------------------- | ------------------------------ |
+| `ChunkingStrategy` interface  | `packages/indexer`       | Abstract chunking behind strategy pattern                | IndexingPipeline               |
+| `AstChunkingStrategy`         | `packages/indexer`       | Wraps existing `parseFile()` behavior                    | tree-sitter, file system       |
+| `LlmChunkingStrategy`         | `packages/indexer`       | Uses Ollama chat API to generate semantic descriptions   | Ollama HTTP API                |
+| `MultiCollectionSearchEngine` | `packages/retrieval`     | Queries multiple collections in parallel, merges results | SearchEngine instances, Qdrant |
+| Dashboard search routes       | `packages/dashboard-api` | Expose search API for dashboard UI                       | MultiCollectionSearchEngine    |
+| Dashboard analytics routes    | `packages/dashboard-api` | Per-collection stats and comparison                      | Qdrant, MetricsStore           |
+| Search page                   | `apps/dashboard`         | Search UI with source filtering                          | Dashboard API                  |
+| Analytics page                | `apps/dashboard`         | Collection comparison charts                             | Dashboard API                  |
 
-#### Indexing Flow (Batch)
+### Modified Components
 
-```
-Developer runs: `ia-framework index`
-         │
-         ▼
-┌─── File Walker ───────────────────────────────────────────────┐
-│  • Reads .ia-framework/project.json for include/exclude       │
-│  • Walks project directory, respects .gitignore                │
-│  • For incremental: git diff to find changed files             │
-│  • Output: list of file paths                                  │
-└───────────────────────┬───────────────────────────────────────┘
-                        │ file paths
-                        ▼
-┌─── AST Parser ────────────────────────────────────────────────┐
-│  • Loads tree-sitter grammar for detected language             │
-│  • Parses each file into AST                                   │
-│  • Extracts semantic units:                                    │
-│    - Functions/methods (with signatures)                       │
-│    - Classes/interfaces/types                                  │
-│    - Module-level exports                                      │
-│    - Import declarations (for dependency graph)                │
-│  • Output: CodeChunk[] with metadata                           │
-└───────────────────────┬───────────────────────────────────────┘
-                        │ CodeChunk[]
-                        ▼
-┌─── Metadata Enricher ─────────────────────────────────────────┐
-│  • Adds file path, line numbers                                │
-│  • Resolves import paths to absolute references                │
-│  • Computes chunk ID (hash of file path + AST node position)   │
-│  • Output: EnrichedChunk[]                                     │
-└───────────────────────┬───────────────────────────────────────┘
-                        │ EnrichedChunk[]
-                        ▼
-┌─── Embedding Generator ──────────────────────────────────────┐
-│  • Batches chunks (provider-specific batch sizes)              │
-│  • Calls embedding provider API                                │
-│  • Handles rate limits and retries                             │
-│  • Tracks token usage → metrics store                          │
-│  • Output: VectorChunk[] (chunk + vector)                      │
-└───────────────────────┬───────────────────────────────────────┘
-                        │ VectorChunk[]
-                        ▼
-┌─── Qdrant Upserter ──────────────────────────────────────────┐
-│  • Upserts points in batches                                   │
-│  • Payload includes: file_path, language, chunk_type,          │
-│    line_start, line_end, imports, exports, raw_code             │
-│  • Creates collection if not exists (dimension auto-detected)  │
-│  • Reports progress events                                     │
-└───────────────────────────────────────────────────────────────┘
-```
+| Component              | Change                                                                                                                           | Scope                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `IndexingPipeline`     | Accept `ChunkingStrategy` instead of hardcoded `parseFile()` + `chunkToDescription()`. Support parallel embedding via `p-queue`. | Moderate refactor               |
+| `RetrievalResult`      | Add optional `source?: 'ast' \| 'llm'` field                                                                                     | Additive, backward-compatible   |
+| MCP tool handlers      | Swap `Engine` implementation for `MultiCollectionSearchEngine`                                                                   | Minimal — duck-typed interfaces |
+| CLI `index` command    | Add `--strategy ast\|llm\|both` flag                                                                                             | Small addition                  |
+| `ProjectConfig` schema | Add `chunking.strategy` and `chunking.llm` config sections                                                                       | Additive Zod schema change      |
 
-#### Retrieval Flow (Interactive)
+### Unchanged Components
 
-```
-OpenCode sends query via MCP tool call
-         │
-         ▼ (stdio JSON-RPC)
-┌─── MCP Server ────────────────────────────────────────────────┐
-│  • Receives tools/call for "search_codebase"                   │
-│  • Extracts query text and optional filters                    │
-│  • Delegates to RAG engine                                     │
-└───────────────────────┬───────────────────────────────────────┘
-                        │
-                        ▼
-┌─── RAG Engine ────────────────────────────────────────────────┐
-│                                                                │
-│  Step 1: Query Embedding                                       │
-│  • Embed query text using same provider as indexing             │
-│                                                                │
-│  Step 2: Semantic Search                                       │
-│  • Search Qdrant with query vector                             │
-│  • Apply filters (language, file path patterns)                │
-│  • Return top-K results (K configurable, default 10)           │
-│                                                                │
-│  Step 3: Dependency Graph Expansion                            │
-│  • For each result, look at its imports                         │
-│  • If an import target has an indexed chunk, include it         │
-│  • Expand up to N levels (configurable, default 1)             │
-│  • This ensures AI sees types/interfaces the code depends on   │
-│                                                                │
-│  Step 4: Re-ranking                                            │
-│  • Score by: semantic similarity + structural importance        │
-│  • Structural importance: exports rank higher than internals    │
-│  • De-duplicate overlapping chunks                             │
-│                                                                │
-│  Step 5: Context Assembly                                      │
-│  • Format chunks as structured context blocks                  │
-│  • Include file path, line numbers, language                   │
-│  • Respect token budget (truncate least relevant first)        │
-│  • Output: formatted context string                            │
-└───────────────────────┬───────────────────────────────────────┘
-                        │
-                        ▼
-┌─── MCP Response ──────────────────────────────────────────────┐
-│  • Return content as MCP text content block                    │
-│  • OpenCode injects into LLM conversation                      │
-└───────────────────────────────────────────────────────────────┘
-```
+| Component           | Why No Change                                                      |
+| ------------------- | ------------------------------------------------------------------ |
+| `EmbeddingProvider` | Both strategies use the same embedding interface                   |
+| `QdrantVectorStore` | Already parameterized on `collectionName` — just instantiate twice |
+| `MetricsStore`      | Existing RagEvent schema is sufficient for tracking                |
+| `project-detector`  | Unrelated to v1.1 features                                         |
 
-#### Auto-Context Flow (Alternative Retrieval Mode)
+## Architectural Patterns
 
-```
-Developer types prompt in OpenCode
-         │
-         ▼
-┌─── Auto-Context Injector ────────────────────────────────────┐
-│  • Intercepts prompt before it reaches LLM                     │
-│  • Calls RAG engine with prompt text as query                  │
-│  • Prepends retrieved context to prompt                        │
-│  • Configurable: MCP-only, auto-context, or both              │
-│                                                                │
-│  Implementation: This is an OpenCode integration concern.      │
-│  Could be implemented as:                                      │
-│  (a) MCP prompt template that OpenCode auto-applies            │
-│  (b) Custom OpenCode middleware/hook                           │
-│  (c) Wrapper script that pipes through context injection       │
-└───────────────────────────────────────────────────────────────┘
-```
+### Pattern 1: ChunkingStrategy Interface (Strategy Pattern)
 
-#### Dashboard Data Flow
-
-```
-┌─── Dashboard Backend (Fastify) ──────────────────────────────┐
-│                                                                │
-│  GET /api/index-status                                         │
-│  → Queries Qdrant: collection info, point count                │
-│  → Returns: total chunks, last indexed time, collection size   │
-│                                                                │
-│  GET /api/token-usage                                          │
-│  → Reads metrics SQLite: token consumption by date/provider    │
-│  → Returns: time series of token usage                         │
-│                                                                │
-│  GET /api/benchmarks                                           │
-│  → Reads metrics SQLite: benchmark run results                 │
-│  → Returns: score trends by embedding model / chunking config  │
-│                                                                │
-│  GET /api/project                                              │
-│  → Reads .ia-framework/project.json                            │
-│  → Returns: detected project profile                           │
-│                                                                │
-│  Data sources:                                                 │
-│  • Qdrant (HTTP REST) → index health                           │
-│  • SQLite (.ia-framework/metrics.db) → token + benchmark data  │
-│  • project.json file → project config                          │
-└───────────────────────────────────────────────────────────────┘
-```
-
-## Patterns to Follow
-
-### Pattern 1: Strategy Pattern for Embedding Providers
-
-**What:** Abstract embedding behind an interface so providers are swappable via configuration.
-**When:** Always. This is a core requirement — provider-agnostic embeddings.
-**Why:** Developers choose between cloud (OpenAI, Anthropic) and local (Ollama) based on privacy/cost/quality tradeoffs. Benchmarks compare providers directly.
+**What:** Abstract chunking behind an interface, mirroring the existing `EmbeddingProvider` pattern.
+**When to use:** Always — this is the extension point for LLM chunking.
+**Trade-offs:** Small abstraction cost, but enables clean testing and future strategies.
 
 ```typescript
-// packages/embedding/src/interface.ts
-export interface EmbeddingProvider {
+// packages/indexer/src/chunking/interface.ts
+export interface ChunkingStrategy {
   readonly name: string;
-  readonly dimensions: number;
 
-  embed(text: string): Promise<number[]>;
-  embedBatch(texts: string[]): Promise<number[][]>;
-
-  // Token counting for usage tracking
-  estimateTokens(text: string): number;
+  /**
+   * Process a file's AST chunks into enriched chunks.
+   * AST strategy: returns chunks as-is with descriptions from chunkToDescription().
+   * LLM strategy: returns chunks with LLM-generated semantic descriptions.
+   */
+  processChunks(
+    chunks: CodeChunk[],
+    fileContent: string,
+    filePath: string,
+  ): Promise<EnrichedChunk[]>;
 }
 
-// packages/embedding/src/providers/openai.ts
-export class OpenAIEmbeddingProvider implements EmbeddingProvider {
-  readonly name = 'openai';
-  readonly dimensions: number; // e.g., 1536 for text-embedding-3-small
-
-  constructor(private config: OpenAIConfig) {
-    this.dimensions = config.dimensions;
-  }
-
-  async embedBatch(texts: string[]): Promise<number[][]> {
-    // Batch API call with rate limiting
-  }
+// packages/core/src/types/index.ts — additive change
+export interface EnrichedChunk extends CodeChunk {
+  /** Semantic description for text vector embedding.
+   *  If present, used instead of chunkToDescription() output. */
+  description?: string;
 }
+```
 
-// packages/embedding/src/providers/ollama.ts
-export class OllamaEmbeddingProvider implements EmbeddingProvider {
-  readonly name = 'ollama';
-  readonly dimensions: number;
+**Implementation — AstChunkingStrategy:**
 
-  constructor(private config: OllamaConfig) {
-    this.dimensions = config.dimensions;
-  }
+```typescript
+// packages/indexer/src/chunking/ast-strategy.ts
+export class AstChunkingStrategy implements ChunkingStrategy {
+  readonly name = 'ast';
 
-  async embedBatch(texts: string[]): Promise<number[][]> {
-    // Local Ollama API calls — no rate limiting needed
-  }
-}
-
-// packages/embedding/src/index.ts
-export function createEmbeddingProvider(config: EmbeddingConfig): EmbeddingProvider {
-  switch (config.provider) {
-    case 'openai': return new OpenAIEmbeddingProvider(config.openai);
-    case 'ollama': return new OllamaEmbeddingProvider(config.ollama);
-    default: throw new Error(`Unknown embedding provider: ${config.provider}`);
+  async processChunks(
+    chunks: CodeChunk[],
+    fileContent: string,
+    filePath: string,
+  ): Promise<EnrichedChunk[]> {
+    // Wraps existing chunkToDescription() — zero behavior change
+    return chunks.map((chunk) => ({
+      ...chunk,
+      description: chunkToDescription(chunk),
+    }));
   }
 }
 ```
 
-### Pattern 2: Pipeline Pattern for Indexing
-
-**What:** Composable, stage-based processing pipeline with clear data contracts between stages.
-**When:** Indexing. Each stage transforms data and passes it to the next.
-**Why:** Testable in isolation, easy to add/modify stages, supports progress reporting.
+**Implementation — LlmChunkingStrategy:**
 
 ```typescript
-// packages/indexer/src/pipeline.ts
-export interface PipelineStage<TInput, TOutput> {
-  readonly name: string;
-  process(input: TInput, context: PipelineContext): AsyncIterable<TOutput>;
-}
+// packages/indexer/src/chunking/llm-strategy.ts
+import { Ollama } from 'ollama';
 
-export interface PipelineContext {
-  config: ProjectConfig;
-  onProgress: (stage: string, current: number, total: number) => void;
-  signal: AbortSignal; // Cancellation support
-}
-
-// Usage: stages composed into full pipeline
-const pipeline = new IndexingPipeline([
-  new FileDiscoveryStage(),     // () → FilePath[]
-  new ASTParsingStage(),        // FilePath → CodeChunk[]
-  new MetadataEnrichmentStage(),// CodeChunk → EnrichedChunk[]
-  new EmbeddingStage(provider), // EnrichedChunk → VectorChunk[]
-  new QdrantUpsertStage(store), // VectorChunk → UpsertResult[]
-]);
-
-await pipeline.run(context);
-```
-
-### Pattern 3: MCP Server Tool Registration
-
-**What:** Each tool is a self-contained handler with Zod schema validation, registered on the McpServer instance.
-**When:** MCP server setup.
-**Why:** MCP SDK provides this pattern natively. Clean separation between tool discovery and execution. (Source: MCP TypeScript SDK docs, HIGH confidence)
-
-```typescript
-// apps/mcp-server/src/index.ts
-import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
-import * as z from 'zod/v4';
-
-const server = new McpServer({
-  name: 'ia-framework',
-  version: '1.0.0',
-}, {
-  capabilities: {
-    tools: { listChanged: false },
-    resources: {},
-    logging: {},
-  },
+// Zod schema for structured Ollama output
+const ChunkDescriptionSchema = z.object({
+  summary: z.string().describe('One-sentence summary of what this code does'),
+  concepts: z.array(z.string()).describe('Key concepts, patterns, or domain terms'),
+  searchTerms: z.array(z.string()).describe('Terms a developer would search for to find this code'),
 });
 
-// Register tools
-server.tool(
-  'search_codebase',
-  'Search the indexed codebase for code relevant to a query',
-  {
-    query: z.string().describe('Natural language search query'),
-    limit: z.number().optional().default(10).describe('Max results'),
-    language: z.string().optional().describe('Filter by language'),
-  },
-  async ({ query, limit, language }) => {
-    const results = await ragEngine.search({ query, limit, language });
-    return {
-      content: [{ type: 'text', text: results.formattedContext }],
-    };
+export class LlmChunkingStrategy implements ChunkingStrategy {
+  readonly name = 'llm';
+
+  constructor(
+    private ollama: Ollama,
+    private model: string = 'llama3.2',
+  ) {}
+
+  async processChunks(
+    chunks: CodeChunk[],
+    fileContent: string,
+    filePath: string,
+  ): Promise<EnrichedChunk[]> {
+    const results: EnrichedChunk[] = [];
+
+    for (const chunk of chunks) {
+      const response = await this.ollama.chat({
+        model: this.model,
+        messages: [
+          {
+            role: 'user',
+            content: `Describe this code chunk for search indexing:\n\n${chunk.content}`,
+          },
+        ],
+        format: zodToJsonSchema(ChunkDescriptionSchema), // Ollama structured output
+      });
+
+      const parsed = ChunkDescriptionSchema.parse(JSON.parse(response.message.content));
+
+      results.push({
+        ...chunk,
+        description: `${parsed.summary}\n\nConcepts: ${parsed.concepts.join(', ')}\nSearch terms: ${parsed.searchTerms.join(', ')}`,
+      });
+    }
+
+    return results;
   }
-);
+}
+```
 
-server.tool(
-  'index_status',
-  'Check the current indexing status',
-  {},
-  async () => {
-    const status = await vectorStore.getCollectionInfo();
-    return {
-      content: [{ type: 'text', text: JSON.stringify(status, null, 2) }],
-    };
+**Key design decision — Ollama `format` parameter:** Verified via Context7 that Ollama's `/api/chat` endpoint accepts a `format` parameter with a JSON schema object. This ensures structured output without fragile prompt engineering. The schema is defined with Zod and converted via `zodToJsonSchema()`.
+
+**Confidence:** HIGH — Ollama structured output verified via Context7 documentation.
+
+### Pattern 2: Parallel Embedding via p-queue
+
+**What:** Replace sequential `embedBatch()` calls with concurrent execution using `p-queue`.
+**When to use:** Always during indexing — embedding is I/O-bound (network calls), not CPU-bound.
+**Trade-offs:** Faster indexing (3-5x for cloud providers), but requires concurrency limits to avoid rate limiting.
+
+```typescript
+// packages/indexer/src/pipeline.ts — modified embedBatch stage
+import PQueue from 'p-queue';
+
+interface ParallelEmbedConfig {
+  concurrency: number; // Default: 5 for cloud, 2 for local Ollama
+  batchSize: number; // Chunks per embedding API call
+  intervalCap?: number; // Rate limit: max calls per interval
+  interval?: number; // Rate limit interval (ms)
+}
+
+async function embedChunksParallel(
+  chunks: EnrichedChunk[],
+  provider: EmbeddingProvider,
+  config: ParallelEmbedConfig,
+): Promise<VectorChunk[]> {
+  const queue = new PQueue({
+    concurrency: config.concurrency,
+    intervalCap: config.intervalCap,
+    interval: config.interval,
+  });
+
+  const batches = chunkArray(chunks, config.batchSize);
+  const results: VectorChunk[][] = [];
+
+  // All batches queued — p-queue manages concurrency
+  const promises = batches.map((batch, i) =>
+    queue.add(async () => {
+      const texts = batch.map((c) => c.description ?? c.content);
+      const vectors = await provider.embedBatch(texts);
+      return batch.map((chunk, j) => ({ ...chunk, vector: vectors[j] }));
+    }),
+  );
+
+  return (await Promise.all(promises)).flat();
+}
+```
+
+**Why p-queue over worker threads:** Embedding is I/O-bound (waiting on HTTP responses from OpenAI/Ollama). Worker threads add complexity for CPU-bound work. `p-queue` provides async concurrency with built-in rate limiting, interval caps, and pause/resume — exactly what's needed. Verified via Context7 that p-queue supports `intervalCap` and `interval` for rate limiting.
+
+**Confidence:** HIGH — p-queue capabilities verified via Context7.
+
+### Pattern 3: Multi-Collection Convention (Not Abstraction)
+
+**What:** Use naming convention for collection pairs. No new class — just instantiate `QdrantVectorStore` twice.
+**When to use:** When both AST and LLM indexing are configured.
+**Trade-offs:** Simple but requires convention discipline. No runtime enforcement of pairing.
+
+```typescript
+// Convention: collection names
+const AST_COLLECTION = `${projectName}`; // e.g., "my-project"
+const LLM_COLLECTION = `${projectName}-llm`; // e.g., "my-project-llm"
+
+// In CLI index command or pipeline orchestration:
+const astStore = new QdrantVectorStore({
+  url: config.vectorStore.url,
+  collectionName: AST_COLLECTION,
+});
+
+const llmStore = new QdrantVectorStore({
+  url: config.vectorStore.url,
+  collectionName: LLM_COLLECTION,
+});
+
+// CRITICAL: Both collections MUST use the same embedding model
+// Different dimensions = incomparable search results
+const embeddingProvider = createEmbeddingProvider(config.embedding);
+
+const astPipeline = new IndexingPipeline({
+  chunkingStrategy: new AstChunkingStrategy(),
+  embeddingProvider,
+  vectorStore: astStore,
+  parallelConfig: { concurrency: 5 },
+});
+
+const llmPipeline = new IndexingPipeline({
+  chunkingStrategy: new LlmChunkingStrategy(ollama, config.chunking.llm.model),
+  embeddingProvider, // Same provider!
+  vectorStore: llmStore,
+  parallelConfig: { concurrency: 2 }, // Lower — Ollama chunking is slow
+});
+```
+
+**Why NOT a new MultiCollectionVectorStore class:** The existing `QdrantVectorStore` is already parameterized on `collectionName`. A wrapper class would add abstraction without value — the pipeline orchestration layer (CLI/indexing) handles the coordination. Collection pairing is a naming convention, not a type relationship.
+
+**Confidence:** HIGH — verified QdrantVectorStore source code is already collection-parameterized.
+
+### Pattern 4: MultiCollectionSearchEngine (Composition)
+
+**What:** A new class that wraps two `SearchEngine` instances, queries in parallel, and merges results with source tagging.
+**When to use:** MCP server and dashboard search — anywhere retrieval happens.
+**Trade-offs:** Additional merge/dedup logic, but enables richer search results.
+
+```typescript
+// packages/retrieval/src/multi-collection-search-engine.ts
+export class MultiCollectionSearchEngine {
+  constructor(
+    private astEngine: SearchEngine,
+    private llmEngine?: SearchEngine, // Optional — graceful degradation
+  ) {}
+
+  async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
+    if (!this.llmEngine) {
+      // Single collection mode — backward compatible
+      const results = await this.astEngine.search(query);
+      return results.map((r) => ({ ...r, source: 'ast' as const }));
+    }
+
+    // Parallel query across both collections
+    const [astResults, llmResults] = await Promise.all([
+      this.astEngine.search(query),
+      this.llmEngine.search(query),
+    ]);
+
+    // Tag results with source
+    const tagged = [
+      ...astResults.map((r) => ({ ...r, source: 'ast' as const })),
+      ...llmResults.map((r) => ({ ...r, source: 'llm' as const })),
+    ];
+
+    // Merge: sort by score, dedup by chunk ID (keep highest scoring)
+    return this.mergeAndDedup(tagged, query.limit ?? 10);
   }
-);
 
-// Start server
-const transport = new StdioServerTransport();
-await server.connect(transport);
-```
+  async searchHybrid(query: RetrievalQuery): Promise<RetrievalResult[]> {
+    // Same parallel pattern for hybrid search
+    // ...
+  }
 
-### Pattern 4: AST-Aware Chunking Strategy
+  private mergeAndDedup(
+    results: (RetrievalResult & { source: 'ast' | 'llm' })[],
+    limit: number,
+  ): RetrievalResult[] {
+    // Sort by score descending
+    results.sort((a, b) => b.score - a.score);
 
-**What:** Use tree-sitter ASTs to create semantically meaningful chunks instead of arbitrary text splits. Split oversized constructs with context preservation.
-**When:** Indexing phase. Critical for retrieval quality.
-**Why:** Text-based chunking breaks code mid-function or mid-class. AST-aware chunking preserves complete semantic units (functions, classes, type definitions), which produces better retrieval results. For legacy codebases with 500+ line methods, a two-layer splitting strategy prevents embedding dilution. (Source: Qdrant RAG best practices + tree-sitter docs, HIGH confidence)
+    // Dedup: same file + overlapping line ranges → keep higher score
+    const seen = new Map<string, RetrievalResult>();
+    for (const result of results) {
+      const key = `${result.filePath}:${result.startLine}-${result.endLine}`;
+      if (!seen.has(key)) {
+        seen.set(key, result);
+      }
+    }
 
-```typescript
-// packages/ast-parser/src/types.ts
-export interface CodeChunk {
-  id: string;              // sha1(filePath:startLine:endLine)
-  content: string;         // Raw source code of the chunk
-  filePath: string;
-  relativePath: string;
-  language: string;
-  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other';
-  name?: string;           // Function/class/type name
-  startLine: number;       // 1-indexed
-  endLine: number;         // 1-indexed
-  imports: string[];       // What this chunk imports
-  exports: string[];       // What this chunk exports
-  parentName?: string;     // Set on sub-chunks (method from class, or split fragment)
-}
-
-// Two-layer strategy:
-// Layer 1 (AST-level): Walk AST, extract top-level declarations as chunks.
-//   Classes are decomposed into individual method chunks with parentName.
-// Layer 2 (post-processing): splitOversizedChunks() in splitter.ts.
-//   Any chunk exceeding maxChunkLines (default: 200) is split into sub-chunks.
-//   Each sub-chunk carries the function signature as a context prefix.
-//   Sub-chunks named functionName$part1, $part2, etc.
-```
-
-### Pattern 5: Repository Pattern for Vector Store
-
-**What:** Abstract Qdrant behind a `VectorStore` interface.
-**When:** All Qdrant interactions.
-**Why:** Enables unit testing with in-memory mocks. Isolates Qdrant-specific concerns. Makes future provider changes possible (though unlikely).
-
-```typescript
-// packages/vector-store/src/interface.ts
-export interface VectorStore {
-  initialize(config: VectorStoreConfig): Promise<void>;
-  upsertBatch(points: VectorPoint[]): Promise<void>;
-  search(query: number[], options: SearchOptions): Promise<SearchResult[]>;
-  getCollectionInfo(): Promise<CollectionInfo>;
-  deleteByFilter(filter: PointFilter): Promise<number>;
-}
-
-export interface VectorPoint {
-  id: string;
-  vector: number[];
-  payload: Record<string, unknown>;
-}
-
-export interface SearchOptions {
-  limit: number;
-  scoreThreshold?: number;
-  filter?: Record<string, unknown>;
+    return Array.from(seen.values()).slice(0, limit);
+  }
 }
 ```
 
-### Pattern 6: Shared Metrics Store via SQLite
+**Graceful degradation:** When only AST collection exists (LLM indexing not run or not configured), the `llmEngine` constructor param is `undefined` and search falls back to single-collection behavior. No special casing needed in MCP tools or dashboard.
 
-**What:** A lightweight SQLite database for metrics data that multiple components write to and the dashboard reads from.
-**When:** Token usage tracking, benchmark result storage.
-**Why:** JSON files have concurrency issues. A full database server is overkill. SQLite handles concurrent reads well (one writer at a time is fine for this use case), is zero-config, and ships as a file. `better-sqlite3` provides excellent TypeScript support.
+**MCP integration:** The MCP server uses duck-typed `Engine` interfaces. The `MultiCollectionSearchEngine` implements the same `search()` / `searchHybrid()` / `getFile()` shape. Swapping it in requires changing only the engine instantiation in `createMcpServer()` — zero changes to tool registration or handler functions.
+
+**Confidence:** HIGH — verified MCP tools use duck-typed interfaces via source analysis.
+
+## Data Flow — v1.1 Changes
+
+### Modified Indexing Flow
+
+```
+CLI: `ia-framework index --strategy both`
+         │
+         ├─── strategy=ast (or both) ──────────────────────────────────┐
+         │                                                              │
+         │  walkFiles → parseFile (tree-sitter AST)                    │
+         │       → AstChunkingStrategy.processChunks()                 │
+         │           (wraps chunkToDescription — identical output)      │
+         │       → embedChunksParallel(concurrency=5) ──── [CHANGED]   │
+         │       → upsertBatch to "{project}" collection               │
+         │                                                              │
+         ├─── strategy=llm (or both) ──────────────────────────────────┐
+         │                                                              │
+         │  walkFiles → parseFile (tree-sitter AST)                    │
+         │       → LlmChunkingStrategy.processChunks()  ──── [NEW]     │
+         │           (Ollama chat API with structured output)           │
+         │       → embedChunksParallel(concurrency=2) ──── [CHANGED]   │
+         │       → upsertBatch to "{project}-llm" collection ── [NEW]  │
+         │                                                              │
+         └─── Both pipelines share same EmbeddingProvider instance      │
+              Both pipelines can run sequentially or in parallel         │
+```
+
+### Modified Retrieval Flow
+
+```
+MCP tool call: search_codebase(query="auth middleware")
+         │
+         ▼
+  MultiCollectionSearchEngine.search(query)  ──── [NEW]
+         │
+         ├──── Promise.all([
+         │       astEngine.search(query),    → Qdrant "{project}"
+         │       llmEngine.search(query),    → Qdrant "{project}-llm"
+         │     ])
+         │
+         ▼
+  merge + dedup + source tag
+         │
+         ▼
+  RetrievalResult[] with source='ast'|'llm' per result
+         │
+         ▼
+  MCP response (formatted context with source annotations)
+```
+
+### New Dashboard Data Flow
+
+```
+Dashboard UI: Search page
+         │
+         ▼
+  DashboardClient.search(query, filters)
+         │
+         ▼
+  Dashboard API: GET /api/search?q=auth&source=ast,llm&limit=20
+         │
+         ▼
+  MultiCollectionSearchEngine.search(query)
+         │  (same engine as MCP — shared instance)
+         ▼
+  JSON response with results + source tags
+
+Dashboard UI: Analytics page
+         │
+         ▼
+  DashboardClient.getCollectionAnalytics()
+         │
+         ▼
+  Dashboard API: GET /api/analytics/collections
+         │
+         ├── Qdrant: collection info for "{project}" → point count, vectors size
+         ├── Qdrant: collection info for "{project}-llm" → point count, vectors size
+         └── MetricsStore: query latency stats per source
+         │
+         ▼
+  JSON response with per-collection stats
+```
+
+## Integration Details
+
+### 1. ChunkingStrategy Integration with IndexingPipeline
+
+**Current pipeline signature:**
 
 ```typescript
-// packages/metrics/src/storage.ts
-export interface MetricsStore {
-  trackTokenUsage(entry: TokenUsageEntry): void;
-  saveBenchmarkResult(result: BenchmarkResult): void;
-  getTokenUsage(range: DateRange): TokenUsageEntry[];
-  getBenchmarkHistory(options: BenchmarkQuery): BenchmarkResult[];
+// BEFORE (packages/indexer/src/pipeline.ts)
+export interface IndexingConfig {
+  vectorStore: VectorStore;
+  embeddingProvider: EmbeddingProvider;
+  // ... other config
 }
+```
+
+**Modified signature:**
+
+```typescript
+// AFTER
+export interface IndexingConfig {
+  vectorStore: VectorStore;
+  embeddingProvider: EmbeddingProvider;
+  chunkingStrategy: ChunkingStrategy; // NEW — replaces hardcoded parseFile+chunkToDescription
+  parallelEmbedding?: ParallelEmbedConfig; // NEW — replaces sequential batching
+  // ... other config
+}
+```
+
+**Migration:** The existing `chunkToDescription()` function in `packages/indexer/src/chunk-description.ts` is NOT deleted. It becomes an internal implementation detail of `AstChunkingStrategy`. All existing tests continue to pass because `AstChunkingStrategy` produces identical output.
+
+### 2. Multi-Collection QdrantVectorStore
+
+**No code changes to QdrantVectorStore.** The class constructor already accepts `collectionName`:
+
+```typescript
+// Existing code — verified
+constructor(private config: { url: string; collectionName: string; apiKey?: string }) {}
+```
+
+Orchestration happens at the CLI/pipeline level:
+
+- `--strategy ast` → one pipeline, one collection
+- `--strategy llm` → one pipeline, one `-llm` collection
+- `--strategy both` → two pipelines, two collections, sequential execution
+
+### 3. Dashboard API Search Routes
+
+**New routes added to `packages/dashboard-api/src/routes/`:**
+
+```typescript
+// packages/dashboard-api/src/routes/search.ts  [NEW FILE]
+export function createSearchRoutes(engine: MultiCollectionSearchEngine): Hono {
+  const app = new Hono();
+
+  app.get('/api/search', async (c) => {
+    const query = c.req.query('q');
+    const sources = c.req.query('source')?.split(',') as ('ast' | 'llm')[];
+    const limit = parseInt(c.req.query('limit') ?? '10');
+
+    const results = await engine.search({
+      query: query!,
+      limit,
+      // Filter by source if specified
+    });
+
+    return c.json({ results, total: results.length });
+  });
+
+  return app;
+}
+
+// packages/dashboard-api/src/routes/analytics.ts  [NEW FILE]
+export function createAnalyticsRoutes(
+  qdrantUrl: string,
+  collectionName: string,
+  metricsStore: MetricsStore,
+): Hono {
+  const app = new Hono();
+
+  app.get('/api/analytics/collections', async (c) => {
+    const astInfo = await getCollectionInfo(qdrantUrl, collectionName);
+    const llmInfo = await getCollectionInfo(qdrantUrl, `${collectionName}-llm`);
+
+    return c.json({
+      ast: astInfo, // { pointCount, vectorsSize, indexedAt, ... }
+      llm: llmInfo, // null if LLM collection doesn't exist
+      comparison: {
+        totalChunks: astInfo.pointCount + (llmInfo?.pointCount ?? 0),
+        // ...
+      },
+    });
+  });
+
+  return app;
+}
+```
+
+**AppDependencies modification:**
+
+```typescript
+// packages/dashboard-api/src/app.ts — additive change
+export interface AppDependencies {
+  metricsStore: MetricsStore;
+  configManager: ConfigManager;
+  // NEW:
+  searchEngine?: MultiCollectionSearchEngine; // Optional — search disabled if not provided
+}
+```
+
+### 4. Dashboard UI — New Pages
+
+```
+apps/dashboard/src/
+├── pages/
+│   ├── Overview.tsx          # Existing — add collection summary widget
+│   ├── Benchmarks.tsx        # Existing — unchanged
+│   ├── Config.tsx            # Existing — add chunking strategy display
+│   ├── TokenUsage.tsx        # Existing — unchanged
+│   ├── Search.tsx            # NEW — search UI with source filtering
+│   └── Analytics.tsx         # NEW — collection comparison charts
+├── components/
+│   ├── SearchResults.tsx     # NEW — result list with source badges
+│   ├── CollectionStats.tsx   # NEW — per-collection metrics
+│   └── ... existing components
+└── api/
+    └── client.ts             # Existing — add search() and getAnalytics() methods
+```
+
+### 5. CLI Strategy Selection
+
+```typescript
+// packages/cli/src/commands/index.command.ts — modified
+program
+  .command('index')
+  .option('--strategy <strategy>', 'Chunking strategy: ast, llm, or both', 'ast')
+  .option('--force', 'Force full re-index')
+  .option('--concurrency <n>', 'Parallel embedding concurrency', '5')
+  .action(async (options) => {
+    const strategies = options.strategy === 'both' ? ['ast', 'llm'] : [options.strategy];
+
+    for (const strategy of strategies) {
+      const pipeline = createPipeline(config, strategy, {
+        concurrency: parseInt(options.concurrency),
+      });
+      await pipeline.run();
+    }
+  });
+```
+
+### 6. Config Schema Extension
+
+```typescript
+// packages/core/src/config/schema.ts — additive Zod changes
+const chunkingConfigSchema = z
+  .object({
+    strategy: z.enum(['ast', 'llm', 'both']).default('ast'),
+    llm: z
+      .object({
+        model: z.string().default('llama3.2'),
+        ollamaUrl: z.string().url().default('http://localhost:11434'),
+        prompt: z.string().optional(), // Custom system prompt for chunking
+      })
+      .optional(),
+  })
+  .optional();
+
+// Added to existing projectConfigSchema:
+const projectConfigSchema = z.object({
+  // ... existing fields
+  chunking: chunkingConfigSchema, // NEW
+  parallelEmbedding: z
+    .object({
+      // NEW
+      concurrency: z.number().min(1).max(20).default(5),
+      intervalCap: z.number().optional(),
+      interval: z.number().optional(),
+    })
+    .optional(),
+});
 ```
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Embedding Everything
+### Anti-Pattern 1: Mixing AST and LLM Chunks in One Collection
 
-**What:** Indexing test fixtures, generated code, node_modules, build outputs.
-**Why bad:** Wastes tokens, pollutes search results, slows indexing. Generated code has patterns that don't match how developers actually write code.
-**Instead:** Use `.gitignore` rules plus explicit include/exclude patterns in config. Default excludes: `node_modules`, `dist`, `build`, `.next`, `coverage`, `*.min.js`, `*.generated.*`, `__snapshots__`, fixture files.
+**What people do:** Store both AST-generated and LLM-generated chunks in the same Qdrant collection, using a metadata flag to distinguish them.
+**Why it's wrong:** HNSW index quality degrades when the vector space contains semantically different embedding distributions. AST descriptions are terse/structural ("function getUserById takes id returns User"); LLM descriptions are rich/semantic ("Authentication helper that retrieves a user record by their unique identifier, commonly used in middleware chains"). Mixing them creates a noisy vector space where neither type retrieves optimally.
+**Do this instead:** Separate collections. Each collection has a clean, homogeneous vector space. Search both in parallel and merge at the application layer.
 
-### Anti-Pattern 2: Stateful MCP Server
+### Anti-Pattern 2: Worker Threads for Embedding Parallelism
 
-**What:** Storing session state, caches, or configuration inside the MCP server process memory.
-**Why bad:** OpenCode may restart the MCP server process at any time. State is lost. Multiple MCP server instances would have divergent state.
-**Instead:** All state lives in Qdrant (index data), SQLite (metrics), and config files (project settings). The MCP server is stateless — it reads from these stores on every request.
+**What people do:** Use `worker_threads` to parallelize embedding API calls.
+**Why it's wrong:** Embedding is I/O-bound (waiting for HTTP responses from OpenAI/Ollama), not CPU-bound. Worker threads add serialization overhead, shared memory complexity, and debugging difficulty — all for a problem that `async/await` with a concurrency limiter solves perfectly.
+**Do this instead:** Use `p-queue` with configurable concurrency. It handles async I/O parallelism, rate limiting, and backpressure with ~50 lines of code.
 
-### Anti-Pattern 3: Direct Dashboard-to-MCP Coupling
+### Anti-Pattern 3: Tightly Coupling MCP Tools to MultiCollectionSearchEngine
 
-**What:** Having the dashboard call the MCP server's internal APIs, or having the MCP server serve the dashboard.
-**Why bad:** The MCP server uses stdio transport — it has no HTTP interface. They run as different processes with different lifecycles. Coupling them creates deployment complexity.
-**Instead:** Dashboard and MCP server share data through Qdrant and the SQLite metrics database. They are independent processes that happen to read from the same data stores.
+**What people do:** Import `MultiCollectionSearchEngine` directly into MCP tool handlers and use its specific API surface.
+**Why it's wrong:** The existing MCP tools use duck-typed `Engine` interfaces — this is a feature, not a bug. Direct coupling means MCP tools break when search engine internals change.
+**Do this instead:** Keep the duck-typed pattern. `MultiCollectionSearchEngine` implements the same shape (`search()`, `searchHybrid()`, `getFile()`). MCP tools don't know or care about multi-collection internals.
 
-### Anti-Pattern 4: Hardcoded Embedding Dimensions
+### Anti-Pattern 4: Making LLM Chunking a Required Dependency
 
-**What:** Assuming all embeddings are 1536-dimensional (OpenAI default).
-**Why bad:** Different models have different dimensions: OpenAI text-embedding-3-small = 1536, Ollama nomic-embed-text = 768, etc. Hardcoding prevents model switching.
-**Instead:** Read dimensions from the `EmbeddingProvider.dimensions` property. Create Qdrant collections with the provider's dimension. Store the dimension in project config for validation on re-index.
+**What people do:** Require Ollama to be running for any indexing to work.
+**Why it's wrong:** Many users will use AST-only chunking (it's faster, free, works offline). LLM chunking should be opt-in, not opt-out.
+**Do this instead:** Default strategy is `ast`. LLM strategy is only activated when `--strategy llm` or `--strategy both` is passed, or when `chunking.strategy` is configured. If Ollama is unavailable when LLM strategy is requested, fail fast with a clear error message — don't silently fall back to AST.
 
-### Anti-Pattern 5: Monolithic Indexer
+### Anti-Pattern 5: Synchronous LLM Chunking Inside the Embedding Pipeline
 
-**What:** One giant function that walks files, parses, embeds, and stores.
-**Why bad:** Untestable, can't add stages, can't report progress per-stage, can't retry failed stages.
-**Instead:** Pipeline pattern with discrete stages (see Pattern 2). Each stage is independently testable with mock inputs/outputs.
+**What people do:** Call Ollama for chunk descriptions inline during the embedding stage.
+**Why it's wrong:** LLM description generation is slow (1-5 seconds per chunk). Mixing it with embedding creates a sequential bottleneck where neither operation can be parallelized independently.
+**Do this instead:** Chunking and embedding are separate pipeline stages. The `ChunkingStrategy` runs first (generating `EnrichedChunk[]` with descriptions), then embedding runs on the complete set of enriched chunks with full parallelism.
 
-### Anti-Pattern 6: Re-indexing the Entire Codebase on Every Change
+## Scaling Considerations
 
-**What:** Full re-index when any file changes.
-**Why bad:** For large codebases (10K+ files), full indexing takes minutes to hours and consumes embedding tokens.
-**Instead:** Incremental indexing: use `git diff` to detect changed files, delete old chunks for changed files from Qdrant, re-index only changed files. Store last-indexed commit hash in project config.
+| Concern            | AST Only (current)       | AST + LLM                                    | Notes                                                  |
+| ------------------ | ------------------------ | -------------------------------------------- | ------------------------------------------------------ |
+| **Indexing time**  | 5-15 min (10K files)     | 2-8 hours (10K files)                        | LLM chunking is ~1-5s per chunk via Ollama             |
+| **Mitigation**     | Parallel embedding helps | Incremental LLM indexing essential           | Only re-chunk changed files                            |
+| **Qdrant memory**  | ~500MB (10K files)       | ~1GB (10K files, 2 collections)              | Linear growth, manageable                              |
+| **Mitigation**     | Default Docker config    | May need to increase Docker memory           | Monitor via dashboard analytics                        |
+| **Search latency** | <100ms                   | <150ms (parallel query)                      | Two collections queried in parallel, not sequential    |
+| **Mitigation**     | No tuning needed         | Ensure both collections use same HNSW params | Promise.all keeps latency near single-collection       |
+| **Embedding cost** | $1-5 (OpenAI, 10K files) | $2-10 (same chunks, 2 strategies)            | Each strategy embeds same code, different descriptions |
+| **Mitigation**     | Cloud is fine            | Local Ollama for both chunking and embedding | Eliminates all API costs                               |
 
-## Scalability Considerations
+## Build Order — v1.1 Features
 
-| Concern | At 1K files | At 10K files | At 100K files |
-|---------|-------------|--------------|---------------|
-| **Indexing time** | Minutes | 10-30 min | Hours |
-| **Mitigation** | Single-threaded fine | Parallel file processing (worker threads) | Incremental indexing essential, parallel + batch embedding |
-| **Qdrant memory** | ~50MB | ~500MB | ~5GB |
-| **Mitigation** | Default Docker config | Increase Docker memory limits | Consider `on_disk: true` for vectors |
-| **Embedding cost** | $0.10 (OpenAI) | $1-5 | $10-50 |
-| **Mitigation** | Cloud is fine | Local Ollama becomes attractive | Local Ollama strongly recommended |
-| **Search latency** | <50ms | <100ms | <200ms |
-| **Mitigation** | No tuning needed | Default HNSW params fine | Tune `ef` and `m` params |
-| **Retrieval quality** | Good with basic search | Needs dependency expansion | Needs re-ranking + careful chunking |
-
-## Key Technology Choices
-
-### Tree-sitter for AST Parsing
-
-Use the `tree-sitter` npm package (native Node.js bindings) rather than `web-tree-sitter` (WASM). The native bindings are faster and simpler for a Node.js-only tool. Load language grammars dynamically based on detected project languages.
-
-**Supported languages to prioritize:** TypeScript, JavaScript, Python, Go, Java, Rust, C#, Ruby (cover the most common stacks).
-
-**Confidence:** MEDIUM — verify `tree-sitter` npm package stability and current Node.js version compatibility during implementation. If native bindings prove problematic, `web-tree-sitter` is a solid fallback.
-
-### MCP Transport: stdio
-
-Use stdio transport exclusively. OpenCode spawns the MCP server as a subprocess and communicates via stdin/stdout. This is the simplest, most reliable transport for local tools. No HTTP server, no port management, no authentication.
-
-**Confidence:** HIGH — confirmed from MCP specification and TypeScript SDK docs.
-
-### Qdrant Client: @qdrant/js-client-rest
-
-Use the official Qdrant JavaScript REST client. It provides full collection management, point upsert, search with filters, and payload management. Well-documented with TypeScript types.
-
-**Confidence:** HIGH — verified from Context7 (Qdrant JS library, 98 code snippets, High reputation).
-
-### Dashboard Backend: Fastify
-
-Use Fastify over Express for the dashboard API. Fastify is TypeScript-first, faster, has built-in schema validation, and better suited for a lightweight internal monitoring API.
-
-**Confidence:** MEDIUM — standard choice for TypeScript APIs, but verify Fastify works well inside Docker with static file serving.
-
-## Suggested Build Order
-
-Dependencies flow downward. Each level requires the levels above it to be complete.
+Dependencies between features determine implementation order:
 
 ```
-Level 0 (no dependencies):
-  └── core (types, config, logger)
+Phase 1: Foundation Refactoring (no new features, enables all others)
+  ├── Extract ChunkingStrategy interface from IndexingPipeline
+  ├── Create AstChunkingStrategy (wraps existing behavior)
+  ├── Replace sequential embedBatch with parallel p-queue
+  └── Add EnrichedChunk type with optional description field
 
-Level 1 (depends on core):
-  ├── project-detector
-  ├── embedding (interface + at least one provider)
-  ├── ast-parser (interface + at least TypeScript grammar)
-  └── vector-store (interface + Qdrant implementation)
+Phase 2: LLM Chunking
+  ├── Implement LlmChunkingStrategy (Ollama structured output)
+  ├── Add --strategy flag to CLI index command
+  ├── Extend ProjectConfig with chunking section
+  └── Collection naming convention ({name}-llm)
 
-Level 2 (depends on Level 1):
-  ├── indexer (depends on ast-parser, embedding, vector-store)
-  └── rag (depends on embedding, vector-store)
+Phase 3: Multi-Collection Search
+  ├── Implement MultiCollectionSearchEngine
+  ├── Add source field to RetrievalResult
+  ├── Integrate into MCP server (swap engine)
+  └── Update CLI search command for multi-collection
 
-Level 3 (depends on Level 2):
-  ├── mcp-server (depends on rag)
-  ├── metrics (depends on core — can be built earlier but used here)
-  └── installer (depends on project-detector, orchestrates Docker)
-
-Level 4 (depends on Level 3):
-  ├── cli (depends on indexer, rag, metrics)
-  ├── benchmark runner (depends on rag, metrics)
-  └── auto-context mode (depends on rag, MCP integration)
-
-Level 5 (depends on Level 4):
-  └── dashboard (depends on vector-store, metrics — but needs data to display)
+Phase 4: Dashboard Evolution
+  ├── Add search routes to dashboard API
+  ├── Add analytics routes to dashboard API
+  ├── Build Search page in dashboard UI
+  └── Build Analytics page in dashboard UI
 ```
 
-### Roadmap Phase Implications
+**Rationale:**
 
-This build order maps to suggested roadmap phases:
-
-1. **Foundation** (Level 0-1): Core types, config system, Docker setup (Qdrant), project detection, installer skeleton. Establishes the monorepo, build tooling, and infrastructure that everything else depends on.
-
-2. **Indexing** (Level 1-2): AST parsing with tree-sitter, embedding provider abstraction, indexing pipeline, Qdrant integration. Ends with: you can run a command and your codebase is indexed in Qdrant.
-
-3. **Retrieval** (Level 2-3): RAG engine, semantic search, dependency graph expansion, MCP server with basic tools. Ends with: OpenCode can query the codebase through MCP tools.
-
-4. **Intelligence** (Level 3-4): Auto-context injection, retrieval mode configuration (MCP-only / auto-context / both), context budget management. Ends with: AI responses automatically include relevant codebase context.
-
-5. **Quality** (Level 4): Benchmark runner, metrics storage, benchmark comparison across models/strategies. Ends with: you can measure and compare RAG quality.
-
-6. **Visibility** (Level 5): Dashboard with index status, token usage charts, benchmark trend visualization. Ends with: developers can monitor the system visually.
-
-7. **Integration** (Level 4+): GSD workflow extension, end-to-end polish, incremental indexing optimization. Ends with: complete development workflow with RAG-enhanced AI.
-
-**Why this order:**
-- Can't retrieve without an index (Phase 2 before 3)
-- Can't benchmark without retrieval working (Phase 3 before 5)
-- Can't visualize without data to show (Phase 5 before 6)
-- Foundation must be solid before anything else (Phase 1 first)
-- GSD integration requires all pieces working (Phase 7 last)
+- Phase 1 must come first — all other features depend on the strategy interface and parallel embedding
+- Phase 2 depends on Phase 1 — needs ChunkingStrategy interface to implement LlmChunkingStrategy
+- Phase 3 depends on Phase 2 — needs two collections to exist before multi-collection search makes sense
+- Phase 4 depends on Phase 3 — needs search engine to power search routes, needs collection data for analytics
 
 ## Sources
 
-- MCP TypeScript SDK documentation (Context7, `/modelcontextprotocol/typescript-sdk`, HIGH confidence, 346 code snippets)
-- MCP Architecture specification (https://modelcontextprotocol.io/docs/concepts/architecture, HIGH confidence)
-- MCP Transport specification (https://modelcontextprotocol.io/docs/concepts/transports, HIGH confidence)
-- Qdrant JS Client (Context7, `/qdrant/qdrant-js`, HIGH confidence, 98 code snippets)
-- Qdrant RAG documentation (Context7, `/websites/qdrant_tech`, HIGH confidence, 5682 code snippets)
-- Tree-sitter documentation (Context7, `/websites/tree-sitter_github_io_tree-sitter`, MEDIUM confidence)
-- Turborepo monorepo patterns (Context7, `/vercel/turborepo`, HIGH confidence, 1520 code snippets)
+- **Ollama structured output (format parameter):** Context7 `/ollama/ollama-js` — verified `format` accepts JSON schema objects for structured chat output. HIGH confidence.
+- **p-queue concurrency control:** Context7 `/sindresorhus/p-queue` — verified `intervalCap`, `interval`, `concurrency` options. HIGH confidence.
+- **Qdrant multi-collection:** Context7 `/qdrant/qdrant-js` — verified collection management APIs. HIGH confidence.
+- **MCP SDK tool registration:** Context7 `/modelcontextprotocol/typescript-sdk` — verified duck-typed tool handler pattern. HIGH confidence.
+- **Hono routing:** Context7 `/websites/hono_dev` — verified route composition with `app.route()`. HIGH confidence.
+- **Existing codebase:** Direct source analysis of all packages listed in Context section. HIGH confidence.
+
+---
+
+_Architecture research for: ia-framework v1.1 feature integration_
+_Researched: 2026-04-09_

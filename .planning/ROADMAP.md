@@ -1,8 +1,9 @@
 # Roadmap: ia-framework
 
-## Overview
+## Milestones
 
-This roadmap delivers a local RAG framework for AI-assisted development in large codebases. The journey builds bottom-up: monorepo foundation → project detection → indexing pipeline → retrieval & MCP integration → installer → observability → benchmarking → dashboard → database context → advanced retrieval & workflow integration. Each phase delivers a complete, verifiable capability. The first four phases establish the core RAG pipeline (index → retrieve → serve via MCP). The installer then wraps this pipeline into a frictionless first-run experience. Observability and benchmarking add measurement infrastructure. The dashboard provides visual monitoring. Database context and advanced retrieval are refinements validated by benchmarks.
+- ✅ **v1.0 MVP** - Phases 1-11 (shipped 2026-04-07)
+- 🚧 **v1.1 RAG Quality & Dashboard Evolution** - Phases 12-18 (in progress)
 
 ## Phases
 
@@ -12,6 +13,9 @@ This roadmap delivers a local RAG framework for AI-assisted development in large
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 Decimal phases appear between their surrounding integers in numeric order.
+
+<details>
+<summary>✅ v1.0 MVP (Phases 1-11) — SHIPPED 2026-04-07</summary>
 
 - [x] **Phase 1: Foundation & Infrastructure** - Monorepo scaffolding, shared types, config system, Docker + Qdrant infrastructure (completed 2026-04-01)
 - [x] **Phase 2: Project Detection & Configuration** - Auto-detect target project's tech stack and produce confirmed profile (completed 2026-04-01)
@@ -24,8 +28,6 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: Database Context** - Database schema indexing and query support as additional AI context (completed 2026-04-01)
 - [x] **Phase 10: Advanced Retrieval & Workflow Integration** - Dependency graph expansion, auto-context injection, GSD integration (completed 2026-04-02)
 - [x] **Phase 11: MRR Quick Wins & Corpus Building** - Improve retrieval quality through corpus expansion and threshold tuning (completed 2026-04-07)
-
-## Phase Details
 
 ### Phase 1: Foundation & Infrastructure
 
@@ -57,7 +59,7 @@ Plans:
 1. Running project detection on a target codebase identifies its language, framework, package manager, test runner, and build commands
 2. Developer is shown the detected profile and can confirm, correct, or extend any field
 3. Confirmed profile is persisted to `.ia-framework/project.json` and loads correctly on next startup
-   **Plans**: TBD
+   **Plans**: 2 plans
 
 Plans:
 
@@ -76,7 +78,7 @@ Plans:
 3. Indexing uses the configured embedding provider (OpenAI or Ollama) without code changes
 4. Indexer skips files matching .gitignore and standard exclusions (node_modules, build output, binary files)
 5. Re-running the indexer after code changes only re-indexes modified files (detected via git diff)
-   **Plans**: TBD
+   **Plans**: 4 plans
 
 Plans:
 
@@ -96,7 +98,7 @@ Plans:
 2. MCP server registers tools (search_codebase, get_file, get_dependencies) accessible from OpenCode via stdio transport
 3. Search results include file path, function/class name, and code content for each match
 4. All retrieval operations run locally — queries and results never leave the developer's machine
-   **Plans**: TBD
+   **Plans**: 3 plans
 
 Plans:
 
@@ -116,7 +118,7 @@ Plans:
 3. After installation completes, developer can search the indexed codebase via OpenCode MCP tools
 4. Developer can run `ia-framework index`, `ia-framework search`, and `ia-framework status` without re-running the full installer
 5. Installer sets up Qdrant Docker container with named volumes so indexed data persists across container restarts
-   **Plans**: TBD
+   **Plans**: 3 plans
 
 Plans:
 
@@ -135,7 +137,7 @@ Plans:
 2. Developer can see total tokens consumed in the current coding session
 3. Token usage is broken down by retrieval strategy (MCP-only vs auto-context vs combined) for cost comparison
 4. All metrics are stored in a local SQLite database and persist across sessions
-   **Plans**: TBD
+   **Plans**: 2 plans
 
 Plans:
 
@@ -175,7 +177,7 @@ Plans:
 3. Dashboard shows token usage trends as interactive charts over time
 4. Dashboard shows benchmark score trends with historical comparison and allows triggering re-indexing with different strategies
 5. Dashboard displays the detected project profile and stays in sync with the `.ia-framework/project.json` config file
-   **Plans**: TBD
+   **Plans**: 4 plans
 
 Plans:
 
@@ -244,21 +246,138 @@ Plans:
 - [x] 11-03-PLAN.md — Hybrid search: BM25 sparse vectors in Qdrant, SearchEngine.searchHybrid(), search_codebase_hybrid MCP tool
 - [x] 11-04-PLAN.md — Threshold tuning (post re-index), benchmark comparison, MCP default update, ROADMAP + STATE update
 
+</details>
+
+### 🚧 v1.1 RAG Quality & Dashboard Evolution (In Progress)
+
+**Milestone Goal:** Improve RAG retrieval quality (MRR > 0.7) through LLM-based chunking, parallel embedding, systematic strategy optimization, and dashboard analytics with interactive search.
+
+**Critical dependency:** INDX-13 (LLM chunking spike) is a GO/NO-GO gate. Phase 12 must complete first. If the spike fails, LLM-specific requirements (INDX-10, INDX-11, INDX-12) are descoped and the milestone pivots.
+
+- [ ] **Phase 12: LLM Chunking Spike** - GO/NO-GO validation of LLM-based chunking feasibility via Ollama
+- [ ] **Phase 13: Pipeline Refactoring & Parallel Embedding** - Extract ChunkingStrategy interface, add concurrent embedding with progress events
+- [ ] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage
+- [ ] **Phase 15: Multi-Collection Search & MCP Integration** - Cross-collection querying with RRF merging and source tagging
+- [ ] **Phase 16: Dashboard Search** - Search page with query input, collection selector, per-query metrics, and A/B comparison
+- [ ] **Phase 17: Dashboard Search History** - Persistent search log with replay, filtering, and comparison
+- [ ] **Phase 18: Dashboard Analytics** - Strategy comparison charts, RAG quality trends, token breakdowns, score distributions
+
+## Phase Details
+
+### Phase 12: LLM Chunking Spike
+
+**Goal**: Validate LLM chunking feasibility before committing to full implementation — GO/NO-GO gate for all LLM-dependent work
+**Depends on**: Nothing (first v1.1 phase)
+**Requirements**: INDX-13
+**Success Criteria** (what must be TRUE):
+
+1. Spike script sends representative files (small, medium, large) to Ollama and receives structured JSON with chunk boundaries and prose summaries
+2. Measured latency (seconds/file, tokens/sec) is documented for 3+ file sizes with a clear viability assessment
+3. Same file produces consistent chunk boundaries across 5 runs with temperature=0 (determinism validated)
+4. GO/NO-GO decision is documented with evidence covering quality, latency, context window handling, and model recommendation
+   **Plans**: TBD
+
+### Phase 13: Pipeline Refactoring & Parallel Embedding
+
+**Goal**: Indexing pipeline is faster and extensible — parallel embedding with provider-aware concurrency and real-time progress visibility
+**Depends on**: Nothing (independent refactoring of existing pipeline)
+**Requirements**: INDX-14, INDX-15, INDX-16, INDX-17
+**Success Criteria** (what must be TRUE):
+
+1. Embedding pipeline processes multiple chunks concurrently via p-queue, completing indexing measurably faster than sequential baseline
+2. Concurrency automatically adapts to provider type (Ollama: 2-3 concurrent, OpenAI: 5-10 concurrent) without manual configuration
+3. CLI and dashboard receive real-time progress events during indexing showing phase, completed count, and total count
+4. Developer can override default embedding concurrency via `embeddingConcurrency` in project.json
+   **Plans**: TBD
+
+### Phase 14: LLM Chunking Implementation & CLI
+
+**Goal**: Developer can index codebase using LLM-based semantic chunking via Ollama, with chunks stored in a dedicated collection
+**Depends on**: Phase 12 (GO decision), Phase 13 (ChunkingStrategy interface)
+**Requirements**: INDX-10, INDX-11, INDX-12, CLIE-01, CLIE-02, CLIE-03, RETR-07
+**Success Criteria** (what must be TRUE):
+
+1. Running `ia-framework index --strategy llm` produces semantically chunked code with prose summaries via Ollama in a single pass per file
+2. LLM chunks are stored in a separate `{project}-llm` Qdrant collection alongside the existing `{project}` AST collection
+3. CLI verifies the configured Ollama model is available before LLM indexing starts; prompts interactive model selection when the configured model is missing
+4. Re-running LLM indexing on unchanged files skips LLM processing (cached by file content hash)
+5. Running `ia-framework index` without `--strategy` flag defaults to AST chunking (backward compatible)
+   **Plans**: TBD
+
+### Phase 15: Multi-Collection Search & MCP Integration
+
+**Goal**: MCP search tools seamlessly query both AST and LLM collections with fair cross-collection ranking
+**Depends on**: Phase 14 (collections must exist)
+**Requirements**: RETR-08, RETR-09, RETR-10, RETR-11
+**Success Criteria** (what must be TRUE):
+
+1. MCP `search_codebase` and `search_codebase_hybrid` tools automatically query all active Qdrant collections for the project
+2. Cross-collection results are merged via Reciprocal Rank Fusion (RRF) — rank-based merging, never raw score comparison
+3. Each search result includes a `source` tag (`ast` or `llm`) indicating which collection produced it
+4. Search works normally when only one collection exists — no LLM collection means AST-only results with no errors or degradation
+   **Plans**: TBD
+
+### Phase 16: Dashboard Search
+
+**Goal**: Developer can search the indexed codebase directly from the dashboard with per-query metrics and strategy comparison
+**Depends on**: Phase 15 (multi-collection search engine)
+**Requirements**: DASH-07, DASH-08, DASH-09, DASH-10
+**Success Criteria** (what must be TRUE):
+
+1. Dashboard has a search page with query input field, ranked results showing relevance scores, file paths, and inline code previews
+2. Developer can select which collection(s) to search: AST only, LLM only, or both (merged)
+3. Each search displays per-query metrics panel: latency, chunks scanned, and score distribution visualization
+4. Developer can run the same query against AST and LLM collections side-by-side for A/B comparison with visual diff of rankings
+   **Plans**: TBD
+
+### Phase 17: Dashboard Search History
+
+**Goal**: Developer can review, replay, and compare past searches with a persistent searchable log
+**Depends on**: Phase 16 (search functionality must exist)
+**Requirements**: DASH-12, DASH-13, DASH-14
+**Success Criteria** (what must be TRUE):
+
+1. Every dashboard search is automatically persisted with query text, results, scores, strategy, and timestamp
+2. Developer can replay any past query to compare results before and after re-indexing
+3. Search history is filterable by date range, strategy used, query text substring, and minimum relevance score
+   **Plans**: TBD
+
+### Phase 18: Dashboard Analytics
+
+**Goal**: Developer has full analytics visibility into RAG quality trends, strategy performance, token costs, and score distributions
+**Depends on**: Phase 15 (multi-collection data), Phase 16 (search infrastructure)
+**Requirements**: DASH-11, DASH-15, DASH-16, DASH-17, DASH-18
+**Success Criteria** (what must be TRUE):
+
+1. Dashboard shows strategy comparison scores (MRR, P@K) via radar or bar charts from benchmark data
+2. Dashboard shows RAG quality trend charts tracking MRR, average latency, and chunk relevance over time
+3. Dashboard shows aggregate strategy comparison table with average MRR, average latency, and average chunks per strategy
+4. Dashboard shows token usage breakdown by strategy (indexing tokens vs query tokens, broken down per AST/LLM)
+5. Dashboard shows score distribution histograms across queries and strategies for distribution shape analysis
+   **Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10
+Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 
-| Phase                                         | Plans Complete | Status   | Completed  |
-| --------------------------------------------- | -------------- | -------- | ---------- |
-| 1. Foundation & Infrastructure                | 3/3            | Complete | 2026-04-01 |
-| 2. Project Detection & Configuration          | 2/2            | Complete | 2026-04-01 |
-| 3. Indexing Pipeline                          | 4/4            | Complete | 2026-04-01 |
-| 4. Retrieval & MCP Server                     | 3/3            | Complete | 2026-04-01 |
-| 5. Installation & CLI                         | 3/3            | Complete | 2026-04-01 |
-| 6. Observability & Metrics                    | 2/2            | Complete | 2026-04-01 |
-| 7. Benchmarking System                        | 3/3            | Complete | 2026-04-01 |
-| 8. Monitoring Dashboard                       | 4/4            | Complete | 2026-04-01 |
-| 9. Database Context                           | 2/2            | Complete | 2026-04-01 |
-| 10. Advanced Retrieval & Workflow Integration | 4/4            | Complete | 2026-04-02 |
-| 11. MRR Quick Wins & Corpus Building          | 4/4            | Complete    | 2026-04-07 |
+| Phase                                         | Milestone | Plans Complete | Status      | Completed  |
+| --------------------------------------------- | --------- | -------------- | ----------- | ---------- |
+| 1. Foundation & Infrastructure                | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 2. Project Detection & Configuration          | v1.0      | 2/2            | Complete    | 2026-04-01 |
+| 3. Indexing Pipeline                          | v1.0      | 4/4            | Complete    | 2026-04-01 |
+| 4. Retrieval & MCP Server                     | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 5. Installation & CLI                         | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 6. Observability & Metrics                    | v1.0      | 2/2            | Complete    | 2026-04-01 |
+| 7. Benchmarking System                        | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 8. Monitoring Dashboard                       | v1.0      | 4/4            | Complete    | 2026-04-01 |
+| 9. Database Context                           | v1.0      | 2/2            | Complete    | 2026-04-01 |
+| 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
+| 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
+| 12. LLM Chunking Spike                        | v1.1      | 0/?            | Not started | -          |
+| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 0/?            | Not started | -          |
+| 14. LLM Chunking Implementation & CLI         | v1.1      | 0/?            | Not started | -          |
+| 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
+| 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
+| 17. Dashboard Search History                  | v1.1      | 0/?            | Not started | -          |
+| 18. Dashboard Analytics                       | v1.1      | 0/?            | Not started | -          |
