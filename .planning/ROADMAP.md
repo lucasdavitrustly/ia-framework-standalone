@@ -275,7 +275,11 @@ Plans:
 2. Measured latency (seconds/file, tokens/sec) is documented for 3+ file sizes with a clear viability assessment
 3. Same file produces consistent chunk boundaries across 5 runs with temperature=0 (determinism validated)
 4. GO/NO-GO decision is documented with evidence covering quality, latency, context window handling, and model recommendation
-   **Plans**: TBD
+   **Plans**: 1 plan
+
+Plans:
+
+- [ ] 12-01-PLAN.md — Build and run LLM chunking spike (scaffold, Ollama integration, measurement harnesses, GO/NO-GO report)
 
 ### Phase 13: Pipeline Refactoring & Parallel Embedding
 
