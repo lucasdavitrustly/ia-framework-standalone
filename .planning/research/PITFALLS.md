@@ -1,467 +1,493 @@
-# Pitfalls Research
+# Domain Pitfalls — v1.1 Milestone
 
-**Domain:** AI-assisted development framework with local RAG for code
-**Researched:** 2026-03-31
-**Confidence:** HIGH (Qdrant docs, MCP specification, Tree-sitter docs, Qdrant code search tutorial)
+**Domain:** Adding LLM chunking, parallel embedding, multi-collection search, and dashboard analytics to an existing RAG/code intelligence system
+**Researched:** 2026-04-09
+**Confidence:** HIGH (Ollama docs via Context7, Qdrant docs via Context7, existing codebase analysis)
+
+> **Context:** This document covers pitfalls specific to ADDING these features to the existing ia-framework v1.0 system. The system already has working AST-based chunking, dual-vector search (text+code), hybrid BM25+dense, MCP server with `search_codebase` and `search_codebase_hybrid` tools, a dashboard API, and an indexing pipeline. These pitfalls focus on integration risks, not greenfield mistakes.
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Naive Text Chunking Destroys Code Retrieval Quality
-
-**What goes wrong:**
-Using generic text chunking (fixed character/token windows) on source code produces chunks that split functions mid-body, separate type definitions from their usage, and lose the structural context that makes code meaningful. Search results return half-functions and broken syntax that confuse the LLM more than help it.
-
-**Why it happens:**
-Teams apply standard RAG patterns from document search (split by paragraphs/tokens, overlap by 10-20%) to code without recognizing that code has formal structure. A 512-token window might cut a function at line 15 of 30, putting the return type in one chunk and the return statement in another.
-
-**How to avoid:**
-Use AST-aware chunking via Tree-sitter (or LSP-based parsing). Chunk at semantic boundaries: functions, methods, classes, structs, enums. Qdrant's own code search tutorial explicitly uses LSP/LSIF parsing to extract chunks at function-level granularity, with metadata (module, file, struct name, signature, docstring). Each chunk must be a self-contained, syntactically valid code unit with its context.
-
-For the ia-framework specifically:
-- Parse with Tree-sitter using language-specific grammars
-- Extract: function/method body, signature, docstring, containing class/module, file path
-- Store metadata as Qdrant payload for filtering
-- Keep chunks at function/method granularity — not too small (loses meaning) and not too large (exceeds embedding model context window)
-
-**Warning signs:**
-- Retrieved code snippets contain syntax errors or incomplete constructs
-- Search results return the wrong half of a function (e.g., setup code without the logic)
-- Developers report that RAG context "doesn't help" or "confuses the AI"
-- Benchmark scores don't improve when indexing more code
-
-**Phase to address:**
-Core indexing pipeline phase — this must be right from the first implementation. No point building MCP server or dashboard if the underlying chunks are garbage.
-
-**Sources:** Qdrant code search tutorial (https://qdrant.tech/documentation/tutorials-search-engineering/code-search/), Tree-sitter documentation. Confidence: HIGH.
+Mistakes that cause rewrites, data corruption, or fundamentally broken features.
 
 ---
 
-### Pitfall 2: Single Embedding Model Misses Half the Queries
+### Pitfall 1: Ollama Resource Contention — Generation and Embedding Fight for the Same VRAM
 
 **What goes wrong:**
-Using only a general NLP embedding model (like `all-MiniLM-L6-v2`) fails on code-to-code queries. Using only a code embedding model (like `jina-embeddings-v2-base-code`) fails on natural language queries like "how do I handle authentication?". Either choice loses ~40% of useful results.
+LLM-based chunking uses Ollama's `/api/generate` or `/api/chat` endpoint (a generative model). Embedding uses `/api/embed` (an embedding model). When both run on the same Ollama instance — which they will during indexing — they compete for GPU VRAM. If the chunking model is loaded and an embedding request arrives for a different model, Ollama must unload the chunking model to load the embedding model, then unload it again when the next chunk needs processing. This constant model-swap thrashing makes indexing 10-100x slower than either operation alone.
 
 **Why it happens:**
-NLP models understand natural language descriptions but don't understand code syntax. Code models understand structural similarity but miss the semantic intent behind natural language queries. Qdrant's code search demo proved this: NLP search returns function signatures matching the query's intent, while code search returns implementation-level matches. Both are needed.
+The existing pipeline (`packages/indexer/src/pipeline.ts`) processes files sequentially: parse → embed → store. With LLM chunking, the flow becomes: LLM-chunk → embed → store. If the chunking model (e.g., `qwen3:8b`) and the embedding model (e.g., `nomic-embed-text`) are different, Ollama unloads/loads models on each transition. Ollama's docs confirm: "If there is insufficient available memory to load a new model request while one or more models are already loaded, all new requests will be queued until the new model can be loaded. As prior models become idle, one or more will be unloaded to make room."
 
-**How to avoid:**
-Use dual-vector collections in Qdrant — store both a "text" vector (code converted to natural language description) and a "code" vector (raw code) for each chunk. Query both vectors and merge results. Qdrant natively supports named vectors per point, so a single collection can hold both.
+**Consequences:**
 
-For code-to-text conversion:
-- Extract function signature, split camelCase/snake_case into words
-- Include docstring/comments
-- Add context (module name, file name, class name)
-- Build a sentence: "Function {name} that does {docstring} defined as {signature} in {context}"
+- Indexing time for 5K files goes from minutes (AST+embed) to hours (LLM-chunk + model swap + embed)
+- Users abandon the process, thinking it's broken
+- On machines with <8GB VRAM, both models may not fit simultaneously
 
-**Warning signs:**
-- Developers phrase queries as code snippets but get irrelevant NL-matched results (or vice versa)
-- Retrieval precision is good for "find function X" but bad for "how does the app handle Y"
-- Only one type of query style produces useful results
+**Prevention:**
 
-**Phase to address:**
-Embedding/indexing pipeline phase. Must be designed into the collection schema from the start — adding a second vector later requires full re-indexing.
+- **Separate the phases completely:** Run ALL LLM chunking first (all files), THEN run ALL embedding as a second pass. Never interleave chunk-and-embed on a per-file basis. The pipeline already has `allChunks` collection before embedding — preserve this boundary.
+- **Use the same model for both if possible:** Some models (e.g., `qwen3`) can do both generation and embedding. If the chunking model also supports `/api/embed`, use it for both to avoid model swaps.
+- **Batch size matters differently:** For generation, batch size = 1 (one file at a time). For embedding, batch size = 50 (existing default). Don't try to parallelize across these two operations.
+- **Add a model pre-check:** Before starting, verify both models are available and estimate if they fit in VRAM together. Ollama's `/api/show` endpoint reports model size.
+- **Consider Ollama's `keep_alive` parameter:** Set `keep_alive: "0"` on chunking requests to release the model immediately after each batch, leaving VRAM free for the embedding model.
 
-**Sources:** Qdrant dual-vector code search tutorial (https://qdrant.tech/documentation/tutorials-search-engineering/code-search/). Confidence: HIGH.
+**Detection:**
+
+- Indexing slows by 10x+ compared to AST-only pipeline
+- `ollama ps` shows constant model loading/unloading during indexing
+- GPU memory usage oscillates wildly
+
+**Phase to address:** LLM Chunking Spike — this is the first thing to prototype and measure. If model contention makes indexing impractical, the entire strategy needs rethinking.
+
+**Sources:** Ollama FAQ on concurrent requests (Context7, docs.ollama.com/faq). Confidence: HIGH.
 
 ---
 
-### Pitfall 3: Embedding Model Mismatch Silently Degrades Results
+### Pitfall 2: LLM Chunk Non-Determinism Breaks Incremental Indexing and Benchmarks
 
 **What goes wrong:**
-The distance function configured in Qdrant doesn't match what the embedding model was trained for. Or the vector dimensions don't match. Or switching embedding providers doesn't trigger re-indexing, leaving mixed vectors in the collection. Results look plausible but are subtly wrong — the most dangerous failure mode.
+The existing incremental indexing system (`packages/indexer/src/incremental.ts`) works because AST parsing is deterministic: same file → same chunks → same chunk IDs (sha1 of `filePath:startLine:endLine`). LLM-based chunking is inherently non-deterministic. Running the same file through the same model twice produces slightly different chunk boundaries, different summaries, different names. This means:
+
+1. Chunk IDs change on every run → incremental indexing deletes and re-creates all chunks → defeats the purpose
+2. Benchmark results aren't reproducible → MRR measurements fluctuate between runs even with no code changes
+3. A/B comparison between runs is meaningless if the LLM chunks themselves vary
 
 **Why it happens:**
-Provider-agnostic embedding support means developers can switch models. But switching models means:
-1. Different vector dimensions (1536 for OpenAI, 768 for MiniLM, 4096 for some code models)
-2. Different distance metrics (some models optimize for cosine, others for dot product)
-3. Vectors from model A are meaningless when searched with model B's query vector
+LLMs are stochastic by nature. Even with `temperature: 0` and `seed: 42`, minor variations in tokenization, batching, or model quantization can produce different outputs. The existing chunk ID generation uses content-based hashing — if the content (boundaries) change, the ID changes.
 
-Qdrant won't error if you search a cosine collection with vectors that were trained for dot product — it will just return wrong results silently.
+**Consequences:**
 
-**How to avoid:**
-- Lock collection to a specific model configuration. Store model name + version in Qdrant payload metadata.
-- When the user changes embedding provider, FORCE full re-indexing. Delete and recreate the collection.
-- Validate vector dimensions match collection schema before upsert.
-- Default to Cosine distance (most general-purpose models use it) but document which models need other metrics.
-- Store embedding model config in `.ia-framework/project.json` and check on every startup.
+- Incremental re-indexing for LLM-chunked collections always does a full re-index
+- Benchmark MRR numbers fluctuate ±0.05 between identical runs, masking real improvements
+- Developers can't trust A/B comparisons because the baseline shifts
 
-**Warning signs:**
-- Search results seem random or unrelated to queries
-- Retrieval precision drops suddenly without code changes
-- Collection has points with different vector sizes (Qdrant will reject these, but mixed model sources with same dimensions won't be caught)
+**Prevention:**
 
-**Phase to address:**
-Embedding pipeline phase — implement model version tracking from day one. Re-indexing flow must be built alongside initial indexing.
+- **Accept non-determinism for LLM chunks — don't pretend it's incremental.** For the LLM collection, always do a full re-index when files change. Incremental indexing is an AST-collection optimization that doesn't apply to LLM chunks.
+- **Use content-independent chunk IDs for LLM chunks:** Instead of hashing chunk boundaries, hash `filePath + chunkIndex` (ordinal position in the file's chunk list). This is stable if the file doesn't change.
+- **Pin Ollama settings for reproducibility:** Use `temperature: 0`, `seed: <fixed>`, `top_p: 1.0`, `top_k: 1` in all chunking requests. This won't be perfectly deterministic but reduces variance significantly.
+- **Benchmark multiple runs:** Run benchmarks 3x and report mean ± stddev. If stddev is >0.02 MRR, the chunking is too noisy.
+- **Cache LLM chunk results:** Store the LLM's chunking output (raw JSON) alongside the file hash. On re-index, if the file hash hasn't changed, reuse the cached chunks instead of re-running the LLM.
 
-**Sources:** Qdrant retrieval quality tutorial (https://qdrant.tech/documentation/tutorials-search-engineering/retrieval-quality/), Qdrant embedding model migration tutorial. Confidence: HIGH.
+**Detection:**
+
+- Incremental indexing logs show "all chunks replaced" for unchanged files
+- Benchmark scores fluctuate >5% between identical runs
+- `chunksIndexed` count varies on re-runs of the same codebase
+
+**Phase to address:** LLM Chunking Spike — must be measured during the spike. If non-determinism is unacceptable, caching is mandatory from the start.
+
+**Sources:** Ollama structured output docs (Context7, docs.ollama.com/capabilities/structured-outputs), existing `incremental.ts` analysis. Confidence: HIGH.
 
 ---
 
-### Pitfall 4: Auto-Context Injection That Adds Wrong Context Is Worse Than None
+### Pitfall 3: Cross-Collection Score Incomparability Makes Dual-Search Merging Unfair
 
 **What goes wrong:**
-The auto-context mode prepends retrieved code to every prompt, including prompts where the context is irrelevant, wrong, or overwhelming. The LLM follows the injected context patterns even when they don't apply, producing code that matches the wrong style, uses wrong dependencies, or implements the wrong pattern. Token costs spike. Developer trust drops.
+When MCP tools search both AST and LLM collections, results from each have different score distributions. AST chunks are short, syntactically precise code units (a function body) — their embeddings cluster tightly. LLM chunks may include prose summaries, semantic annotations, or reorganized boundaries — their embeddings have different distributional properties. Simply interleaving results by raw score (e.g., "sort all results by similarity score descending") systematically favors whichever collection happens to produce higher scores, not which has better results.
 
 **Why it happens:**
-Auto-context treats every prompt equally. A query about "add a button to the settings page" gets the same retrieval pipeline as "what's the Node.js version?" or "refactor this function." Without relevance scoring/thresholds, every prompt gets 3-5 code chunks injected regardless of whether they're useful.
+Cosine similarity scores are relative to the document population in each collection. A score of 0.85 in the AST collection (where all documents are short code functions) does NOT mean the same quality match as 0.85 in the LLM collection (where documents are enriched semantic descriptions). The existing `SearchEngine.search()` merges text+code vectors within ONE collection using max-score — but cross-collection merging is a fundamentally different problem.
 
-**How to avoid:**
-- Implement a relevance threshold: if the best match score is below threshold, inject nothing.
-- Classify prompts: some prompts are "code generation" (benefit from context), some are "general questions" (don't).
-- Make auto-context configurable: developers should be able to set aggressiveness (always/smart/never).
-- Show developers WHAT context was injected (transparency) — dashboard or inline indicators.
-- The MCP-only mode should be the default initially — let developers explicitly request context before auto-injecting it.
-- Benchmark MCP-only vs auto-context vs both to find the sweet spot (PROJECT.md already plans this).
+**Consequences:**
 
-**Warning signs:**
-- Developers disable auto-context because "it keeps adding irrelevant stuff"
-- Token usage spikes without corresponding quality improvement
-- Generated code includes imports/patterns from unrelated parts of the codebase
-- Benchmark scores are LOWER with auto-context than without
+- One collection consistently dominates search results regardless of query
+- A/B comparison in dashboard shows "LLM is always better" (or worse) simply due to score scale
+- Developers lose trust in the "best of both worlds" dual-search promise
+- MRR improvement appears to regress when adding the second collection
 
-**Phase to address:**
-Context retrieval + MCP integration phase. Build MCP-only mode first, add auto-context later with scoring thresholds. The benchmarking system must exist before auto-context is tuned.
+**Prevention:**
+
+- **Use Reciprocal Rank Fusion (RRF) for cross-collection merging, NOT raw score comparison.** RRF is rank-based (1/(k+rank)), so it normalizes away score distribution differences. Qdrant already uses RRF for within-collection hybrid search — apply the same principle client-side for cross-collection.
+- **Alternative: Distribution-Based Score Fusion (DBSF)** — Qdrant supports this. Normalizes scores using mean ± 3σ, then sums. Can be computed client-side: for each collection's results, compute mean and stddev, normalize scores to [0,1], then merge.
+- **Tag every result with its source collection** (`strategy: 'ast' | 'llm'`) so the dashboard and MCP response can show provenance.
+- **Benchmark each collection independently AND together.** Run MRR benchmarks on AST-only, LLM-only, and merged. If merged is worse than the better individual, the fusion method is wrong.
+- **Don't use `scoreThreshold` across collections.** A threshold of 0.3 might filter out good results from one collection while admitting bad ones from another. Apply thresholds per-collection before merging.
+
+**Detection:**
+
+- In dashboard A/B comparison, one strategy consistently gets 90%+ of top-ranked positions
+- Adding the second collection to search makes MRR worse, not better
+- Score histograms for the two collections have very different shapes
+
+**Phase to address:** MCP Dual-Search (after both collections exist and have data). Must be designed before the MCP tool is updated.
+
+**Sources:** Qdrant hybrid queries documentation on RRF and DBSF (Context7, qdrant.tech/documentation/concepts/hybrid-queries). Confidence: HIGH.
 
 ---
 
-### Pitfall 5: Stale Index After Code Changes Poisons Context
+### Pitfall 4: Context Window Overflow When Sending Large Files to Ollama for Chunking
 
 **What goes wrong:**
-Developer modifies or deletes code, but the Qdrant index still contains the old version. RAG retrieves deleted functions, outdated patterns, or deprecated APIs. The LLM generates code based on the stale context — code that doesn't compile because it references things that no longer exist.
+The LLM chunking strategy sends source code files to Ollama and asks the model to identify semantic chunk boundaries. But Ollama models have limited context windows: **default 4096 tokens**, adjustable but memory-constrained. A 500-line TypeScript file is ~2000-4000 tokens. A 1000-line file is ~4000-8000 tokens. Adding the system prompt and instructions easily exceeds the context window for any file over ~300 lines. The model silently truncates the input or hallucinates chunk boundaries for code it never saw.
 
 **Why it happens:**
-Initial indexing is a one-shot operation. Without incremental re-indexing triggered by file changes, the index diverges from the codebase over time. In an active development project, this divergence happens within hours.
+The existing AST parser handles any file size because tree-sitter is a streaming incremental parser. The LLM approach must fit the entire file (or meaningful section) into a single prompt. Ollama's docs confirm: "By default, Ollama uses a context window size of 4096 tokens." Even with `num_ctx: 32768`, larger context = more VRAM = slower generation. The `options.num_ctx` per-request setting helps but has hardware limits.
 
-**How to avoid:**
-- Implement file-watcher-triggered incremental re-indexing (watch for git changes or filesystem events).
-- At minimum, support manual re-index command that's fast enough to run frequently.
-- Use file hash or git commit SHA as version metadata on each point — detect stale points by comparing to current state.
-- Tree-sitter's incremental parsing helps here: it can efficiently re-parse only changed portions.
-- Consider git-hook integration: re-index on post-commit or post-checkout.
-- Design the indexing pipeline for upsert (update existing points) not just insert.
+**Consequences:**
 
-**Warning signs:**
-- LLM generates code using old function signatures that have been refactored
-- RAG returns results from deleted files
-- Developers lose trust: "the AI doesn't know about my latest changes"
-- Growing divergence between codebase state and search results over time
+- Large files get silently truncated → LLM only chunks the first 30% of the file
+- Chunks for the truncated portion are missing from the index entirely
+- The model hallucinates function names or chunk boundaries that don't exist
+- Large classes/modules (the most important code to index) are the ones most affected
 
-**Phase to address:**
-Must be designed in the indexing pipeline phase, but the incremental update mechanism can be a separate, later phase. At minimum, fast full re-index (< 2 minutes for a large project) should be available from the start.
+**Prevention:**
 
----
+- **Pre-split large files before sending to Ollama.** Use the existing AST parser to identify top-level constructs (classes, function groups), then send each construct individually to the LLM for semantic chunking. This is a two-stage approach: AST for coarse splitting, LLM for semantic enrichment.
+- **Set `num_ctx` explicitly and measure.** Don't rely on defaults. Check available VRAM, set context appropriately, and VALIDATE that the model saw the full input by checking output coverage.
+- **Implement a file-size gate:** Files under N tokens → send to LLM directly. Files over N tokens → pre-split via AST, then enrich each piece with LLM.
+- **Track coverage:** After LLM chunking, verify that the union of all chunks covers the file's line range. If lines are missing, flag the file and fall back to AST chunking for uncovered sections.
+- **Budget the context window:** system prompt (~200 tokens) + file content + response space. If file content alone exceeds 70% of `num_ctx`, pre-split is mandatory.
 
-### Pitfall 6: MCP Server Crashes Silently Kill the Developer Workflow
+**Detection:**
 
-**What goes wrong:**
-The MCP server process crashes, hangs, or loses its STDIO connection. OpenCode doesn't get an error — it just gets no response. The developer's AI interaction silently degrades to context-free mode without any notification that RAG is offline.
+- LLM-chunked collection has fewer total chunks than AST collection for the same codebase
+- Files >300 lines have incomplete coverage (some functions/classes missing from index)
+- Benchmark queries for code in the bottom half of large files return no results from LLM collection
 
-**Why it happens:**
-MCP over STDIO has a fundamental fragility: the server is a child process. If it crashes, the STDIO pipe closes. The MCP specification notes that ping timeouts "should be treated as connection failures" and "multiple failed pings may trigger a connection reset." But many hosts don't implement aggressive health checking.
+**Phase to address:** LLM Chunking Spike — must be tested against the largest files in the target project immediately. This is a design-level decision (pure LLM vs AST+LLM hybrid).
 
-Common crash causes for this project:
-- Qdrant Docker container isn't running / crashed
-- Embedding API rate limits or network errors during query-time embedding
-- Memory issues from loading large embedding models locally (Ollama)
-- Unhandled promise rejections in the TypeScript server
-
-**How to avoid:**
-- Wrap all Qdrant calls with timeout + retry + circuit breaker pattern.
-- Log ALL MCP server errors to stderr (MCP spec allows this) AND to a persistent log file.
-- Health check endpoint: MCP server should verify Qdrant is reachable on startup and periodically.
-- Graceful degradation: if Qdrant is down, return empty results with an error message, don't crash.
-- Implement MCP Logging primitive: send diagnostic messages to the client for visibility.
-- Test MCP server against: Qdrant down, embedding API unreachable, malformed queries, very large payloads.
-
-**Warning signs:**
-- MCP tool calls return nothing without error messages
-- Developer manually restarts OpenCode to "fix" RAG
-- Server logs show unhandled exceptions
-- Qdrant container memory usage climbs without bound
-
-**Phase to address:**
-MCP server implementation phase. Error handling and graceful degradation must be built into the first version, not bolted on later.
-
-**Sources:** MCP specification (https://modelcontextprotocol.io/docs/concepts/architecture), MCP ping/error handling spec. Confidence: HIGH.
-
----
-
-### Pitfall 7: Dependency Graph Expansion Explodes Context Size
-
-**What goes wrong:**
-Semantic search finds a relevant function, then dependency graph expansion follows its imports to find types, interfaces, and utilities. But those have their own dependencies, and those have theirs. The expansion produces 50+ code chunks, exceeding the LLM's context window or drowning the actual query in noise.
-
-**Why it happens:**
-Large codebases have deep dependency trees. A single service function might import from a repository layer, which imports from an ORM, which imports from a database client. Following imports naively (even to depth 2) can generate hundreds of related code chunks. Barrel files (`index.ts` re-exports) make this worse — a single import from `index.ts` appears to depend on everything the module exports.
-
-**How to avoid:**
-- Set hard depth limit (1 hop is usually sufficient for direct dependencies).
-- Prioritize TYPE dependencies (interfaces, types) over implementation dependencies.
-- Filter out barrel files / re-exports — resolve to actual source files.
-- Cap total expanded context size (e.g., max 8K tokens of dependency context per query).
-- Weight dependency relevance by specificity: a custom type definition > a utility function > a third-party library type.
-- Detect and break circular dependency chains during expansion.
-
-**Warning signs:**
-- Context injection adds 20+ files to a single query
-- Token usage per query exceeds reasonable bounds (>15K tokens of context)
-- Expanded context includes standard library or node_modules types
-- Response time for context retrieval exceeds 2-3 seconds
-
-**Phase to address:**
-Advanced retrieval phase (after basic semantic search works). The dependency graph feature is a refinement, not a prerequisite. Ship basic semantic search first.
-
----
-
-### Pitfall 8: Benchmark System Measures the Wrong Thing
-
-**What goes wrong:**
-The benchmark system measures retrieval precision (did we find the right chunks?) but not end-to-end quality (did the AI produce code that compiles and passes tests?). Teams optimize for retrieval metrics while actual developer experience doesn't improve. Or benchmarks use synthetic/toy tasks that don't represent real development work.
-
-**Why it happens:**
-Retrieval metrics (precision@k, recall@k) are easy to compute and well-understood from information retrieval literature. End-to-end metrics (compile rate, test pass rate) require actually running the generated code, which is complex and slow. Teams take the easy path.
-
-**How to avoid:**
-- The PROJECT.md already specifies end-to-end benchmarks (compile/test pass rate) — hold to this.
-- Build the benchmark runner to: (1) present a coding task, (2) let the LLM generate code with RAG context, (3) compile the result, (4) run tests, (5) record pass/fail.
-- Create a curated set of benchmark tasks FROM the actual target project — not generic coding problems.
-- Benchmark tasks should include: "add a feature similar to X", "fix bug Y", "refactor Z" — realistic developer activities.
-- Track BOTH retrieval metrics AND end-to-end metrics. They should correlate — if they don't, something is wrong.
-- Benchmark without RAG as a baseline — the delta shows RAG's actual contribution.
-- Run benchmarks across different embedding models/chunking strategies as planned.
-
-**Warning signs:**
-- Retrieval precision is 95%+ but developers say RAG doesn't help
-- Benchmark tasks are too simple to exercise real RAG value (single-file changes)
-- No baseline comparison (RAG vs no-RAG)
-- Benchmark scores improve but developer satisfaction doesn't
-- Benchmarks take so long nobody runs them
-
-**Phase to address:**
-Benchmark system phase — must be implemented AFTER basic RAG pipeline works but BEFORE tuning retrieval parameters. You need measurement before optimization.
-
----
-
-### Pitfall 9: Installer Assumes Too Much About Developer Environment
-
-**What goes wrong:**
-The `./install.sh` script fails on common developer setups: Docker Desktop not installed or not running, Docker permission issues (rootless vs rootful), wrong Node.js version, macOS filesystem warnings from Qdrant, corporate proxy blocking Docker pulls, or simply not enough disk space for embedding models.
-
-**Why it happens:**
-"One-shot installer" implies it works everywhere with no prior setup. In reality, the prerequisites (Docker, Node.js, possibly Ollama) have their own installation complexity. Each OS (macOS, Linux, WSL) has different Docker configurations. The installer tries to be smart but can't anticipate every environment.
-
-Specific Qdrant concern: Qdrant's own troubleshooting docs warn that HFS/HFS+ (macOS default filesystem) is "untested" and may produce warnings. FUSE filesystems can cause data corruption.
-
-**How to avoid:**
-- Check prerequisites BEFORE doing anything: Docker running? Correct version? Sufficient disk space? Network access?
-- Fail fast with clear messages: "Docker is not running. Please start Docker Desktop and try again."
-- Use Docker named volumes (not bind mounts) for Qdrant storage — avoids filesystem compatibility issues.
-- Set Docker ulimits explicitly: `docker run --ulimit nofile=10000:10000` (Qdrant's own recommendation for "too many files open" errors).
-- Make the installer idempotent: running it again should fix problems, not create new ones.
-- Test on: macOS (Apple Silicon + Intel), Ubuntu, WSL2 on Windows.
-- Separate "check environment" from "install" — let users run a pre-flight check.
-- Provide manual setup instructions as fallback when the script fails.
-
-**Warning signs:**
-- Users report install failures on first try
-- Install works on developer's machine but fails in CI or on teammates' machines
-- Qdrant container crashes after restart with filesystem errors
-- Docker pulls fail silently behind corporate proxy
-
-**Phase to address:**
-Installer phase — this is the first thing users interact with. A broken installer means zero adoption. Design it with pre-flight checks from day one.
-
-**Sources:** Qdrant troubleshooting docs (https://qdrant.tech/documentation/operations/common-errors/). Confidence: HIGH.
+**Sources:** Ollama context length documentation (Context7, docs.ollama.com/context-length), existing `splitter.ts` analysis. Confidence: HIGH.
 
 ---
 
 ## Moderate Pitfalls
 
-### Pitfall 10: Ollama Local Embedding Makes Initial Indexing Unacceptably Slow
-
-**What goes wrong:**
-Using Ollama for local embeddings means no API costs, which is attractive. But embedding a large codebase (10K+ functions) locally on CPU takes hours. Developers abandon the setup during initial indexing.
-
-**Prevention:**
-- Show progress during indexing with time estimates
-- Support cloud embedding APIs for initial bulk indexing, then switch to Ollama for incremental updates
-- Batch embeddings efficiently (Ollama supports batch inference)
-- Default to a smaller, faster embedding model for first-time setup; offer re-indexing with higher-quality model later
-- Allow indexing to happen in background — framework should be usable immediately with partial index
+Mistakes that cause significant debugging time, performance issues, or feature delays.
 
 ---
 
-### Pitfall 11: Qdrant Collection Schema Lock-in
+### Pitfall 5: Parallel Embedding Exhausting Ollama VRAM — Each Parallel Slot Costs Full Context Memory
 
 **What goes wrong:**
-The collection is created with specific vector dimensions. When the team wants to try a different embedding model with different dimensions, they must delete and recreate the collection, losing all indexed data.
+To speed up indexing, the team adds parallel embedding calls (e.g., using `p-queue` with concurrency 4). But Ollama's parallelism model is: "Parallel request processing for a given model results in increasing the context size by the number of parallel requests. For example, a 2K context with 4 parallel requests will result in an 8K context and additional memory allocation." With 4 parallel embedding batches, Ollama allocates 4× the VRAM. On a developer machine with 8GB VRAM, this causes OOM, and Ollama silently falls back to CPU inference — making it SLOWER than sequential.
+
+**Why it happens:**
+The existing pipeline (`pipeline.ts`) runs embedding batches sequentially in a `for` loop. It already makes 2 `embedBatch()` calls per batch (text vectors + code vectors) — so there are already 2 concurrent requests. Adding "parallel embedding" on top means 4-8+ concurrent requests. Ollama doesn't refuse these — it either allocates more memory or queues them.
 
 **Prevention:**
-- Design for model migration from the start: store all chunks and metadata in a format that allows re-embedding
-- Keep the original source data (file paths, AST positions) in the Qdrant payload or a separate store so re-indexing is always possible from source
-- Follow Qdrant's embedding model migration tutorial pattern
-- Document the "switch model" workflow as a first-class operation
+
+- **Profile before parallelizing.** Measure: how fast is sequential embedding? How much VRAM is free? The bottleneck for Ollama embedding may be compute, not I/O — parallelism won't help if the GPU is already saturated.
+- **Use `OLLAMA_NUM_PARALLEL` environment variable** instead of application-level parallelism. This lets Ollama manage memory allocation. Default is typically 1; set to 2-4 only if VRAM allows.
+- **For cloud providers (OpenAI), parallelize aggressively** (they handle concurrency server-side). For Ollama, limit to 2 concurrent requests max.
+- **Make parallelism provider-aware:** The `EmbeddingProvider` interface should expose a `maxConcurrency: number` property. OpenAI → 10, Ollama → 1-2.
+- **Implement backpressure:** If an embedding request takes >5s (indicating queueing), reduce concurrency dynamically.
+- **The two existing embedBatch calls (text+code) should stay sequential** unless the model can handle them concurrently. They already provide implicit parallelism through Ollama's batch API.
+
+**Detection:**
+
+- Indexing with "parallel embedding" is slower than sequential on the same machine
+- `nvidia-smi` shows VRAM at 100% with constant allocation churn
+- Ollama logs show "model is loading" messages during embedding
+
+**Phase to address:** Parallel Embedding implementation — benchmark sequential vs parallel on the actual developer machine before committing to a concurrency strategy.
+
+**Sources:** Ollama FAQ on concurrent requests (Context7, docs.ollama.com/faq). Confidence: HIGH.
 
 ---
 
-### Pitfall 12: Tree-sitter Grammar Coverage Gaps
+### Pitfall 6: Pipeline Abstraction Leak — IndexingPipeline Is Hardwired to AST Parsing
 
 **What goes wrong:**
-Tree-sitter has excellent support for mainstream languages (TypeScript, Python, Rust, Go, Java) but may have incomplete or buggy grammars for niche languages, framework-specific syntax (JSX, Vue SFCs, Svelte), or generated code. The parser produces ERROR nodes instead of valid AST, and the chunking pipeline doesn't handle this gracefully.
+The current `IndexingPipeline.run()` method directly calls `parseFile()` from `@ia-framework/ast-parser`, which returns `CodeChunk[]`. Adding LLM chunking as an alternative strategy requires either: (a) forking the pipeline into two nearly-identical methods, (b) adding `if (strategy === 'llm')` branches throughout, or (c) refactoring the pipeline to accept a `ChunkingStrategy` interface. Options (a) and (b) create maintenance hell. Option (c) is the correct approach but requires touching the pipeline's core contract.
+
+**Why it happens:**
+The pipeline was correctly designed for v1.0 — it has one chunking strategy (AST). The line `const chunks = await parseFile(filePath, ...)` in `pipeline.ts` is a hard dependency on AST parsing. The `CodeChunk` type includes AST-specific fields (`chunkType: 'function' | 'class' | ...`), which LLM chunks might not produce cleanly.
+
+**Consequences:**
+
+- If you just add `if/else` for strategy, the pipeline becomes unmaintainable with 3+ strategies
+- If you don't refactor, LLM indexing gets a separate, divergent pipeline — bugs get fixed in one but not the other
+- Test coverage fragments across two codepaths
 
 **Prevention:**
-- Tree-sitter error recovery is robust (it wraps errors in ERROR nodes and continues parsing) — detect and handle ERROR nodes explicitly
-- For unsupported languages, fall back to heuristic chunking (split on function/class keywords)
-- Start with the target project's specific language(s) and add others incrementally
-- Test parsing against the actual target codebase, not synthetic examples
-- Skip generated files, vendor directories, node_modules, build artifacts
+
+- **Extract a `ChunkingStrategy` interface** before implementing LLM chunking:
+  ```typescript
+  interface ChunkingStrategy {
+    name: 'ast' | 'llm';
+    chunkFile(filePath: string, options: ChunkingOptions): Promise<CodeChunk[]>;
+  }
+  ```
+- **Make `IndexingConfig` accept a `ChunkingStrategy`** instead of implicitly using `parseFile`. The AST strategy wraps `parseFile()`. The LLM strategy calls Ollama.
+- **Keep `CodeChunk` as the shared contract.** LLM chunks must produce valid `CodeChunk` objects — same fields, same ID generation, same types. If the LLM can't determine `chunkType`, default to `'module'` or `'other'`.
+- **Don't add `strategy` awareness to the embedding stage.** The embedding stage receives `CodeChunk[]` and doesn't care where they came from. This is the clean boundary.
+- **Add `strategy` metadata to `ChunkPayload`** so downstream consumers (MCP, dashboard) know the provenance. This is a single new field, not a structural change.
+
+**Detection:**
+
+- Pull request for LLM chunking touches >5 files outside the chunking code
+- Pipeline tests need duplication for each strategy
+- Bug fixes require changes in two places
+
+**Phase to address:** LLM Chunking implementation (after spike). Refactor the pipeline first, then implement LLM strategy. The spike can use a standalone script.
+
+**Sources:** Existing `pipeline.ts` analysis. Confidence: HIGH.
 
 ---
 
-### Pitfall 13: MCP Tool Schema Design Affects LLM Effectiveness
+### Pitfall 7: Ollama Model Loading Thrash Between Chunking Model and Embedding Model
 
 **What goes wrong:**
-The MCP tools are defined with vague names, missing descriptions, or overly complex input schemas. The LLM struggles to decide when and how to use them. The tool might exist but the LLM never calls it, or calls it with wrong arguments.
+Even with properly separated chunking and embedding phases (Pitfall 1 prevention), the developer might use different Ollama models for chunking (e.g., `qwen3:8b` — a generative model) and embedding (e.g., `nomic-embed-text` — an embedding model). On machines where both models don't fit in VRAM simultaneously, starting the embedding phase after chunking requires unloading the chunking model and loading the embedding model. This takes 10-30 seconds per model swap, and it happens once per full indexing run. Worse, if the dashboard search runs an embedding query DURING chunking, it triggers a mid-chunking model swap.
+
+**Why it happens:**
+Ollama manages model lifecycle automatically. When a new model is requested and the current model must be evicted for VRAM, there's a blocking load operation. The existing system only uses one Ollama model (for embedding), so this was never an issue.
 
 **Prevention:**
-- Use clear, specific tool names: `search_codebase` not `query` or `find`
-- Write detailed descriptions optimized for LLM understanding — describe WHEN to use the tool, not just WHAT it does
-- Keep input schemas simple: 1-3 parameters max per tool
-- Include example argument values in the description
-- Test tools with multiple LLMs — different models interpret schemas differently
-- Use the `title` field (MCP specification supports it) for human-readable display names
 
-**Sources:** MCP specification tool discovery section. Confidence: HIGH.
+- **Document VRAM requirements clearly:** If using separate models for chunking and embedding, minimum VRAM = max(chunking_model, embedding_model), recommended = chunking_model + embedding_model.
+- **Allow using the same model for both:** If the user selects a model like `qwen3` that supports both generation and embedding, use it for both. No model swap needed.
+- **Add model warm-up:** Before starting the embedding phase, explicitly load the embedding model via `/api/pull` or a warm-up embed call. Log the expected wait time.
+- **Implement a model status check:** Before each phase, call `ollama ps` to see what's loaded. Warn the user if a model swap will be needed.
+- **Never run search queries during indexing** on the same Ollama instance — queue them or return "indexing in progress."
+
+**Detection:**
+
+- 30-second pause between "chunking complete" and "embedding started" in logs
+- Dashboard search becomes very slow during indexing (model swap)
+- Users report "Ollama is slow" but only during indexing
+
+**Phase to address:** LLM Chunking implementation + CLI integration. Add model management awareness to the indexing pipeline.
+
+**Sources:** Ollama FAQ (Context7). Confidence: HIGH.
 
 ---
 
-### Pitfall 14: Dashboard Becomes a Maintenance Burden
+### Pitfall 8: Dashboard Search Requires Embedding Provider It Doesn't Currently Have
 
 **What goes wrong:**
-The monitoring dashboard starts as a simple status viewer but accumulates features (benchmark visualization, trend charts, configuration UI) until it becomes a significant maintenance burden. Frontend framework updates, build pipeline complexity, and API surface growth consume time that should go to RAG quality.
+The dashboard API (`packages/dashboard-api/src/app.ts`) is a Hono app that serves status, config, metrics, benchmarks, and indexing data. It reads from Qdrant and SQLite but does NOT have access to an `EmbeddingProvider` or `SearchEngine`. Adding interactive search to the dashboard means the dashboard-api needs to embed queries and search Qdrant — requiring the same `SearchEngine` instance or a separate search API endpoint.
+
+**Why it happens:**
+By design (ARCHITECTURE.md Anti-Pattern 3), the dashboard and MCP server are independent processes sharing data stores. The dashboard reads; the MCP server handles search. Adding search to the dashboard breaks this clean separation.
+
+**Consequences:**
+
+- The dashboard-api must instantiate its own `EmbeddingProvider`, duplicating configuration and model loading
+- If using Ollama, the dashboard's embedding requests compete with MCP server's embedding requests
+- The dashboard becomes a "second MCP server" — maintenance doubles
 
 **Prevention:**
-- Keep the dashboard read-only for v1 — display data, don't allow configuration through it
-- Use a minimal tech stack (plain HTML + lightweight chart library, or a React SPA with minimal deps)
-- Dashboard should be optional — all functionality must work without it
-- Consider server-side rendered pages over a full SPA to reduce frontend complexity
-- Benchmark data should be stored in a format (JSON files or SQLite) that can be inspected without the dashboard
+
+- **Add a search API route to dashboard-api** that instantiates a `SearchEngine` on startup, using the same config as the MCP server. Read the embedding config from `.ia-framework/project.json`.
+- **DON'T duplicate the SearchEngine code.** Import `SearchEngine` from `@ia-framework/retrieval` as a dependency. The dashboard-api and MCP server use the same library but run as separate processes.
+- **Lazy-initialize the embedding provider.** Only load it when the first search request arrives, not on dashboard startup. This avoids model-loading overhead for users who never use dashboard search.
+- **Share config, not instances:** Both processes read from `project.json` for embedding config. This is the existing pattern for config sharing.
+- **Accept the architectural concession:** Dashboard search is an intentional exception to the "dashboard is read-only" principle. Document this decision in ARCHITECTURE.md.
+
+**Detection:**
+
+- Dashboard search returns errors because embedding provider isn't configured
+- Dashboard startup takes 30+ seconds (model loading)
+- Config changes require restarting both dashboard and MCP server
+
+**Phase to address:** Dashboard Search/Analytics implementation. Design the search route as a first-class dashboard-api concern.
+
+**Sources:** Existing `app.ts` analysis, ARCHITECTURE.md. Confidence: HIGH.
 
 ---
 
-## Technical Debt Patterns
+### Pitfall 9: Config Schema Evolution Breaking Existing v1.0 Deployments
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Skip dual-vector (text+code), use single embedding model | Simpler indexing pipeline, one model to manage | ~40% worse retrieval for one query type (NL or code) | Never for final product — acceptable for initial prototype to validate pipeline |
-| Hard-code embedding model instead of provider-agnostic | Faster to ship, no abstraction overhead | Locked to one provider, re-indexing nightmare when switching | Only for MVP if team has already chosen the model |
-| Skip incremental re-indexing, require full re-index | Much simpler indexing code | Developer friction grows daily as codebase changes | Acceptable for v1 if full re-index is fast (<2 min) |
-| No relevance threshold on auto-context | Every query gets context, simpler logic | Token waste, noise injection, developer distrust | Never — always have a minimum score threshold |
-| Embed entire files instead of AST-parsed functions | No parsing complexity | Terrible retrieval quality, large chunks overflow context windows | Never |
-| Skip benchmark baseline (no-RAG comparison) | Faster to ship benchmarks | Can't prove RAG actually helps, can't detect regressions | Only temporarily during benchmark development |
-| Use bind mounts instead of Docker volumes for Qdrant | Easier to inspect data on host | Filesystem compatibility issues (macOS HFS, WSL) | Never — always use named Docker volumes |
+**What goes wrong:**
+v1.1 adds new config fields: `chunkingStrategy` (ast/llm), `llmChunkingModel`, `llmCollectionName`, `parallelEmbedding`, `searchCollections[]`. If the config schema (`packages/core/src/config/schema.ts`) adds required fields, existing `.ia-framework/project.json` files from v1.0 fail validation on startup. Users who upgrade ia-framework see "config validation failed" and don't know what to add.
+
+**Why it happens:**
+The config loader uses Zod validation. Adding required fields to the schema is a breaking change for existing config files.
+
+**Prevention:**
+
+- **All new v1.1 config fields must be optional with sensible defaults:**
+  ```typescript
+  chunkingStrategy: z.enum(['ast', 'llm']).optional().default('ast');
+  llmChunkingModel: z.string().optional();
+  llmCollectionName: z.string().optional().default('codebase-llm');
+  ```
+- **Config migration:** Add a version field to project.json. On load, if version < current, run migration logic that adds missing fields with defaults. Log what was added.
+- **Test with real v1.0 config files:** Before merging any config schema change, load an actual v1.0 project.json through the new schema. This must be an automated test.
+- **Keep backward compatibility for at least one major version.** v1.0 configs must work in v1.1 without manual editing.
+
+**Detection:**
+
+- `ia-framework status` crashes after upgrading from v1.0
+- Users report "schema validation error" in Discord/issues
+- The installer re-runs detection instead of loading existing config
+
+**Phase to address:** First phase that touches config schema — likely LLM Chunking CLI integration. Gate all subsequent phases on this being correct.
+
+**Sources:** Existing `config/schema.ts` and `config/loader.ts` analysis. Confidence: HIGH.
+
+---
+
+## Minor Pitfalls
+
+Cause friction and debugging time but not fundamental issues.
+
+---
+
+### Pitfall 10: Ollama Structured JSON Output Parsing Failures
+
+**What goes wrong:**
+LLM chunking asks Ollama to return structured JSON (chunk boundaries, names, types) via the `format` parameter. But local models, especially smaller ones (7B and below), frequently produce malformed JSON: trailing commas, unquoted keys, truncated output, or valid JSON that doesn't match the expected schema (missing required fields, wrong types, extra fields).
+
+**Prevention:**
+
+- **Always use Ollama's `format` parameter** with a JSON schema — don't rely on prompt instructions alone. Ollama's structured output constrains the tokenizer.
+- **Validate and retry:** Parse the response with `JSON.parse()`, validate with Zod, retry up to 2x on failure with the error message appended to the prompt.
+- **Set reasonable `num_predict` (max output tokens):** Too low → truncated JSON. Too high → wasted time. Estimate based on file size.
+- **Have a fallback:** If the LLM fails 3x to produce valid JSON for a file, fall back to AST chunking for that file. Log the failure.
+- **Test with your exact model:** Different quantization levels (q4_0 vs q8_0) have different JSON reliability. Test the production model, not a larger one.
+
+**Phase to address:** LLM Chunking Spike — validate JSON output reliability with the target model.
+
+---
+
+### Pitfall 11: Metrics Storage Bloat From Search History
+
+**What goes wrong:**
+Dashboard search history stores every query, its results, latency, scores, and matched chunks in SQLite. With active development, hundreds of searches per day accumulate. The metrics database grows linearly, slowing dashboard startup and search history queries.
+
+**Prevention:**
+
+- **Set a retention policy:** Auto-delete search history older than 30 days. Or keep only the last 1000 searches.
+- **Store search results as summary, not full content.** Save: query, timestamp, latency, result count, top-3 chunk IDs, strategy. Don't store full code content of every result.
+- **Add a "clear history" button** in the dashboard.
+- **Use SQLite `VACUUM` after bulk deletes** to reclaim space.
+
+**Phase to address:** Dashboard Search History — implement retention from the start.
+
+---
+
+### Pitfall 12: Existing Test Suite Breakage From Interface Changes
+
+**What goes wrong:**
+Adding `strategy` metadata to `ChunkPayload`, multi-collection support to `VectorStore`, or dual-engine support to `SearchEngine` changes interfaces that existing tests mock. Tests in `mcp-server/*.test.ts`, `retrieval/*.test.ts`, and `indexer/*.test.ts` all mock these interfaces. Interface changes break all these mocks simultaneously, creating a cascade of test failures that obscure the actual changes.
+
+**Prevention:**
+
+- **Add new fields as optional** to existing interfaces. Never remove or rename existing fields.
+- **Create factory functions for test mocks:** `createMockVectorStore()`, `createMockSearchEngine()`. Update the factory, not 20 individual tests.
+- **When adding multi-collection support, extend the existing `VectorStore` interface** — don't create a new `MultiCollectionVectorStore`. Add an optional `collectionName` parameter to methods, defaulting to the existing collection.
+- **Run the full test suite after every interface change** — don't defer to CI.
+
+**Phase to address:** Every phase — this is a continuous discipline, not a single-phase fix.
+
+---
+
+### Pitfall 13: A/B Comparison Producing Misleading Results Due to Uncontrolled Variables
+
+**What goes wrong:**
+The dashboard A/B comparison runs the same query against AST and LLM collections and compares results. But the collections may differ in: (a) when they were last indexed, (b) how many files are indexed, (c) embedding model version, (d) chunking granularity. Comparing "AST with 5000 chunks from yesterday" vs "LLM with 3000 chunks from today" doesn't tell you which strategy is better — it tells you which index is more complete and current.
+
+**Prevention:**
+
+- **Enforce same-state comparisons:** A/B comparison should only work when both collections were indexed from the same git commit (stored in `indexedAt` metadata).
+- **Show collection metadata alongside A/B results:** Point count, last indexed time, embedding model, chunking strategy. Let the user judge if the comparison is fair.
+- **Compute coverage metrics per collection:** What percentage of files are indexed? If AST covers 100% and LLM covers 60%, the comparison is inherently unfair.
+- **Run benchmarks, not ad-hoc A/B.** The benchmark system controls variables (same queries, same ground truth). Dashboard A/B is for exploration; benchmarks are for decisions.
+
+**Phase to address:** Dashboard A/B Comparison — implement parity checks before showing comparison results.
+
+---
 
 ## Integration Gotchas
 
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Qdrant Docker | Using bind mounts on macOS/WSL | Use named Docker volumes; set `--ulimit nofile=10000:10000` |
-| Qdrant collection | Creating collection before knowing embedding model dimensions | Initialize collection lazily on first embedding, using model's reported dimensions |
-| Tree-sitter WASM | Loading grammars synchronously blocking Node.js event loop | Load grammars async on startup; cache compiled WASM grammars |
-| OpenCode MCP | Logging to stdout (conflicts with STDIO transport) | Log to stderr only; use MCP Logging primitive for client-visible messages |
-| Ollama API | Assuming Ollama is always available on localhost:11434 | Check Ollama availability at startup; provide clear error if not running; support configurable host |
-| Embedding APIs | Not handling rate limits / network errors | Implement exponential backoff, circuit breaker, and request queuing |
-| Docker Compose | Hardcoding port numbers | Use environment variables for ports; detect conflicts on common ports (6333, 6334, 3000) |
+| Integration Point                                       | Common Mistake                                                                                                                       | Correct Approach                                                                                                                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **LLM chunking → `CodeChunk` interface**                | LLM output doesn't include `startLine`/`endLine` because the LLM doesn't track line numbers                                          | Post-process LLM chunks: find the chunk content in the original file to compute line numbers. Fall back to 0/0 if not found.                                       |
+| **Two Qdrant collections → single `QdrantVectorStore`** | Creating a second `QdrantVectorStore` instance pointing to a different collection — works but doubles Qdrant client instances        | Make `QdrantVectorStore` accept a collection name per operation, or create a `MultiCollectionStore` that wraps one client with two collection names.               |
+| **`SearchEngine` → dual collections**                   | Adding a second `vectorStore` parameter to the constructor — makes the interface asymmetric and confusing                            | Create a `DualCollectionSearchEngine` that wraps two `SearchEngine` instances and handles result merging via RRF. Keep the single `SearchEngine` unchanged.        |
+| **Dashboard search → embedding provider**               | Importing the Ollama/OpenAI provider directly into dashboard-api, duplicating config parsing                                         | Use the `createEmbeddingProvider(config)` factory from `@ia-framework/embedding`. Read config from `project.json` via the existing config watcher.                 |
+| **MCP tool results → strategy tagging**                 | Adding `strategy` field to `RetrievalResult` type — breaks all existing consumers                                                    | Add it as optional: `strategy?: 'ast' \| 'llm' \| undefined`. Existing code ignores it. New code uses it.                                                          |
+| **Parallel embedding → progress callback**              | Progress callback counts chunks sequentially, but parallel batches complete out of order → progress bar jumps from 10% to 40% to 20% | Use atomic counter (`chunksIndexed += batch.length`), not sequential tracking. Report total completed, not per-batch.                                              |
+| **LLM chunking → `chunkToDescription()`**               | Using the existing metadata-based description generator for LLM chunks that already have rich descriptions                           | If the LLM chunk includes its own summary, use that as the text vector input instead of `chunkToDescription()`. Add a `description?: string` field to `CodeChunk`. |
+| **Config changes → MCP server + dashboard**             | Changing config requires restarting both processes — users restart one but not the other                                             | Implement config file watching in both processes (dashboard already has `config-watcher.ts`). Hot-reload is better than restart.                                   |
 
-## Performance Traps
+---
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Embedding every file change immediately | CPU spikes, Ollama OOM, queue backup | Debounce file changes, batch re-embeddings every 30s-1min | >10 file saves per minute (normal editing) |
-| Loading entire dependency graph into memory | Memory grows linearly with codebase size | Lazy-load dependencies on query, don't pre-compute full graph | Codebase >5000 files |
-| Qdrant HNSW index in RAM for large collections | RAM usage exceeds container limits | Use on_disk HNSW + scalar quantization for collections >100K points | >100K code chunks (~large monorepo) |
-| Synchronous embedding in MCP tool handler | 2-5 second latency per query with local models | Pre-embed common queries; use async embedding with streaming response | Any usage with Ollama embeddings |
-| Full codebase re-index on every startup | 5-30 minute startup time for large projects | Persist index in Docker volume; only re-index changed files | Codebase >1000 files |
-| Unbounded context injection size | Exceeds LLM context window, prompt truncation | Hard cap on injected context tokens (e.g., 4K-8K max) | Queries matching many code chunks |
+## Performance Traps Specific to v1.1
 
-## Security Mistakes
+| Trap                                                                                | Symptoms                                                         | Prevention                                                                                                                                                                                                   | When It Breaks                |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| **LLM chunking one file at a time via `/api/generate`**                             | Indexing 5000 files takes 2-5 seconds per file = 3-7 hours total | Batch multiple small files into a single prompt (if they fit). Pre-filter: skip files that AST handles well (pure functions <50 lines). Only LLM-chunk files that benefit (complex classes, mixed concerns). | Any codebase >500 files       |
+| **Querying two collections sequentially**                                           | Search latency doubles from 100ms to 200ms+                      | Query both collections in parallel (`Promise.all`). The `SearchEngine` already does this for text+code vectors — apply same pattern to AST+LLM collections.                                                  | Every search query            |
+| **Dashboard A/B comparison runs 4 searches** (2 collections × 2 comparison queries) | Visible UI lag of 500ms+ per comparison                          | Run all 4 in parallel. Cache results for recent queries (5-minute TTL).                                                                                                                                      | Regular dashboard usage       |
+| **Search history storing full chunk content**                                       | SQLite database grows to 100MB+ in weeks                         | Store only chunk IDs and metadata. Load full content on demand from Qdrant.                                                                                                                                  | After ~1000 searches          |
+| **LLM chunk caching on disk**                                                       | Cache grows to GB for large codebases                            | Set cache size limit (500MB). Use file hash as key; evict LRU entries.                                                                                                                                       | Codebase >10K files           |
+| **Embedding model staying loaded in Ollama**                                        | VRAM consumed even when not indexing                             | Set `keep_alive` to 5 minutes for embedding model. It auto-unloads when idle.                                                                                                                                | Always (background VRAM cost) |
 
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Indexing `.env` files, secrets, credentials | Secrets retrievable via semantic search; could be injected into AI prompts and visible in logs | Respect `.gitignore`; add `.ia-framework-ignore` for additional exclusions; never index `.env`, `*.pem`, `*.key` |
-| MCP server exposes write access to Qdrant | Malicious prompt injection could delete/modify the index | MCP server should only have read access to Qdrant; separate admin API for indexing |
-| Database connection string stored in plain text | Credentials accessible to anyone with repo access | Use environment variables or OS keychain; never store in `.ia-framework/project.json` |
-| Embedding API keys in configuration files | API key leak via git | Use environment variables; `.ia-framework/` should be in `.gitignore` for sensitive config |
-| No input sanitization on MCP tool parameters | Injection attacks via crafted search queries | Sanitize/validate all MCP tool inputs before passing to Qdrant client |
+---
 
-## UX Pitfalls
+## Phase-Specific Warnings
 
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| No feedback during initial indexing | Developer thinks install is broken, kills the process | Show progress bar with file count, estimated time, current file being indexed |
-| Silent RAG failures (no context but no error) | Developer gets worse AI output without knowing why | Surface RAG status in MCP response: "Found 3 relevant code chunks" or "No relevant code found" |
-| Requiring manual re-index after code changes | Developer forgets, gets stale context, loses trust | At minimum: remind on startup if index is >1 hour old; ideally: auto-detect changes |
-| Complex configuration with many options | Developer spends 30 minutes configuring before seeing value | Sensible defaults that work without configuration; advanced options for power users |
-| Benchmark results only visible in dashboard | Need to launch Docker, open browser, navigate to see if RAG improved | Also output benchmark summary to terminal; dashboard for trends/details |
-| No way to see what context was injected | Developer can't debug why AI gave wrong answer | Include injected context sources in MCP response metadata; log to file |
+| Phase/Topic                     | Likely Pitfall                                                        | Mitigation                                                                                                                                             | Severity |
+| ------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| **LLM Chunking Spike**          | Underestimating latency — expecting LLM chunking to be as fast as AST | Set expectation: LLM chunking will be 100-1000x slower than AST per file. The value proposition is quality, not speed. Measure on real target project. | CRITICAL |
+| **LLM Chunking Spike**          | Context window overflow on large files                                | Pre-split files >300 lines via AST before sending to LLM. Test with the largest 10 files in the target project.                                        | CRITICAL |
+| **LLM Chunking Spike**          | Prompt engineering underestimation                                    | The prompt that works for a Python file may fail for TypeScript. Test against 3+ languages. Budget 2-3 days for prompt iteration.                      | MODERATE |
+| **LLM Chunking Implementation** | Pipeline refactoring scope creep                                      | Extract `ChunkingStrategy` interface first. Then implement LLM strategy. Don't refactor pipeline AND add LLM in the same PR.                           | MODERATE |
+| **Parallel Embedding**          | Parallelism on Ollama making things slower                            | Profile sequential baseline first. Only parallelize for cloud providers. For Ollama, optimize batch size instead.                                      | MODERATE |
+| **Multi-Collection Qdrant**     | Collection drift — AST re-indexed but LLM not (or vice versa)         | Track indexed-at commit per collection. Show both in dashboard. Warn if they diverge.                                                                  | MODERATE |
+| **MCP Dual-Search**             | Existing MCP tool tests break with interface changes                  | Add new tools (or optional parameters) rather than changing existing tool signatures. Backward-compatible changes only.                                | MINOR    |
+| **Dashboard Search**            | Over-engineering search UI before validating it's useful              | Start with a plain text input + results list. No filters, no facets, no pagination until basic search works.                                           | MINOR    |
+| **Dashboard A/B Comparison**    | Comparing collections indexed at different times/completeness         | Show collection metadata (point count, last indexed, coverage %) alongside comparison. Add "Stale" warning if collections are >1 commit apart.         | MODERATE |
+| **Dashboard Analytics**         | Building every chart before knowing what metrics matter               | Ship 3 charts: chunk distribution (by type), embedding latency histogram, MRR trend. Add more based on what developers actually look at.               | MINOR    |
+| **Config Schema**               | Adding required fields that break v1.0 configs                        | All new fields optional with defaults. Test with an actual v1.0 project.json.                                                                          | CRITICAL |
 
-## "Looks Done But Isn't" Checklist
+---
 
-- [ ] **Indexing pipeline:** Often missing handling of very large files (>10K lines) — verify chunking works on the largest files in the target project
-- [ ] **Indexing pipeline:** Often missing binary file detection — verify it skips images, compiled files, lock files
-- [ ] **MCP server:** Often missing graceful shutdown — verify SIGTERM/SIGINT handlers clean up Qdrant connections
-- [ ] **MCP server:** Often missing concurrent request handling — verify two rapid tool calls don't corrupt shared state
-- [ ] **Auto-context:** Often missing relevance threshold — verify it doesn't inject context for unrelated queries
-- [ ] **Installer:** Often missing idempotency — verify running install.sh twice doesn't break the setup
-- [ ] **Installer:** Often missing cleanup on failure — verify partial installs can be recovered by re-running
-- [ ] **Benchmark system:** Often missing baseline comparison — verify there's a "no RAG" baseline to compare against
-- [ ] **Dashboard:** Often missing error state displays — verify dashboard shows meaningful state when Qdrant is down
-- [ ] **Docker setup:** Often missing volume persistence — verify Qdrant data survives container restart
-- [ ] **Dependency graph:** Often missing cycle detection — verify circular imports don't cause infinite loops
+## "Looks Done But Isn't" Checklist — v1.1 Specific
+
+- [ ] **LLM chunking:** Test with files >500 lines — verify the model sees the full file (not truncated)
+- [ ] **LLM chunking:** Test with 3+ programming languages — verify prompt generalizes
+- [ ] **LLM chunking:** Run the same file through chunking 5x — verify outputs are stable (or acceptably similar)
+- [ ] **LLM chunking:** Verify `CodeChunk` objects from LLM have valid `startLine`/`endLine` (not zeros)
+- [ ] **Parallel embedding:** Measure sequential vs parallel speed on Ollama — verify parallel is actually faster
+- [ ] **Parallel embedding:** Check VRAM usage with `nvidia-smi` during parallel embedding — verify no OOM
+- [ ] **Multi-collection:** Verify both collections can be re-indexed independently without affecting each other
+- [ ] **Multi-collection:** Verify deleting one collection doesn't affect the other
+- [ ] **MCP dual-search:** Run existing MCP tool tests unchanged — verify backward compatibility
+- [ ] **MCP dual-search:** Compare merged results quality (MRR) against single-collection baseline
+- [ ] **Dashboard search:** Verify search works when only one collection exists (graceful degradation)
+- [ ] **Dashboard search:** Verify search works when Qdrant is down (show error, don't crash)
+- [ ] **Dashboard A/B:** Verify A/B comparison handles "LLM collection doesn't exist yet" gracefully
+- [ ] **Config:** Load a v1.0 project.json through v1.1 schema — verify no errors
+- [ ] **Config:** Verify new config fields appear in dashboard project view
+
+---
 
 ## Recovery Strategies
 
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Naive text chunking deployed | HIGH | Must rewrite chunking pipeline AND re-index everything; all benchmark history invalidated |
-| Wrong embedding model/dimensions | MEDIUM | Delete collection, recreate with correct schema, re-index. Data loss is the index only — source code is unchanged |
-| Stale index poisoning context | LOW | Run full re-index (should take <5 min for reasonably sized project). Add incremental update mechanism |
-| MCP server crash loop | LOW | Fix the error, restart. But investigate root cause — usually Qdrant connection or embedding API failure |
-| Auto-context injecting noise | LOW | Lower relevance threshold or switch to MCP-only mode immediately. Fine-tune threshold with benchmarks |
-| Installer fails mid-setup | MEDIUM | Must identify what was partially installed, clean up, fix prerequisites, re-run. Idempotent installer prevents this |
-| Benchmark measures wrong thing | MEDIUM | Must design new end-to-end benchmark tasks, rebuild runner. Previous benchmark data is useless for comparison |
-| Qdrant filesystem corruption | HIGH | Recreate Docker volume, re-index from scratch. Use named volumes to prevent this |
+| Pitfall                                  | Recovery Cost | Recovery Steps                                                                                                   |
+| ---------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| VRAM contention kills indexing perf (#1) | LOW           | Separate chunking and embedding phases in pipeline. Use `keep_alive: "0"` to release models between phases.      |
+| Non-determinism breaks incremental (#2)  | MEDIUM        | Implement chunk result caching keyed by file hash. Disable incremental for LLM collection.                       |
+| Score incomparability skews results (#3) | MEDIUM        | Switch to RRF-based merging (client-side). Requires changes in `SearchEngine` or a wrapper.                      |
+| Context overflow misses large files (#4) | MEDIUM        | Add AST pre-splitting for files exceeding 70% of `num_ctx`. Requires pipeline change + testing.                  |
+| Parallel embedding OOM (#5)              | LOW           | Set concurrency to 1 for Ollama, higher for cloud. Add `maxConcurrency` to `EmbeddingProvider`.                  |
+| Pipeline refactoring escalates (#6)      | MEDIUM        | Timebox to 1 day. If refactoring exceeds 1 day, use the simpler approach (separate pipeline) and refactor later. |
+| Config breaks existing users (#9)        | LOW           | Make all new fields optional. Add defaults. Ship a migration script if needed.                                   |
+| A/B comparison is misleading (#13)       | LOW           | Add metadata display (point count, indexed-at commit, coverage). Users can judge fairness themselves.            |
 
-## Pitfall-to-Phase Mapping
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Naive text chunking (#1) | AST-aware indexing pipeline | Parse target project, inspect chunks manually, verify each is syntactically valid |
-| Single embedding model (#2) | Indexing pipeline + collection design | Create dual-vector collection, query with both NL and code queries, compare results |
-| Embedding model mismatch (#3) | Indexing pipeline + config management | Switch model in config, verify re-index is forced, verify old points are replaced |
-| Wrong auto-context (#4) | Context injection mode (after MCP) | Run queries with auto-context on/off, compare LLM output quality, benchmark both |
-| Stale index (#5) | Indexing pipeline (incremental update) | Modify a function, verify re-index captures changes within <5 minutes |
-| MCP server crashes (#6) | MCP server implementation | Kill Qdrant mid-query, verify MCP returns error not crash; test with Qdrant down |
-| Dependency explosion (#7) | Advanced retrieval (after basic search) | Query a deeply-connected function, verify expansion stays within token budget |
-| Wrong benchmarks (#8) | Benchmark system | Run benchmark with broken RAG, verify score drops; run without RAG, verify baseline |
-| Installer failures (#9) | Installer implementation | Test on clean macOS, Ubuntu, WSL2; test with Docker stopped; test with wrong Node version |
-| Slow Ollama indexing (#10) | Indexing pipeline | Time initial index with Ollama on target project; if >10 min, add cloud API fallback |
-| Collection schema lock-in (#11) | Collection + indexing design | Switch embedding model, verify re-index workflow works end-to-end in <5 steps |
-| Tree-sitter gaps (#12) | Parsing pipeline | Parse every file in target project, count ERROR nodes, verify fallback chunking works |
-| Bad MCP tool schema (#13) | MCP server implementation | Test with 3+ different LLMs; verify tool gets called correctly on representative prompts |
-| Dashboard bloat (#14) | Dashboard implementation | Keep feature list to: status, benchmarks, token usage. Say no to config UI in v1 |
+---
 
 ## Sources
 
-- Qdrant Semantic Search for Code tutorial: https://qdrant.tech/documentation/tutorials-search-engineering/code-search/ (HIGH confidence)
-- Qdrant Retrieval Quality Evaluation tutorial: https://qdrant.tech/documentation/tutorials-search-engineering/retrieval-quality/ (HIGH confidence)
-- Qdrant Troubleshooting / Common Errors: https://qdrant.tech/documentation/operations/common-errors/ (HIGH confidence)
-- Qdrant Optimization guide: https://qdrant.tech/documentation/tutorials/optimize (HIGH confidence)
-- MCP Architecture specification: https://modelcontextprotocol.io/docs/concepts/architecture (HIGH confidence)
-- MCP Ping error handling specification (HIGH confidence)
-- Tree-sitter error recovery documentation and test fixtures (HIGH confidence)
-- Qdrant embedding model migration tutorial (MEDIUM confidence — referenced but not fully fetched)
+- **Ollama FAQ — Concurrent requests:** Context7 docs.ollama.com/faq — model loading, parallel processing, VRAM allocation. Confidence: HIGH.
+- **Ollama — Context length:** Context7 docs.ollama.com/context-length — default 4096 tokens, VRAM-based auto-sizing. Confidence: HIGH.
+- **Ollama — Structured outputs:** Context7 docs.ollama.com/capabilities/structured-outputs — JSON format parameter, schema constraints. Confidence: HIGH.
+- **Qdrant — Hybrid queries:** Context7 qdrant.tech/documentation/concepts/hybrid-queries — RRF, DBSF, cross-vector fusion. Confidence: HIGH.
+- **Qdrant — Multi-collection:** Verified from Qdrant docs — no cross-collection query API exists. Each query targets one collection. Confidence: HIGH.
+- **Existing codebase analysis:** `pipeline.ts`, `search-engine.ts`, `qdrant.ts`, `ollama.ts`, `app.ts`, `interface.ts` — confirmed current architecture constraints. Confidence: HIGH.
+- **v1.0 PITFALLS.md:** Previous research covering foundational pitfalls (AST chunking, dual-vector, model mismatch, MCP crashes). Still valid — v1.1 pitfalls are additive.
 
 ---
-*Pitfalls research for: AI-assisted development framework with local RAG for code*
-*Researched: 2026-03-31*
+
+_Pitfalls research for: ia-framework v1.1 — RAG Quality & Dashboard Evolution_
+_Researched: 2026-04-09_

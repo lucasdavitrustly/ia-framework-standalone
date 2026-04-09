@@ -1,207 +1,253 @@
 # Project Research Summary
 
-**Project:** ia-framework
-**Domain:** AI-assisted development framework with local RAG for code
-**Researched:** 2026-03-31
+**Project:** ia-framework v1.1 — RAG Quality & Dashboard Evolution
+**Domain:** AI-assisted development framework — local RAG pipeline enhancement
+**Researched:** 2026-04-09
 **Confidence:** HIGH
 
 ## Executive Summary
 
-ia-framework is a **pipeline-oriented RAG system** for code that indexes codebases using AST parsing, stores embeddings in Qdrant, and delivers context to AI coding assistants (OpenCode/Crush) via the MCP protocol. The competitive landscape (Cursor, Continue, Aider, Cody) has converged on codebase awareness as the core value proposition, with MCP becoming the standard extensibility protocol. The industry-proven approach is: parse code with tree-sitter for language-agnostic AST extraction, chunk at semantic boundaries (functions, classes, types), embed with provider-agnostic adapters, store in a vector database, and deliver context through MCP tool calls. ia-framework differentiates by making this pipeline **measurable** (end-to-end benchmarks), **observable** (monitoring dashboard), and **configurable** (A/B testable retrieval modes).
+ia-framework v1.1 adds LLM-based semantic chunking via Ollama as an alternative to the existing AST-based chunking, parallel embedding for faster indexing, multi-collection Qdrant search so AST and LLM chunks coexist and get queried together, and a dashboard search UI with analytics for RAG quality visibility. The existing v1.0 stack (Node 22, TypeScript 5.9, pnpm, Turborepo, Qdrant, MCP SDK, Hono, React/Vite, Recharts, better-sqlite3) is validated and unchanged. Only two new dependencies are needed: `ollama` (^0.6.3) for LLM chat and `p-queue` (^9.1.2) for concurrency control. Everything else leverages existing libraries in new ways — Zod 4's built-in `toJSONSchema()`, Qdrant's multi-collection support, and Recharts' scatter/radar charts.
 
-The recommended approach is a TypeScript monorepo (Turborepo + pnpm) with ~10 focused packages, building bottom-up from core types through the indexing pipeline, then retrieval, then MCP integration. The stack is mature and well-documented: every library choice is at HIGH confidence with verified npm versions. The key architectural insight is to build the indexing pipeline with AST-aware chunking and **dual-vector storage** (text description + raw code vectors per chunk) from day one — research shows single-vector approaches miss ~40% of queries depending on whether the developer phrases queries as natural language or code. Use Qdrant's named vector support for this. A thin `EmbeddingProvider` interface with OpenAI and Ollama implementations replaces heavyweight frameworks like LangChain.
+The recommended approach is a phased build starting with pipeline refactoring (Strategy Pattern extraction, parallel embedding), followed by a **gated LLM chunking spike** that validates Ollama performance, context window handling, and output quality before full implementation. Cross-collection search uses Reciprocal Rank Fusion (RRF) for fair score merging — raw score comparison is explicitly rejected because AST and LLM collections have incompatible score distributions. The dashboard evolves with search and analytics pages only after the search engine supports multi-collection queries.
 
-The primary risks are: (1) naive chunking that destroys retrieval quality — mitigated by AST-aware parsing with tree-sitter from the first implementation, (2) stale indexes after code changes — mitigated by incremental re-indexing using git diff, (3) MCP server crashes silently degrading the developer experience — mitigated by circuit breakers, graceful degradation, and health checks, and (4) auto-context injection adding irrelevant noise — mitigated by shipping MCP-only mode first and deferring auto-context until benchmarking proves its value.
+The dominant risk is Ollama resource management: VRAM contention between chunking and embedding models, context window overflow on large files, and LLM non-determinism breaking incremental indexing. All four research files converge on the same conclusion — **the LLM chunking spike is the single most important validation gate in v1.1.** If chunking quality or latency proves unacceptable, the entire milestone plan must adapt. Mitigation strategies are well-documented: separate pipeline phases (chunk-all-then-embed-all), AST pre-splitting for large files, chunk result caching for determinism, and provider-aware concurrency limits.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack is fully resolved at HIGH confidence. All versions verified against npm registry on 2026-03-31. The key constraint is Node.js 22 LTS (driven by Vitest 4's requirements). TypeScript 5.9 is recommended over the newly released 6.0 — the ecosystem hasn't adopted TS 6 yet.
+v1.1 is remarkably lean on new dependencies. The entire milestone requires only two new npm packages. All other capabilities come from existing stack libraries used in new patterns. See [STACK.md](./STACK.md) for full details.
 
-**Core technologies:**
-- **Node.js 22 LTS + TypeScript 5.9 + pnpm 10**: Modern runtime with strict types and best-in-class monorepo support
-- **Turborepo 2.9 + tsup 8.5**: Rust-powered build orchestration with fast ESM bundling
-- **Qdrant (Docker) + @qdrant/js-client-rest 1.17**: Purpose-built vector storage with excellent filtering and named vector support
-- **@modelcontextprotocol/sdk 1.29**: Official MCP server SDK, stdio transport, Zod-based tool schemas
-- **web-tree-sitter 0.26**: WASM-based language-agnostic AST parsing, avoids native compilation issues across platforms
-- **openai 6.33 + ollama 0.6**: Provider-agnostic embedding via custom adapter interface (NOT LangChain)
-- **Hono 4.12 + @hono/node-server**: Ultrafast API framework for dashboard backend — already an MCP SDK dependency
-- **React 19 + Recharts 3.8 + Vite 6**: Dashboard frontend with charting for benchmark trends
-- **better-sqlite3 12.8**: Embedded metrics database — zero-config, no extra Docker container
-- **Zod 4.3**: MCP SDK peer dependency, validates configs and API payloads
-- **Vitest 4.1**: Recommended over Jest — identical API, zero-config TypeScript support, used by every library in the stack
+**New dependencies:**
 
-**Notable recommendation:** Update the Jest constraint from PROJECT.md to Vitest. The authoring experience is identical (`describe`/`test`/`expect`/`vi.mock`), but Vitest eliminates the need for ts-jest transforms, ESM workarounds, and babel configuration.
+- `ollama` (^0.6.3): LLM chat API for semantic chunk generation — structured JSON output via `format` param with Zod schemas
+- `p-queue` (^9.1.2): Promise-based concurrency control for parallel embedding — rate limiting, priority, abort signals
+
+**Existing stack, new usage:**
+
+- `zod` (^4.3.6): Built-in `z.toJSONSchema()` for Ollama structured output — eliminates need for `zod-to-json-schema`
+- `@qdrant/js-client-rest` (^1.17.0): Multi-collection instances, `searchBatch()` for A/B comparison
+- `recharts` (^3.8.1): ScatterChart, RadarChart, ComposedChart for analytics visualizations
+- `better-sqlite3` (^12.8.0): Extended schema for search history persistence
+
+**Explicitly rejected:** LangChain/LlamaIndex (too heavy), worker threads (I/O-bound not CPU-bound), tanstack/react-query (over-engineering), new charting libs (Recharts covers all needs), React state management libs (React 19 built-ins suffice).
 
 ### Expected Features
 
-Research across five major competitor tools reveals clear tiers of feature importance.
+See [FEATURES.md](./FEATURES.md) for detailed analysis, dependency graph, and competitor comparison.
 
-**Must have (table stakes):**
-- Codebase indexing with AST-aware chunking — every competitor provides codebase awareness
-- Semantic search / context retrieval — the core value proposition
-- MCP server integration — industry standard protocol, Continue deprecated built-in RAG in favor of MCP
-- Provider-agnostic embedding (OpenAI + Ollama) — developers demand provider choice
-- One-shot installation with auto-detection — friction kills adoption
-- Project profile auto-detection — developers don't want manual configuration
-- Git-aware operations — respect .gitignore, track changes for incremental re-indexing
+**Must have (P1 — table stakes for v1.1):**
 
-**Should have (differentiators):**
-- AST-aware chunking (tree-sitter) — most tools use naive text splitting
-- Dependency graph expansion on retrieval — no competitor does this
-- End-to-end benchmark system (compile + test pass rate) — only Aider benchmarks, and only LLM capability not RAG quality
-- Monitoring dashboard (indexing status, token usage, RAG quality) — no competitor has this
-- Configurable retrieval modes (MCP-only / auto-context / both) — A/B testable, novel
-- Benchmark history with trend visualization — iterative optimization over time
+- LLM chunking pipeline: Ollama integration, single-pass boundary + summary detection, structured JSON output
+- Multi-collection Qdrant storage: `{project}` (AST) and `{project}-llm` (LLM) collections
+- MCP tools query both collections: parallel query, RRF merging, source strategy tagging on results
+- CLI `--strategy ast|llm|both` flag for indexing
+- Parallel embedding with configurable concurrency and progress reporting
+- Dashboard search UI: query input, collection selector, results with scores and code previews
 
-**Defer (v2+):**
-- Auto-context injection — ship MCP-only first; auto-context adds complexity and risk of noise injection
-- GSD workflow integration — build RAG quality first, integrate with workflows later
-- Database schema indexing — useful but secondary to code context
-- Dependency graph expansion — start with basic semantic search, add as measured improvement
+**Should have (P2 — differentiators, v1.1.x):**
+
+- A/B side-by-side comparison view with scoring visualization
+- Search history with persistence, replay, and comparison
+- Per-query metrics panel (latency, chunks scanned, score distribution)
+
+**Defer (P3/v1.2+):**
+
+- Analytics trend charts (need accumulated time-series data)
+- Strategy win rate tracking (need query volume for statistical significance)
+- Token usage breakdown by strategy
+- Cloud LLM chunking (explicitly deferred to v3 per PROJECT.md)
+
+**Anti-features (explicitly NOT building):**
+
+- Real-time re-chunking on file save (LLM chunking too slow)
+- Custom prompt templates for chunking (support burden)
+- Embedding model fine-tuning UI (massive scope)
+- Graph database for code relationships (unnecessary complexity)
 
 ### Architecture Approach
 
-The system is a pipeline-oriented architecture with three runtime modes (batch indexing, interactive MCP, monitoring dashboard) sharing core libraries but running as separate processes. The monorepo contains ~10 packages organized by bounded responsibility (core, ast-parser, embedding, vector-store, indexer, rag, metrics) plus 3 apps (mcp-server, dashboard, cli). Components communicate in-process where possible, with HTTP only for external services (Qdrant, embedding APIs).
+v1.1 uses four established patterns to integrate cleanly with the existing system: Strategy Pattern for chunking (mirroring the existing `EmbeddingProvider` pattern), Composition for multi-collection search, Convention for collection naming, and additive-only interface changes for backward compatibility. The architecture avoids creating new abstractions where existing ones suffice — `QdrantVectorStore` is already parameterized on `collectionName`, so multi-collection requires zero code changes to the vector store layer. See [ARCHITECTURE.md](./ARCHITECTURE.md) for full component boundaries and data flows.
 
-**Major components:**
-1. **core** — Shared types, config loader (Zod schemas), structured logging
-2. **ast-parser** — Tree-sitter WASM abstraction with per-language parser strategies and AST-aware chunk generation
-3. **embedding** — Strategy pattern: `EmbeddingProvider` interface with OpenAI and Ollama implementations
-4. **vector-store** — Repository pattern: `VectorStore` interface wrapping Qdrant REST client
-5. **indexer** — Pipeline pattern: file walk → AST parse → metadata enrich → embed → upsert (each stage independently testable)
-6. **rag** — Retrieval engine: embed query → semantic search → (optional) dependency expand → re-rank → context assembly
-7. **mcp-server** — Stateless MCP server (stdio transport): registers tools, delegates to RAG engine
-8. **metrics** — SQLite-backed storage for token usage and benchmark results
-9. **dashboard** — Hono API + React SPA: read-only views of indexing status, token usage, benchmark trends
-10. **installer** — Bash bootstrap + TypeScript orchestration: prereq checks, Docker setup, project detection
+**Major new components:**
+
+1. `ChunkingStrategy` interface + `AstChunkingStrategy` + `LlmChunkingStrategy` — in `packages/indexer`
+2. `MultiCollectionSearchEngine` — wraps two `SearchEngine` instances, parallel query + RRF merge — in `packages/retrieval`
+3. Dashboard search & analytics routes — new Hono routes in `packages/dashboard-api`
+4. Dashboard Search page & Analytics page — new React pages in `apps/dashboard`
+
+**Key architectural decisions:**
+
+- Separate Qdrant collections (not payload filters) for AST vs LLM chunks — independent lifecycle, different vector distributions
+- LLM chunking is opt-in (`--strategy llm`), default remains `ast` — backward compatible
+- Dashboard search lazy-initializes embedding provider — no startup cost if unused
+- MCP tools stay duck-typed — `MultiCollectionSearchEngine` implements the same shape, zero MCP handler changes
+- All new config fields are optional with sensible defaults — v1.0 configs work unchanged
 
 ### Critical Pitfalls
 
-1. **Naive text chunking destroys retrieval quality** — Use tree-sitter AST parsing from the first implementation. Chunk at function/class/type boundaries, never at arbitrary byte offsets. This is the #1 determinant of RAG quality and cannot be fixed incrementally.
+See [PITFALLS.md](./PITFALLS.md) for all 13 pitfalls with full prevention strategies and recovery plans.
 
-2. **Single embedding model misses ~40% of queries** — Use dual-vector collections in Qdrant (text description + raw code). NLP models miss code-to-code queries; code models miss natural language queries. Qdrant's named vector support enables this at no architectural cost. Must be designed into the collection schema from the start.
+1. **Ollama VRAM contention (#1)** — Chunking model and embedding model fight for GPU memory, causing model-swap thrashing. **Prevent:** Separate phases completely (chunk all files first, then embed all). Use `keep_alive: "0"` to release models between phases.
 
-3. **Embedding model mismatch silently degrades results** — Lock collections to a specific model config. Store model name + version in metadata. Force full re-indexing when the model changes. Validate dimensions before upsert.
+2. **LLM chunk non-determinism (#2)** — Same file produces different chunks each run, breaking incremental indexing and benchmark reproducibility. **Prevent:** Cache LLM chunk results keyed by file hash. Disable incremental for LLM collection. Pin `temperature: 0, seed: fixed`.
 
-4. **Auto-context injection with wrong context is worse than no context** — Ship MCP-only mode as default. Add auto-context later with relevance thresholds. Benchmark MCP-only vs auto-context to find the sweet spot. Never auto-inject below a minimum similarity score.
+3. **Cross-collection score incomparability (#3)** — Raw cosine scores from AST and LLM collections aren't comparable, causing unfair result merging. **Prevent:** Use RRF (rank-based) for cross-collection merging, never raw score comparison. Apply score thresholds per-collection before merging.
 
-5. **MCP server crashes silently kill the developer workflow** — Wrap all Qdrant calls with timeout + retry + circuit breaker. Return empty results with error messages on failure, never crash. Log to stderr and to file. Health-check Qdrant on startup and periodically.
+4. **Context window overflow (#4)** — Files >300 lines exceed Ollama's context window, causing silent truncation or hallucinated boundaries. **Prevent:** AST pre-splitting for large files. Budget: system prompt (200 tokens) + file content must be ≤ 70% of `num_ctx`.
+
+5. **Config schema breaking v1.0 (#9)** — Adding required config fields breaks existing deployments. **Prevent:** All new fields optional with defaults. Test with actual v1.0 `project.json` as automated test.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure (7 phases):
+Based on combined research, the following phase structure respects dependency ordering, isolates risk, and groups related work.
 
-### Phase 1: Foundation & Infrastructure
-**Rationale:** Everything depends on the monorepo structure, shared types, config system, and Docker infrastructure. This is Level 0-1 in the architecture build order.
-**Delivers:** Working monorepo with Turborepo + pnpm, shared TypeScript config, core types package, Docker Compose with Qdrant running, project detection skeleton, Zod config schemas.
-**Addresses:** Configurable settings, Git-aware operations (gitignore), project auto-detection (skeleton)
-**Avoids:** Installer failures (#9) — establish prereq checks and Docker volume setup early
+### Phase 1: Pipeline Refactoring & Parallel Embedding
 
-### Phase 2: Indexing Pipeline
-**Rationale:** Cannot retrieve without an index. The indexing pipeline is the foundational differentiator — its quality determines everything downstream. Must get AST-aware chunking and dual-vector storage right from the start.
-**Delivers:** Tree-sitter AST parsing, embedding provider abstraction (OpenAI + Ollama), dual-vector Qdrant collection, indexing pipeline with progress reporting. Run `ia-framework index` and the codebase is indexed.
-**Addresses:** Codebase indexing, AST-aware chunking, provider-agnostic embedding
-**Avoids:** Naive text chunking (#1), single embedding model (#2), embedding model mismatch (#3), Ollama slow indexing (#10)
+**Rationale:** Every other v1.1 feature depends on the `ChunkingStrategy` interface existing and the pipeline supporting pluggable strategies. This is pure refactoring with zero behavior change — the safest possible starting point. Parallel embedding delivers immediate indexing speed improvement independent of LLM chunking.
 
-### Phase 3: Retrieval & MCP Server
-**Rationale:** Semantic search + MCP integration is the shortest path to proving value. Once indexing works, developers need to use it through OpenCode. MCP-only mode first.
-**Delivers:** RAG engine with semantic search, MCP server with `search_codebase` and `index_status` tools, OpenCode integration via stdio transport. Developer can ask "find the authentication handler" and get relevant code.
-**Addresses:** Semantic search / context retrieval, MCP server integration, configurable retrieval (MCP-only mode)
-**Avoids:** MCP server crashes (#6), bad MCP tool schema (#13), auto-context noise (#4 — deferred)
+**Delivers:**
 
-### Phase 4: Installation & CLI
-**Rationale:** With the core pipeline working, create the frictionless first-run experience. The installer depends on project detection and Docker setup (Phase 1) and validates by running indexing (Phase 2).
-**Delivers:** `./install.sh` with prereq checks, project auto-detection with developer confirmation, CLI commands (`index`, `status`, `search`), idempotent setup.
-**Addresses:** Easy one-shot installation, project profile auto-detection, developer confirmation UX
-**Avoids:** Installer assumes too much (#9) — pre-flight checks, fail fast, test on macOS/Ubuntu/WSL2
+- `ChunkingStrategy` interface extracted from `IndexingPipeline`
+- `AstChunkingStrategy` wrapping existing `parseFile()` + `chunkToDescription()` — identical output, all tests pass
+- `EnrichedChunk` type with optional `description` field
+- Parallel embedding via `p-queue` with provider-aware concurrency defaults
+- Progress event emission (`IndexingProgress` interface)
+- Config schema extension (optional fields, backward compatible)
 
-### Phase 5: Benchmarking & Metrics
-**Rationale:** Must measure before optimizing. With retrieval working, benchmarks prove RAG value and enable comparison across embedding models and chunking strategies. Required before tuning auto-context or dependency expansion.
-**Delivers:** Benchmark runner (coding tasks → AI generates code → compile → test → score), metrics storage (SQLite), token usage tracking, CLI benchmark comparison output. Can compare: "does voyage-code-3 outperform nomic-embed-text on my codebase?"
-**Addresses:** End-to-end benchmark system, benchmark history storage, token usage tracking
-**Avoids:** Benchmarks measuring wrong thing (#8) — end-to-end compile+test, not just retrieval precision. Include no-RAG baseline.
+**Addresses features:** Parallel embedding + progress (P1), CLI concurrency flag
+**Avoids pitfalls:** #6 (pipeline abstraction leak), #9 (config schema breakage), #12 (test suite breakage)
 
-### Phase 6: Monitoring Dashboard
-**Rationale:** All data sources (Qdrant stats, SQLite metrics, benchmark results) must exist before the dashboard can display them. This is a visibility/polish layer.
-**Delivers:** Docker-containerized web app: indexing status, token usage charts (Recharts), benchmark trend visualization, project profile view. All read-only.
-**Addresses:** Monitoring dashboard, benchmark history visualization
-**Avoids:** Dashboard becomes maintenance burden (#14) — read-only v1, minimal feature set, optional component
+### Phase 2: LLM Chunking Spike (Validation Gate)
 
-### Phase 7: Advanced Retrieval & Integration
-**Rationale:** With measurement infrastructure in place, add advanced features and verify they improve benchmarks. Each feature (auto-context, dependency expansion) must prove its value empirically.
-**Delivers:** Auto-context injection with relevance thresholds, dependency graph expansion (1-hop with token budget cap), configurable retrieval modes, GSD workflow integration.
-**Addresses:** Auto-context injection, dependency graph expansion, configurable retrieval modes, GSD workflow integration
-**Avoids:** Auto-context noise (#4) — benchmark before enabling by default. Dependency graph explosion (#7) — hard depth limit, token budget, barrel file detection.
+**Rationale:** This is the highest-risk item in v1.1. Before committing to full LLM chunking implementation, a time-boxed spike (2-3 days) must validate: Ollama structured output quality with the target model, chunking latency per file, context window handling for large files, and output determinism. If the spike fails, the milestone pivots to parallel embedding + dashboard improvements without LLM chunking.
+
+**Delivers:**
+
+- Standalone script testing Ollama `chat()` with structured JSON output
+- Measured latency: tokens/sec, seconds/file for representative file sizes
+- Validated context window approach: direct send vs AST pre-split threshold
+- Determinism measurement: run same file 5x, measure output variance
+- Model recommendation (qwen3:8b vs alternatives) with evidence
+- Go/no-go decision for LLM chunking
+
+**Addresses features:** LLM chunking feasibility validation
+**Avoids pitfalls:** #1 (VRAM contention), #2 (non-determinism), #4 (context overflow), #10 (JSON parsing failures)
+
+### Phase 3: LLM Chunking Implementation
+
+**Rationale:** With the spike validated and the strategy interface in place, this phase implements the full `LlmChunkingStrategy`, adds the `--strategy` CLI flag, and creates the `-llm` collection. It ships the v1.1 headline feature.
+
+**Delivers:**
+
+- `LlmChunkingStrategy` implementation using Ollama SDK
+- AST pre-splitting for files exceeding context window threshold
+- Chunk result caching (file hash → LLM output) for determinism
+- CLI `--strategy ast|llm|both` flag
+- `{project}-llm` collection creation and population
+- Fallback: AST chunking for files where LLM fails 3x
+
+**Addresses features:** LLM chunking pipeline (P1), CLI strategy selection (P1), multi-collection storage (P1)
+**Avoids pitfalls:** #1 (phase separation), #2 (caching), #4 (pre-splitting), #7 (model warm-up)
+
+### Phase 4: Multi-Collection Search & MCP Integration
+
+**Rationale:** With both collections populated, this phase enables searching across them. The MCP tools must query both collections — this is what makes LLM chunking actually useful to the AI client. RRF-based merging is the critical design decision here.
+
+**Delivers:**
+
+- `MultiCollectionSearchEngine` with parallel query and RRF merging
+- `source: 'ast' | 'llm'` tagging on `RetrievalResult`
+- Graceful degradation when only one collection exists
+- MCP `search_codebase` and `search_codebase_hybrid` using `MultiCollectionSearchEngine`
+- Per-collection score threshold application before merge
+- Benchmark validation: merged MRR ≥ better individual collection MRR
+
+**Addresses features:** MCP tools multi-collection query (P1)
+**Avoids pitfalls:** #3 (RRF over raw scores), #5 (provider-aware concurrency in search embedding)
+
+### Phase 5: Dashboard Search & Analytics
+
+**Rationale:** The dashboard evolves last because it depends on the search engine and multi-collection infrastructure. Search UI validates that LLM chunks produce good results. Analytics surfaces the data developers need to decide between strategies.
+
+**Delivers:**
+
+- Dashboard API: `GET /api/search`, `GET /api/analytics/collections`
+- Dashboard Search page: query input, collection selector, results with source badges and code previews
+- Per-query metrics panel: latency, chunks scanned, score distribution
+- Dashboard Analytics page: collection comparison, chunk distribution charts
+- A/B side-by-side comparison view (if time permits — P2)
+- Search history persistence with retention policy (P2)
+
+**Addresses features:** Dashboard search UI (P1), per-query metrics (P2), A/B comparison (P2), search history (P2), analytics (P3)
+**Avoids pitfalls:** #8 (lazy-init embedding provider), #11 (retention policy from start), #13 (collection metadata alongside A/B results)
 
 ### Phase Ordering Rationale
 
-- **Phases 1→2→3 are strictly sequential**: can't retrieve without an index, can't index without infrastructure
-- **Phase 4 (installer) comes after Phase 3**: installer validates the full pipeline works end-to-end, not just infrastructure
-- **Phase 5 (benchmarks) before Phase 7 (advanced features)**: measurement must exist before optimization — the research unanimously agrees on "measure first"
-- **Phase 6 (dashboard) before Phase 7**: developers need visibility into the system before tweaking retrieval modes
-- **Phase 7 last**: auto-context and dependency expansion are refinements that require benchmarks to validate, not prerequisites
+- **Phase 1 before everything:** ChunkingStrategy interface is a prerequisite for LLM chunking. Parallel embedding is independent but shares the refactoring. Getting the abstraction right first prevents pitfall #6 (pipeline abstraction leak).
+- **Phase 2 gates Phase 3:** The spike validates feasibility before investing in full implementation. If the spike reveals deal-breakers (unacceptable latency, terrible output quality), Phases 3-5 can be scoped down to parallel-embedding-only + dashboard improvements.
+- **Phase 3 before Phase 4:** Multi-collection search requires collections to exist. LLM chunking creates the second collection.
+- **Phase 4 before Phase 5:** Dashboard search routes need the `MultiCollectionSearchEngine` to function. Building UI before the API exists leads to throwaway mocks.
+- **P2 features (A/B, search history) fold into Phase 5** as incremental additions once basic search works.
 
 ### Research Flags
 
-**Phases likely needing deeper research during planning:**
-- **Phase 2 (Indexing):** Dual-vector collection schema design needs Qdrant-specific research. Tree-sitter grammar loading and WASM initialization patterns need validation with actual codebase sizes. Batch embedding strategies differ significantly between OpenAI and Ollama.
-- **Phase 5 (Benchmarking):** End-to-end benchmark task design (what coding tasks? how to measure compile+test automatically?) is novel — no competitor does this well. Aider's methodology (Exercism exercises) is a reference but tests LLM capability, not RAG quality.
-- **Phase 7 (Advanced Retrieval):** Auto-context injection mechanism depends on OpenCode's extensibility (MCP prompt templates? middleware hooks?). Dependency graph expansion algorithms need experimentation.
+**Phases needing deeper research during planning:**
+
+- **Phase 2 (LLM Chunking Spike):** This IS the research phase. Budget 2-3 days. Key unknowns: optimal model choice, prompt engineering across languages, context window thresholds, determinism bounds.
+- **Phase 4 (Multi-Collection Search):** RRF parameter tuning (k value) needs experimentation. Score distribution analysis between AST and LLM collections needed to validate merging fairness.
 
 **Phases with standard patterns (skip research-phase):**
-- **Phase 1 (Foundation):** Turborepo + pnpm monorepo setup is extremely well-documented (1520 code snippets on Context7). Docker Compose for Qdrant is standard.
-- **Phase 3 (MCP Server):** MCP SDK has excellent documentation (346 code snippets on Context7, HIGH confidence). Tool registration pattern is straightforward.
-- **Phase 4 (Installer):** Standard CLI tooling patterns (commander, environment detection). Well-understood problem space.
-- **Phase 6 (Dashboard):** Standard React + Recharts patterns. Hono API is well-documented (757 snippets on Context7).
+
+- **Phase 1 (Pipeline Refactoring):** Strategy Pattern is well-documented. p-queue has excellent docs. Pure refactoring — no unknowns.
+- **Phase 3 (LLM Chunking Implementation):** By this point, the spike has resolved all unknowns. Implementation follows the validated approach.
+- **Phase 5 (Dashboard):** Hono routes + React pages + Recharts charts. All well-documented, existing patterns in the codebase.
 
 ## Confidence Assessment
 
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Stack | HIGH | All versions verified against npm on 2026-03-31. Compatibility matrix validated. Every library at HIGH confidence except Python tree-sitter grammar (MEDIUM). |
-| Features | HIGH | Based on analysis of 5 major competitor tools (Cursor, Continue, Aider, Cody, OpenCode) with official documentation. Clear consensus on table stakes vs differentiators. |
-| Architecture | HIGH | MCP SDK, Qdrant client, and Turborepo patterns confirmed via Context7 with HIGH reputation sources. Data flows are well-defined. |
-| Pitfalls | HIGH | 9 critical + 5 moderate pitfalls documented with specific prevention strategies. Sources include Qdrant's own code search tutorial and MCP specification. |
+| Area         | Confidence | Notes                                                                                                                                             |
+| ------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stack        | **HIGH**   | Only 2 new deps, both verified via Context7 with HIGH reputation sources. Existing stack unchanged.                                               |
+| Features     | **HIGH**   | Clear P1/P2/P3 prioritization. Feature dependencies well-mapped. Competitor analysis confirms all features are differentiators.                   |
+| Architecture | **HIGH**   | All patterns verified against existing codebase. Integration points identified via source analysis. Build order respects real dependency graph.   |
+| Pitfalls     | **HIGH**   | All pitfalls sourced from official Ollama/Qdrant docs (Context7) + existing codebase analysis. Prevention strategies are concrete and actionable. |
 
-**Overall confidence: HIGH**
-
-All four research areas are backed by official documentation, verified library versions, and established patterns. The domain (RAG for code) is well-explored by multiple tools, giving strong signal on what works.
+**Overall confidence:** **HIGH** — Research is thorough, sources are authoritative, and recommendations are strongly aligned across all four documents.
 
 ### Gaps to Address
 
-- **Dual-vector vs single-vector tradeoff**: PITFALLS research strongly recommends dual vectors, but the architecture doesn't detail the collection schema. Needs concrete schema design during Phase 2 planning.
-- **Hono vs Fastify conflict**: STACK recommends Hono (already an MCP SDK dependency), ARCHITECTURE mentions Fastify for dashboard. **Resolution: Use Hono** — fewer dependencies, consistent with stack.
-- **web-tree-sitter vs native tree-sitter**: STACK recommends WASM (cross-platform), ARCHITECTURE briefly mentions native for speed. **Resolution: Use web-tree-sitter (WASM)** — avoids native compilation issues, consistent with STACK recommendation.
-- **Auto-context injection mechanism**: How to intercept prompts in OpenCode is unclear. Three options identified (MCP prompt templates, middleware hooks, wrapper script) but none validated. Defer research to Phase 7.
-- **Benchmark task corpus**: What coding tasks to use for end-to-end benchmarks is unresolved. Aider uses Exercism exercises for LLM benchmarks, but RAG-quality benchmarks need tasks from the target project. Needs research during Phase 5 planning.
-- **Incremental re-indexing granularity**: Agreed as important but the exact mechanism (git hooks? file watcher? manual command?) needs implementation-phase decision. Fast full re-index (<2 min) is acceptable for v1.
+- **LLM chunking prompt quality across languages:** Research assumes a universal prompt works for TypeScript, Python, Go, etc. The spike (Phase 2) must test against 3+ languages. Budget 2-3 days for prompt iteration.
+- **RRF k-parameter tuning:** The standard k=60 may not be optimal for AST vs LLM score distributions. Needs experimentation with real dual-collection data in Phase 4.
+- **Ollama VRAM requirements per model combination:** Research documents the risk but doesn't prescribe minimum VRAM for specific model pairs (e.g., qwen3:8b + nomic-embed-text). Needs measurement during the spike.
+- **LLM chunking cost on very large codebases (>10K files):** Estimated at 2M-7M tokens but real-world measurement needed. Could reveal a practical ceiling for LLM chunking.
+- **Dashboard search embedding provider initialization:** Research identifies the architectural concession (dashboard needs embedding provider) but doesn't finalize whether to lazy-load or pre-load. Decision during Phase 5 implementation.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Context7 `/modelcontextprotocol/typescript-sdk` — MCP server setup, tool registration, transport (346 snippets)
-- Context7 `/qdrant/qdrant-js` — Qdrant client API, collection management (98 snippets)
-- Context7 `/websites/qdrant_tech` — Qdrant RAG patterns, code search tutorial, optimization (5682 snippets)
-- Context7 `/vercel/turborepo` — Monorepo setup, pipeline config (1520 snippets)
-- Context7 `/websites/hono_dev` — Hono API patterns, Node.js adapter (757 snippets)
-- MCP specification: https://modelcontextprotocol.io/docs/concepts/architecture
-- Qdrant code search tutorial: https://qdrant.tech/documentation/tutorials-search-engineering/code-search/
-- Qdrant retrieval quality: https://qdrant.tech/documentation/tutorials-search-engineering/retrieval-quality/
-- Aider repo map architecture: https://aider.chat/docs/repomap.html
-- Continue custom RAG guide: https://docs.continue.dev/guides/custom-code-rag
-- Cody context architecture: https://sourcegraph.com/docs/cody/core-concepts/context
+
+- Context7 `/ollama/ollama-js` (92 snippets) — chat API, structured output, format parameter, model management
+- Context7 `/qdrant/qdrant-js` (98 snippets) — multi-collection, searchBatch, collection CRUD
+- Context7 `/sindresorhus/p-queue` (135 snippets) — concurrency, rate limiting, interval caps, abort signals
+- Context7 `/websites/zod_dev_v4` (1544 snippets) — `z.toJSONSchema()` built-in function
+- Context7 `/recharts/recharts` (94 snippets) — ScatterChart, RadarChart, ComposedChart, custom Tooltip
+- Context7 `/modelcontextprotocol/typescript-sdk` — duck-typed tool handlers, MCP server patterns
+- Context7 `/websites/hono_dev` (757 snippets) — route composition, WebSocket, Node.js adapter
+- Ollama FAQ (docs.ollama.com/faq) — concurrent requests, VRAM allocation, model loading
+- Qdrant hybrid queries (qdrant.tech/documentation/concepts/hybrid-queries) — RRF, DBSF, cross-vector fusion
 
 ### Secondary (MEDIUM confidence)
-- Tree-sitter documentation (Context7) — grammar loading, error recovery patterns
-- Qdrant embedding model migration tutorial — model switching workflow
-- Aider benchmark methodology (https://aider.chat/docs/leaderboards/) — reference for benchmark design
 
-### Tertiary (needs validation)
-- Auto-context injection mechanism via OpenCode — no confirmed extensibility API
-- Benchmark task design for RAG quality measurement — novel approach, no established methodology
+- npm registry version checks — ollama@0.6.3, p-queue@9.1.2, zod@4.3.6 compatibility
+- Existing codebase source analysis — pipeline.ts, search-engine.ts, qdrant.ts, ollama.ts, app.ts
+
+### Tertiary (LOW confidence)
+
+- LLM chunking latency estimates (1-5s/chunk) — based on general Ollama benchmarks, not measured on target hardware
+- VRAM co-residency feasibility for model pairs — needs empirical validation during spike
 
 ---
-*Research completed: 2026-03-31*
-*Ready for roadmap: yes*
+
+_Research completed: 2026-04-09_
+_Ready for roadmap: yes_

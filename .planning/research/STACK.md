@@ -1,336 +1,367 @@
-# Technology Stack
+# Technology Stack — v1.1 Additions
 
 **Project:** ia-framework
-**Researched:** 2026-03-31
+**Milestone:** v1.1 — RAG Quality & Dashboard Evolution
+**Researched:** 2026-04-09
 **Overall Confidence:** HIGH
 
-## Recommended Stack
+> This document covers **only new stack additions** for v1.1. The base stack (Node 22, TypeScript 5.9, pnpm 10, Turborepo, Vitest, Hono, React/Vite, Recharts, Qdrant, web-tree-sitter, better-sqlite3, MCP SDK) is validated and unchanged. See the v1.0 STACK.md in CLAUDE.md for the full base stack.
 
-### Runtime & Language
+## New Dependencies
 
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| Node.js | ^22.0.0 (LTS) | Runtime | Vitest 4 requires ^20 or ^22+. Node 22 LTS gives modern APIs (native fetch, structuredClone, test runner fallback) with long-term support. | HIGH |
-| TypeScript | ^5.9.0 | Language | Latest stable 5.x. TypeScript 6.0 just released but ecosystem deps (MCP SDK, Vitest, Hono) still target ^5.x. Wait for ecosystem adoption before upgrading. | HIGH |
-| pnpm | ^10.x | Package manager | Best monorepo support (workspace protocol, strict dependency resolution, content-addressable storage). Used by Qdrant SDK, Zod, and Turborepo ecosystem. | HIGH |
+### LLM Interaction (Chunking via Ollama)
 
-### Monorepo Tooling
+| Technology | Version | Purpose               | Why                                                                                                                                                                                                                                                                                                                                                                                                                                         | Confidence |
+| ---------- | ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| ollama     | ^0.6.3  | LLM chat for chunking | Official Ollama JS SDK. Provides typed `chat()` with system prompts, structured JSON output via `format` parameter, streaming, model management (`list`, `pull`, `show`). The embedding package currently uses raw `fetch()` for `/api/embed` — that's fine for embeddings, but LLM chunking needs `chat()` with structured output, conversation context, and streaming progress. The SDK handles all of this with proper TypeScript types. | HIGH       |
 
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| Turborepo | ^2.9.1 | Build orchestration | Rust-powered task runner with remote caching, dependency-aware task graph, and parallel execution. Industry standard for TypeScript monorepos. | HIGH |
-| tsup | ^8.5.1 | Package bundling | Wraps esbuild for fast builds with DTS generation. Handles ESM+CJS dual output. Used by most modern TS libraries. | HIGH |
-| tsx | ^4.21.0 | Dev TS execution | Runs TypeScript directly via esbuild transform. For scripts, dev servers, and CLI tools during development. | HIGH |
+**Why the `ollama` package now when we didn't need it before:**
 
-### Vector Database & RAG
+- v1.0 embedding only needed one HTTP call (`POST /api/embed`) — raw `fetch()` was simpler
+- v1.1 LLM chunking needs `chat()` with system prompts, structured output schemas, streaming progress tracking, and model lifecycle management (`list`, `pull`, `show` for interactive selection)
+- The SDK provides typed responses, proper error handling, and the `format` parameter for structured output — building this from scratch would duplicate the SDK
 
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| Qdrant (Docker) | latest (v1.13+) | Vector storage | Mature, Docker-native, excellent filtering, payload storage. Purpose-built for RAG with HNSW indexing. Already a project decision. | HIGH |
-| @qdrant/js-client-rest | ^1.17.0 | Qdrant client | Official REST client. Full TypeScript types, supports Node.js >=18, browser, and Deno. REST is simpler to debug than gRPC; gRPC only needed at scale we won't hit. | HIGH |
+**Structured output pattern (verified via Context7, HIGH confidence):**
 
-### MCP Server
+```typescript
+import ollama from 'ollama';
+import * as z from 'zod';
 
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| @modelcontextprotocol/sdk | ^1.29.0 | MCP server | Official Anthropic SDK. Provides `McpServer` class with tool/resource/prompt registration. StdioServerTransport for OpenCode integration. Actively maintained, weekly releases. | HIGH |
+// Define chunk output schema with Zod
+const ChunkBoundarySchema = z.object({
+  chunks: z.array(
+    z.object({
+      startLine: z.number().describe('First line of this semantic chunk'),
+      endLine: z.number().describe('Last line of this semantic chunk'),
+      summary: z.string().describe('One-sentence prose description of what this chunk does'),
+      chunkType: z.enum(['function', 'class', 'interface', 'module', 'block']),
+      name: z.string().describe('Name of the primary symbol in this chunk'),
+    }),
+  ),
+});
 
-### AST Parsing
+// Use Zod 4's built-in toJSONSchema — NO external library needed
+const response = await ollama.chat({
+  model: 'qwen3:8b',
+  messages: [
+    {
+      role: 'system',
+      content: 'You are a code analysis tool. Identify semantic chunk boundaries...',
+    },
+    { role: 'user', content: `Analyze this code and identify semantic chunks:\n\n${codeContent}` },
+  ],
+  format: z.toJSONSchema(ChunkBoundarySchema), // Zod 4 built-in!
+  options: { temperature: 0 },
+});
 
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| web-tree-sitter | ^0.26.8 | AST parsing | WASM-based tree-sitter for Node.js. Language-agnostic incremental parser. Supports 100+ languages via grammar plugins. WASM avoids native compilation issues across platforms. | HIGH |
-| tree-sitter-typescript | latest | TS/JS grammar | Official TypeScript grammar for tree-sitter. Covers TypeScript, TSX, JavaScript, JSX. | HIGH |
-| tree-sitter-python | latest | Python grammar | For indexing Python codebases. Add more grammars per target project needs. | MEDIUM |
-
-### Embedding & LLM Integration
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| openai | ^6.33.0 | Cloud embeddings | Official OpenAI SDK. Also works with any OpenAI-compatible API (Azure, Together, local vLLM). Zero external dependencies. Provider-agnostic via base URL config. | HIGH |
-| ollama | ^0.6.3 | Local embeddings | Official Ollama client. Run embedding models locally (nomic-embed-text, mxbai-embed-large). No API keys needed. Critical for air-gapped/private codebases. | HIGH |
-
-**Architecture note:** Build a thin `EmbeddingProvider` interface with two implementations (OpenAI-compatible, Ollama). Don't use LangChain — it adds massive dependency bloat for two simple API calls.
-
-### Dashboard API Server
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| hono | ^4.12.9 | API framework | Ultrafast, Web Standards-based, excellent TypeScript types, built-in WebSocket support. ~14KB. MCP SDK already depends on it. One less dependency to manage. | HIGH |
-| @hono/node-server | ^1.19.12 | Node.js adapter | Runs Hono on Node.js with native http module. Supports static file serving. | HIGH |
-
-### Dashboard Frontend
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| React | ^19.x | Dashboard UI | Massive ecosystem for charting and data display. React 19 is stable with server components, use hooks, and improved performance. Team familiarity likely. | HIGH |
-| Recharts | ^3.8.1 | Charts/visualization | Best React charting library for benchmark trend visualization. Declarative API, composable, responsive. Built on D3 internals but React-native API. | HIGH |
-| Vite | ^6.x | Frontend build | Standard React build tool. Fast HMR, ESM-native, TypeScript out of the box. Vitest is built on Vite, so config sharing is natural. | HIGH |
-
-### Data Storage (Monitoring/Metrics)
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| better-sqlite3 | ^12.8.0 | Metrics database | Synchronous SQLite for Node.js. Stores token usage, benchmark results, indexing status, project config. No extra Docker service needed. Perfect for single-user internal tools. | HIGH |
-
-### Schema Validation
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| zod | ^4.3.6 | Validation & types | TypeScript-first schema validation with static type inference. MCP SDK peer dependency (^3.25 \|\| ^4.0). Use Zod 4 for performance gains and smaller bundle. Validates configs, API payloads, CLI inputs. | HIGH |
-
-### Testing
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| vitest | ^4.1.2 | Test runner | Jest-compatible API (describe/test/expect) with native ESM, TypeScript, and monorepo workspace support. 10x faster than Jest for TS projects — no transform config needed. Used by MCP SDK, Qdrant client, Hono, Recharts, Zod, and every library in this stack. | HIGH |
-| @vitest/coverage-v8 | ^4.x | Coverage | V8-based coverage — faster than Istanbul, no instrumentation needed. | HIGH |
-
-> **Note on Jest constraint:** PROJECT.md specifies "Jest with TDD." Vitest provides an identical authoring API (`describe`, `test`, `expect`, `vi.mock`). Every library in this stack uses Vitest. For a greenfield TypeScript monorepo, Jest requires significant configuration (ts-jest/SWC transforms, ESM workarounds, babel config) while Vitest works zero-config. **Recommend updating the constraint to Vitest.** TDD workflow is identical.
-
-### Code Quality
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| eslint | ^9.x | Linting | Flat config format (eslint.config.js). Industry standard. | HIGH |
-| typescript-eslint | ^8.x | TS linting rules | Type-aware linting for TypeScript. Handles strict type checking rules. | HIGH |
-| prettier | ^3.x | Formatting | Opinionated formatter. No config debates. | HIGH |
-
-### Infrastructure
-
-| Technology | Version | Purpose | Why | Confidence |
-|------------|---------|---------|-----|------------|
-| Docker | latest | Container runtime | Runs Qdrant and dashboard. Required by project constraints. | HIGH |
-| Docker Compose | v2 | Service orchestration | Defines multi-container setup (Qdrant, dashboard API, dashboard UI). Single `docker compose up`. | HIGH |
-
-### Supporting Libraries
-
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| commander | ^13.x | CLI framework | Install script and CLI tools. Proven, typed, simple. |
-| glob / tinyglobby | ^0.2.x | File discovery | Codebase scanning for indexing. Fast, modern glob implementation. |
-| chokidar | ^4.x | File watching | Watch codebase for changes to trigger re-indexing. |
-| winston or pino | latest | Logging | Structured logging for MCP server and indexer. Pino is faster; winston has more transports. Pick pino for performance. |
-| p-queue | ^8.x | Concurrency control | Rate-limit embedding API calls. Prevent overwhelming cloud providers. |
-| cosmiconfig | ^9.x | Config loading | Load `.ia-framework/project.json` and other configs. Handles JSON, YAML, JS configs. |
-
-## Alternatives Considered
-
-| Category | Recommended | Alternative | Why Not Alternative |
-|----------|-------------|-------------|---------------------|
-| **Test Runner** | Vitest 4 | Jest 29 | Jest requires ts-jest transforms, ESM workarounds, and slower execution. Every stack dependency uses Vitest. Zero-config for TypeScript. |
-| **API Framework** | Hono | Express 5 | Express is heavier, weaker TypeScript types, no built-in WebSocket. MCP SDK already bundles Hono as dependency. |
-| **API Framework** | Hono | Fastify | Fastify adds plugin complexity. Hono is simpler, equally fast, Web Standards-based. |
-| **Package Manager** | pnpm | npm | npm's workspace support is weaker. No content-addressable storage. Slower installs. |
-| **Package Manager** | pnpm | yarn | Berry/Classic confusion. pnpm is simpler and faster for monorepos. |
-| **Package Manager** | pnpm | bun | Bun is fast but less mature. Edge cases with native WASM modules (tree-sitter). Risk for production tooling. |
-| **Embedding** | Custom adapter | LangChain | LangChain adds 50+ transitive dependencies for what amounts to two HTTP calls. Massive version churn. Unnecessary abstraction layer. |
-| **Embedding** | Custom adapter | LlamaIndex.TS | Same problem as LangChain — too heavy for two provider implementations. |
-| **Vector DB Client** | REST client | gRPC client | REST is simpler to debug, sufficient for local single-user workloads. gRPC only matters at massive scale. |
-| **Metrics DB** | better-sqlite3 | PostgreSQL | PostgreSQL requires an extra Docker container, migrations tooling, and connection management. SQLite is embedded, zero-config, perfect for single-user metrics. |
-| **Metrics DB** | better-sqlite3 | Redis | Not relational. Can't easily query benchmark history trends. |
-| **Frontend** | React 19 | Svelte | Would require a separate build pipeline and toolchain. React ecosystem has Recharts. |
-| **Frontend** | React 19 | Hono JSX | Hono's built-in JSX is server-side focused. Dashboard needs client-side interactivity, state management, charting. |
-| **AST Parser** | web-tree-sitter | @babel/parser | Babel only parses JS/TS. Tree-sitter is language-agnostic — add Python, Go, Rust grammars trivially. |
-| **AST Parser** | web-tree-sitter | TypeScript Compiler API | Too slow for large codebases. Loads entire type system. Only TypeScript. |
-| **Bundler** | tsup | tsc only | tsc doesn't bundle, doesn't handle ESM+CJS dual output cleanly. tsup wraps esbuild for speed. |
-| **Bundler** | tsup | Rollup | Rollup requires more config. tsup provides sensible defaults for library bundling. |
-
-## Monorepo Package Structure
-
-```
-ia-framework/
-  apps/
-    dashboard/           # React dashboard (Vite + React 19)
-  packages/
-    core/                # Embedding, indexing, retrieval, search logic
-    mcp-server/          # MCP server for OpenCode integration
-    dashboard-api/       # Hono API server for dashboard backend
-    benchmark/           # Benchmark runner and scoring
-    installer/           # Install script logic, project detection
-    config/              # Shared types, Zod schemas, constants
-    eslint-config/       # Shared ESLint configuration
-    typescript-config/   # Shared tsconfig bases
+const parsed = ChunkBoundarySchema.parse(JSON.parse(response.message.content));
 ```
 
-## TypeScript Configuration
+**Key integration point:** Zod 4 (already installed at `^4.3.6`) has built-in `z.toJSONSchema()`. This eliminates the need for `zod-to-json-schema` — one fewer dependency.
 
-```jsonc
-// packages/typescript-config/base.json
-{
-  "compilerOptions": {
-    "strict": true,
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "resolveJsonModule": true,
-    "noUncheckedIndexedAccess": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
-  }
-}
+### Concurrency Control (Parallel Embedding)
+
+| Technology | Version | Purpose                   | Why                                                                                                                                                                                                                                                                                                                                                                         | Confidence |
+| ---------- | ------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| p-queue    | ^9.1.2  | Parallel batch processing | Promise queue with configurable concurrency, rate limiting (`intervalCap` + `interval`), priority support, and abort signals. Pure ESM, `type: "module"`, requires Node >=20 (we target Node 22). Currently the `IndexingPipeline` processes embedding batches sequentially in a for-loop — `p-queue` enables concurrent batch processing without worker thread complexity. | HIGH       |
+
+**Why p-queue over alternatives:**
+
+| Option                                   | Why Not                                                                                                                                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker threads (`node:worker_threads`)   | Embedding is I/O-bound (HTTP calls to Ollama/OpenAI), not CPU-bound. Worker threads add IPC serialization overhead for zero benefit. Async concurrency via p-queue is the correct pattern.   |
+| `Promise.all()` / `Promise.allSettled()` | No concurrency limit — would overwhelm Ollama with 50+ simultaneous requests. p-queue caps concurrent requests to a safe number.                                                             |
+| `p-limit`                                | Lower-level — just concurrency limiting. p-queue adds priority, rate limiting, queue events, abort signals. Worth it for embedding pipelines where we need rate control + progress tracking. |
+| `p-map`                                  | Maps over an array with concurrency but no queue semantics, no rate limiting, no priority. p-queue is more appropriate for long-running pipeline work.                                       |
+| Custom async queue                       | Why build what p-queue already does perfectly? 1.2M weekly downloads, battle-tested.                                                                                                         |
+
+**Usage pattern for parallel embedding:**
+
+```typescript
+import PQueue from 'p-queue';
+
+// Different concurrency defaults per provider:
+// Ollama (local): 2-3 concurrent (GPU memory bound)
+// OpenAI (cloud): 5-10 concurrent (API rate limit bound)
+const queue = new PQueue({
+  concurrency: provider === 'ollama' ? 2 : 5,
+  intervalCap: provider === 'openai' ? 50 : undefined, // OpenAI: max 50 per interval
+  interval: provider === 'openai' ? 60_000 : undefined, // OpenAI: per minute
+});
+
+// Enqueue all batches, p-queue manages concurrency
+const batchPromises = batches.map((batch, i) =>
+  queue.add(
+    async ({ signal }) => {
+      const vectors = await embeddingProvider.embedBatch(batch.texts);
+      onProgress?.({ batchesCompleted: i + 1, totalBatches: batches.length });
+      return vectors;
+    },
+    { signal: abortController.signal },
+  ),
+);
+
+const allVectors = await Promise.all(batchPromises);
 ```
+
+## Existing Dependencies — New Usage Patterns
+
+These are already installed. No version changes needed. Documenting new usage patterns for v1.1.
+
+### Zod 4 — Built-in JSON Schema Conversion
+
+| Technology | Version                    | New Usage                                       | Integration Point                              |
+| ---------- | -------------------------- | ----------------------------------------------- | ---------------------------------------------- |
+| zod        | ^4.3.6 (already installed) | `z.toJSONSchema()` for Ollama structured output | Replaces need for `zod-to-json-schema` package |
+
+**Verified:** Zod 4 exports `z.toJSONSchema()` as a first-party function (confirmed via Context7, zod.dev/v4 docs). The Ollama JS SDK examples show `zod-to-json-schema` but that's because their docs target Zod 3 users — with Zod 4, it's built-in.
+
+```typescript
+import * as z from 'zod';
+
+const schema = z.object({
+  chunks: z.array(
+    z.object({
+      startLine: z.number(),
+      endLine: z.number(),
+      summary: z.string().describe('Prose description for embedding'),
+    }),
+  ),
+});
+
+// Zod 4 built-in — no external package
+const jsonSchema = z.toJSONSchema(schema);
+// Pass directly to ollama.chat({ format: jsonSchema })
+```
+
+### @qdrant/js-client-rest — Multi-Collection Patterns
+
+| Technology             | Version                     | New Usage                                                         | Integration Point                                        |
+| ---------------------- | --------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------- |
+| @qdrant/js-client-rest | ^1.17.0 (already installed) | Multiple collection instances, `searchBatch()` for A/B comparison | QdrantVectorStore needs refactoring for multi-collection |
+
+**Current state:** `QdrantVectorStore` takes a single `collectionName` in its constructor. This already supports multi-collection — just create multiple instances.
+
+**Multi-collection naming convention:**
+
+```
+{project}-ast     # AST-chunked collection (tree-sitter strategy)
+{project}-llm     # LLM-chunked collection (Ollama strategy)
+```
+
+**Example: Default collection name `codebase` → `codebase-ast`, `codebase-llm`**
+
+**A/B comparison search pattern (verified via Context7, HIGH confidence):**
+
+```typescript
+// Create two VectorStore instances pointing to different collections
+const astStore = new QdrantVectorStore({ ...config, collectionName: 'codebase-ast' });
+const llmStore = new QdrantVectorStore({ ...config, collectionName: 'codebase-llm' });
+
+// Or use Qdrant batch search within a single collection (for internal A/B):
+const batchResults = await client.searchBatch('my_collection', {
+  searches: [
+    {
+      vector: queryVector,
+      limit: 10,
+      filter: { must: [{ key: 'strategy', match: { value: 'ast' } }] },
+    },
+    {
+      vector: queryVector,
+      limit: 10,
+      filter: { must: [{ key: 'strategy', match: { value: 'llm' } }] },
+    },
+  ],
+});
+```
+
+**Architecture decision — Separate collections vs. single collection with payload filter:**
+
+| Approach                                                  | Pros                                                                                                                                           | Cons                                                                             | Recommendation |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------- |
+| **Separate collections** (`codebase-ast`, `codebase-llm`) | Clean isolation, independent lifecycle (can re-index one without touching other), different vector dimensions per strategy, clear A/B boundary | Slightly more Qdrant overhead, two `initialize()` calls                          | **Use this**   |
+| Single collection + payload filter                        | One collection to manage, simpler config                                                                                                       | Vectors must be same dimensions, can't independently re-index, muddled lifecycle | Don't use      |
+
+**Recommendation: Separate collections.** LLM-chunked vectors may have different dimensions than AST-chunked ones (different content → different optimal models). Independent re-indexing is critical for experimentation.
+
+### Recharts — Additional Chart Types for Analytics
+
+| Technology | Version                    | New Chart Types Needed                  | Use Case                                                   |
+| ---------- | -------------------------- | --------------------------------------- | ---------------------------------------------------------- |
+| recharts   | ^3.8.1 (already installed) | ScatterChart, ComposedChart, RadarChart | Score distributions, combined metrics, strategy comparison |
+
+**Already verified via Context7 (HIGH confidence)** — Recharts 3.x supports all chart types needed:
+
+| Dashboard Feature             | Chart Type     | Recharts Component                             |
+| ----------------------------- | -------------- | ---------------------------------------------- |
+| Score distribution per search | Scatter plot   | `ScatterChart` + `Scatter`                     |
+| Latency vs chunk count        | Composed chart | `ComposedChart` + `Bar` + `Line`               |
+| AST vs LLM strategy radar     | Radar chart    | `RadarChart` + `Radar`                         |
+| Chunk stats over time         | Area chart     | `AreaChart` + `Area` (already used)            |
+| Search history metrics        | Bar chart      | `BarChart` + `Bar` (already used)              |
+| Per-search score breakdown    | Custom tooltip | `Tooltip` with `content={<CustomComponent />}` |
+
+**No additional charting library needed.** Recharts covers scatter plots, radar charts, composed charts, and custom tooltips — all verified in Context7 docs.
+
+### better-sqlite3 — Search History Storage
+
+| Technology     | Version                     | New Usage                          | Integration Point             |
+| -------------- | --------------------------- | ---------------------------------- | ----------------------------- |
+| better-sqlite3 | ^12.8.0 (already installed) | Search history table for dashboard | Extends existing MetricsStore |
+
+**Pattern:** Add a `search_history` table alongside existing `rag_events`:
+
+```sql
+CREATE TABLE IF NOT EXISTS search_history (
+  id           TEXT PRIMARY KEY,
+  query        TEXT NOT NULL,
+  strategy     TEXT NOT NULL,         -- 'ast', 'llm', 'both'
+  collection   TEXT NOT NULL,         -- collection name searched
+  result_count INTEGER NOT NULL,
+  top_score    REAL,
+  avg_score    REAL,
+  latency_ms   INTEGER NOT NULL,
+  token_count  INTEGER NOT NULL,
+  timestamp    TEXT NOT NULL,
+  results_json TEXT                   -- serialized top results for replay
+);
+CREATE INDEX IF NOT EXISTS idx_search_history_ts ON search_history(timestamp);
+CREATE INDEX IF NOT EXISTS idx_search_history_strategy ON search_history(strategy);
+```
+
+No new dependency — extends existing `MetricsStore` pattern.
+
+## What NOT to Add
+
+| Rejected Library                                | Why Not                                                                                                                                                                                      |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zod-to-json-schema`                            | Zod 4 has built-in `z.toJSONSchema()`. Adding this would be redundant.                                                                                                                       |
+| `use-debounce` / `lodash.debounce`              | React 19's `useDeferredValue` + `useTransition` handle search input debouncing natively. For simple cases, a 10-line custom `useDebounce` hook suffices.                                     |
+| `@tanstack/react-query`                         | The dashboard already uses `useEffect` + `fetch` for data loading. Adding React Query for one new search endpoint is over-engineering. Consider only if the dashboard grows significantly.   |
+| `fuse.js` / `minisearch`                        | Client-side fuzzy search library. Search happens server-side via Qdrant — no client-side search needed.                                                                                      |
+| `react-virtualized` / `@tanstack/react-virtual` | Virtualized list for search results. With typical result counts (10-50 items), virtualization is unnecessary overhead.                                                                       |
+| `highlight.js` / `prism.js`                     | Code syntax highlighting for search results. The dashboard shows code snippets as preformatted text — full syntax highlighting adds bundle weight for marginal value in a metrics dashboard. |
+| Worker threads (`node:worker_threads`)          | Embedding calls are I/O-bound HTTP requests. Worker threads only help CPU-bound work. Async concurrency via p-queue is correct for network I/O.                                              |
+| LangChain / LlamaIndex.TS                       | 50+ transitive dependencies for what amounts to two API calls (Ollama chat + embed). The `ollama` SDK is 15KB and does exactly what we need.                                                 |
+| Separate GraphQL layer                          | REST endpoints via Hono are sufficient for dashboard ↔ API communication. GraphQL adds complexity without benefit for a single-client internal tool.                                         |
+| New React state management (Redux, Zustand)     | Dashboard state is simple (search query, results, history). React 19's built-in state + context handles this. Zustand would be premature.                                                    |
+| New charting library (ECharts, Nivo, Victory)   | Recharts already has scatter, radar, composed charts, custom tooltips — verified in Context7. No gaps to fill.                                                                               |
 
 ## Installation
 
 ```bash
-# Core dependencies (per package — installed via pnpm workspace)
-pnpm add -w typescript turbo
+# New dependencies for v1.1 (add to relevant packages)
 
-# packages/core
-pnpm add @qdrant/js-client-rest openai ollama web-tree-sitter zod better-sqlite3
-pnpm add -D @types/better-sqlite3
+# packages/indexer — LLM chunking + parallel embedding
+pnpm add ollama p-queue --filter @ia-framework/indexer
 
-# packages/mcp-server
-pnpm add @modelcontextprotocol/sdk zod
+# OR if LLM chunking gets its own package:
+# packages/llm-chunker
+pnpm add ollama --filter @ia-framework/llm-chunker
+pnpm add p-queue --filter @ia-framework/indexer
 
-# packages/dashboard-api
-pnpm add hono @hono/node-server zod better-sqlite3
-pnpm add -D @types/better-sqlite3
-
-# apps/dashboard
-pnpm add react react-dom recharts
-pnpm add -D @types/react @types/react-dom vite @vitejs/plugin-react
-
-# packages/benchmark
-pnpm add zod
-
-# Root dev dependencies
-pnpm add -D vitest @vitest/coverage-v8 eslint typescript-eslint prettier tsup tsx
+# No other new dependencies needed — all other capabilities come from
+# existing stack (Zod 4, Qdrant client, Recharts, better-sqlite3)
 ```
 
-## Docker Compose Setup
+## Version Compatibility Matrix (New Additions)
 
-```yaml
-# docker-compose.yml
-services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"   # REST API
-      - "6334:6334"   # gRPC (optional)
-    volumes:
-      - qdrant_storage:/qdrant/storage
-    restart: unless-stopped
+| Library               | Node.js | TypeScript     | ESM        | Notes                                                                      |
+| --------------------- | ------- | -------------- | ---------- | -------------------------------------------------------------------------- |
+| ollama ^0.6.3         | any     | ^5.3           | Yes (dual) | Minimal deps (whatwg-fetch). Already in v1.0 STACK.md but never installed. |
+| p-queue ^9.1.2        | >=20    | Built-in types | Pure ESM   | Zero dependencies. Requires Node 20+ (we target 22).                       |
+| zod ^4.3.6 (existing) | any     | any            | Yes (dual) | `z.toJSONSchema()` — built-in, no plugin needed.                           |
 
-  dashboard-api:
-    build:
-      context: .
-      dockerfile: packages/dashboard-api/Dockerfile
-    ports:
-      - "3100:3100"
-    depends_on:
-      - qdrant
-    volumes:
-      - ./data:/app/data  # SQLite database
-    environment:
-      - QDRANT_URL=http://qdrant:6333
+## Integration Architecture
 
-  dashboard:
-    build:
-      context: .
-      dockerfile: apps/dashboard/Dockerfile
-    ports:
-      - "3200:80"
-    depends_on:
-      - dashboard-api
+### How New Additions Connect to Existing Stack
 
-volumes:
-  qdrant_storage:
+```
+                    ┌──────────────────────────────────────────┐
+                    │           CLI (commander)                 │
+                    │   ia-framework index --strategy llm       │
+                    └────────┬──────────────┬──────────────────┘
+                             │              │
+                    ┌────────▼──────┐ ┌─────▼──────────────┐
+                    │  AST Chunker  │ │  LLM Chunker (NEW) │
+                    │ (tree-sitter) │ │  (ollama SDK)       │
+                    │  existing     │ │  + Zod schemas      │
+                    └────────┬──────┘ └─────┬──────────────┘
+                             │              │
+                    ┌────────▼──────────────▼──────────────────┐
+                    │         IndexingPipeline                  │
+                    │   p-queue for parallel embedding (NEW)    │
+                    │   embeddingProvider.embedBatch()          │
+                    └────────┬──────────────┬──────────────────┘
+                             │              │
+                    ┌────────▼──────┐ ┌─────▼──────────────┐
+                    │  codebase-ast │ │  codebase-llm       │
+                    │  (Qdrant)     │ │  (Qdrant)           │
+                    └────────┬──────┘ └─────┬──────────────┘
+                             │              │
+                    ┌────────▼──────────────▼──────────────────┐
+                    │         SearchEngine                      │
+                    │   Multi-collection search                 │
+                    │   Results tagged with source strategy     │
+                    └────────┬─────────────────────────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+     ┌────────▼──────┐ ┌────▼──────┐ ┌─────▼──────────┐
+     │  MCP Server   │ │ Dashboard │ │  CLI search     │
+     │  (dual coll.) │ │   API     │ │                 │
+     └───────────────┘ │ + search  │ └────────────────┘
+                       │   history │
+                       │ (SQLite)  │
+                       └────┬──────┘
+                            │
+                       ┌────▼──────────────────────────┐
+                       │  Dashboard React App            │
+                       │  Search UI + Analytics (NEW)    │
+                       │  Recharts (scatter, radar, etc) │
+                       └────────────────────────────────┘
 ```
 
-## Key Integration Points
+### Ollama SDK vs. Raw Fetch Decision
 
-### MCP SDK + Zod
+The codebase has two Ollama interaction points:
 
-The MCP SDK uses Zod for tool parameter validation. Tool definitions use Zod schemas directly:
+| Use Case         | Current Approach              | v1.1 Approach                      | Why                                                                                                              |
+| ---------------- | ----------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Embedding**    | Raw `fetch()` to `/api/embed` | Keep raw `fetch()` — it works fine | One endpoint, one call, typed response. SDK adds no value here.                                                  |
+| **LLM Chunking** | N/A (new)                     | `ollama` SDK `chat()`              | Needs structured output (`format`), system prompts, streaming, model management. SDK provides all of this typed. |
 
-```typescript
-import { McpServer } from '@modelcontextprotocol/sdk/server';
-import { z } from 'zod';
+**Do NOT refactor embedding to use the SDK.** Raw `fetch()` is simpler for the embedding use case and avoids an unnecessary dependency in the embedding package. The `ollama` SDK goes in the indexer (or new llm-chunker package) only.
 
-server.tool(
-  'search_codebase',
-  { query: z.string(), limit: z.number().optional().default(10) },
-  async ({ query, limit }) => {
-    // Qdrant search via core package
-  }
-);
-```
+### Recommended Ollama Models for Chunking
 
-### Qdrant + Embedding Provider
+| Model          | Size  | Context | Speed  | Quality | Recommendation                                                           |
+| -------------- | ----- | ------- | ------ | ------- | ------------------------------------------------------------------------ |
+| qwen3:8b       | 4.9GB | 128K    | Medium | High    | **Primary choice** — strong instruction following, good at code analysis |
+| llama3.1:8b    | 4.7GB | 128K    | Medium | High    | Good alternative — well-tested for structured output                     |
+| phi4-mini:3.8b | 2.2GB | 128K    | Fast   | Medium  | Budget option — smaller GPU footprint, acceptable quality                |
+| gemma3:4b      | 3.3GB | 128K    | Fast   | Medium  | Good balance of speed and quality                                        |
 
-```typescript
-// Custom interface — NOT LangChain
-interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
-  embedBatch(texts: string[]): Promise<number[][]>;
-  dimensions: number;
-  modelName: string;
-}
+**Start with `qwen3:8b`** — it has strong instruction-following for structured output tasks. The chunking prompt should be kept under 4K tokens (code snippet + system prompt), well within context limits.
 
-// Two implementations: OpenAIEmbedding, OllamaEmbedding
-```
+## Confidence Assessment
 
-### web-tree-sitter + Language Grammars
-
-```typescript
-import Parser from 'web-tree-sitter';
-
-await Parser.init();
-const parser = new Parser();
-const TypeScript = await Parser.Language.load('tree-sitter-typescript.wasm');
-parser.setLanguage(TypeScript);
-
-const tree = parser.parse(sourceCode);
-// Walk AST for function/class/interface extraction
-```
-
-## Version Compatibility Matrix
-
-| Library | Node.js | TypeScript | Notes |
-|---------|---------|------------|-------|
-| @modelcontextprotocol/sdk | >=18 | ^5.5 | Peer dep on zod ^3.25 \|\| ^4.0 |
-| @qdrant/js-client-rest | >=18.17 | >=4.7 | Uses undici ^6 |
-| vitest | ^20 \|\| ^22 \|\| >=24 | ^5.5 | Requires vite ^6 \|\| ^7 \|\| ^8 |
-| hono | >=16.9 | any | No native dep issues |
-| web-tree-sitter | >=18 | any | WASM — no native compilation |
-| better-sqlite3 | 20 \|\| 22-25 | any | Native module — prebuild-install |
-| openai | any | any | Zero dependencies |
-| ollama | any | ^5.3 | Minimal deps (whatwg-fetch) |
-
-**Bottleneck:** Vitest 4 requires Node.js ^20 or ^22+. This drives our Node.js 22 LTS recommendation.
+| Area                      | Confidence | Rationale                                                                                                                                           |
+| ------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ollama SDK for chunking   | HIGH       | Context7 docs verified `chat()` + `format` + Zod structured output. Package actively maintained (weekly npm releases).                              |
+| p-queue for parallelism   | HIGH       | Context7 docs verified concurrency + rate limiting API. Pure ESM, Node >=20 compatible. 1.2M weekly downloads.                                      |
+| Zod 4 toJSONSchema        | HIGH       | Context7 + official zod.dev/v4 docs confirm `z.toJSONSchema()` is built-in. Eliminates need for third-party converter.                              |
+| Multi-collection Qdrant   | HIGH       | Context7 docs verified `searchBatch()`, multiple collection creation. Existing `QdrantVectorStore` already supports this via constructor parameter. |
+| Recharts for analytics    | HIGH       | Context7 docs verified ScatterChart, RadarChart, ComposedChart, custom Tooltip — all needed chart types present in v3.x.                            |
+| Dashboard: no new UI libs | HIGH       | React 19 built-in APIs (`useDeferredValue`, `useTransition`) + existing Tailwind + Recharts cover all needs. Verified via codebase inspection.      |
 
 ## Sources
 
-All versions verified against npm registry on 2026-03-31:
-
-- @modelcontextprotocol/sdk: https://www.npmjs.com/package/@modelcontextprotocol/sdk (v1.29.0)
-- @qdrant/js-client-rest: https://www.npmjs.com/package/@qdrant/js-client-rest (v1.17.0)
-- web-tree-sitter: https://www.npmjs.com/package/web-tree-sitter (v0.26.8)
-- hono: https://www.npmjs.com/package/hono (v4.12.9)
-- @hono/node-server: https://www.npmjs.com/package/@hono/node-server (v1.19.12)
-- vitest: https://www.npmjs.com/package/vitest (v4.1.2)
-- zod: https://www.npmjs.com/package/zod (v4.3.6)
-- openai: https://www.npmjs.com/package/openai (v6.33.0)
-- ollama: https://www.npmjs.com/package/ollama (v0.6.3)
-- better-sqlite3: https://www.npmjs.com/package/better-sqlite3 (v12.8.0)
-- turbo: https://www.npmjs.com/package/turbo (v2.9.1)
-- typescript: https://www.npmjs.com/package/typescript (v6.0.2 available; recommend ^5.9 for compatibility)
-- tsx: https://www.npmjs.com/package/tsx (v4.21.0)
-- tsup: https://www.npmjs.com/package/tsup (v8.5.1)
-- recharts: https://www.npmjs.com/package/recharts (v3.8.1)
-- pnpm: https://www.npmjs.com/package/pnpm (v10.33.0)
-- MCP SDK docs: Context7 /modelcontextprotocol/typescript-sdk (HIGH reputation, 346 snippets)
-- Qdrant JS docs: Context7 /qdrant/qdrant-js (HIGH reputation, 98 snippets)
-- Hono docs: Context7 /websites/hono_dev (HIGH reputation, 757 snippets)
-- Turborepo docs: Context7 /vercel/turborepo (HIGH reputation, 1520 snippets)
+- Ollama JS SDK: Context7 `/ollama/ollama-js` (HIGH reputation, 92 snippets) — verified `chat()`, `format`, `pull()`, `list()`, streaming
+- Ollama JS structured output: Context7 docs showing Zod + `format` parameter pattern
+- Qdrant JS client: Context7 `/qdrant/qdrant-js` (HIGH reputation, 98 snippets) — verified `searchBatch()`, `createCollection()`, `getCollections()`
+- p-queue: Context7 `/sindresorhus/p-queue` (135 snippets) — verified concurrency, rate limiting, priority, abort signals
+- Recharts: Context7 `/recharts/recharts` (HIGH reputation, 94 snippets) — verified ScatterChart, RadarChart, ComposedChart, custom Tooltip
+- Zod 4 JSON Schema: Context7 `/websites/zod_dev_v4` (HIGH reputation, 1544 snippets) — verified `z.toJSONSchema()` built-in function
+- npm registry: `ollama@0.6.3`, `p-queue@9.1.2`, `zod-to-json-schema@3.25.2` (peer dep `zod ^3.25.28 || ^4` — confirms Zod 4 compat, but NOT needed since Zod 4 has built-in)
+- Codebase inspection: `packages/embedding/src/providers/ollama.ts` (raw fetch), `packages/vector-store/src/qdrant.ts` (single collection pattern), `packages/indexer/src/pipeline.ts` (sequential embedding loop)
