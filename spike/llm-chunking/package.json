@@ -1,0 +1,17 @@
+{
+  "name": "@ia-framework/spike-llm-chunking",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spike": "tsx src/run-spike.ts",
+    "spike:dry-run": "tsx src/run-spike.ts --dry-run"
+  },
+  "dependencies": {
+    "@ia-framework/ast-parser": "workspace:*",
+    "@ia-framework/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}
