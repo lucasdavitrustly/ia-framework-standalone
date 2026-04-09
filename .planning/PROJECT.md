@@ -8,38 +8,69 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
+## Current Milestone: v1.1 — RAG Quality & Dashboard Evolution
+
+**Goal:** Improve RAG retrieval quality (MRR > 0.7) through LLM-based chunking, parallel embedding, systematic strategy optimization, and dashboard analytics with interactive search.
+
+**Target features:**
+
+- LLM-based chunking as alternative indexing strategy (model-agnostic, local Ollama, spike first)
+- Parallel/multi-threaded embedding for indexing speed
+- Dashboard search area with per-search metrics, A/B comparison, and search history
+- Full analytics suite in dashboard (chunk, embedding, retrieval stats)
+- Systematic RAG tuning targeting MRR > 0.7
+- All improvements flow through existing MCP tools — agents get better context automatically
+- MCP search tools query both AST and LLM collections, results tagged by source
+
 ## Requirements
 
 ### Validated
 
-- [x] AST-aware codebase indexing with language-specific parsing strategies — Validated in Phase 11: MRR Quick Wins & Corpus Building
-- [x] Semantic search with dependency graph expansion for context retrieval — Validated in Phase 11: MRR Quick Wins & Corpus Building
-- [x] MCP server for OpenCode — explicit RAG queries — Validated in Phase 11: MRR Quick Wins & Corpus Building
-- [x] End-to-end benchmark system — run coding tasks, measure compile/test pass rate — Validated in Phase 11: MRR Quick Wins & Corpus Building
-- [x] Provider-agnostic embedding support (cloud LLMs, local models via Ollama) — Validated in Phase 11: MRR Quick Wins & Corpus Building
+<!-- Shipped in v1.0 and confirmed valuable. -->
+
+- [x] One-shot installer (`./install.sh`) checks environment, installs missing tools, sets up Docker services — v1.0
+- [x] Project profile auto-detection (language, framework, package manager, test runner, build/dev commands) — v1.0
+- [x] Developer confirmation/correction of detected profile — v1.0
+- [x] Qdrant in Docker for vector storage — v1.0
+- [x] AST-aware codebase indexing with language-specific parsing strategies — v1.0
+- [x] Provider-agnostic embedding support (cloud LLMs, local models via Ollama) — v1.0
+- [x] Semantic search with dependency graph expansion for context retrieval — v1.0
+- [x] MCP server for OpenCode — explicit RAG queries — v1.0
+- [x] Configurable retrieval mode (MCP-only, auto-context, both) — v1.0
+- [x] GSD workflows extended with RAG context at planning and execution steps — v1.0
+- [x] Database connection (read-write) — developer provides location during install — v1.0
+- [x] Monitoring dashboard (Docker) — token usage, indexing status, project profile view — v1.0
+- [x] End-to-end benchmark system — retrieval precision metrics (Hit@K, MRR) — v1.0
+- [x] Benchmark comparison across embedding models, chunking strategies, and retrieval modes — v1.0
+- [x] Benchmark history visualization in dashboard with score trends — v1.0
+- [x] Project config file (`.ia-framework/project.json`) synced to dashboard — v1.0
+- [x] Hybrid BM25+dense search with RRF fusion — v1.0
+- [x] 30-query benchmark corpus with balanced coverage — v1.0
 
 ### Active
 
-- [ ] One-shot installer (`./install.sh`) checks environment, installs missing tools, sets up Docker services
-- [ ] Project profile auto-detection (language, framework, package manager, test runner, build/dev commands, project structure)
-- [ ] Developer confirmation/correction of detected profile
-- [ ] Qdrant in Docker for vector storage
-- [ ] AST-aware codebase indexing with language-specific parsing strategies
-- [ ] Provider-agnostic embedding support (cloud LLMs, local models via Ollama)
-- [ ] Semantic search with dependency graph expansion for context retrieval
-- [ ] MCP server for OpenCode — explicit RAG queries
-- [ ] Auto-context injection mode — relevant codebase context prepended to prompts automatically
-- [ ] Configurable retrieval mode (MCP-only, auto-context, both) — benchmarkable
-- [ ] Extend GSD workflows with RAG context at planning and execution steps
-- [ ] Database connection (read-write) — developer provides location during install
-- [ ] Monitoring dashboard (Docker) — token usage, indexing status, project profile view
-- [ ] End-to-end benchmark system — run coding tasks, measure compile/test pass rate
-- [ ] Benchmark comparison across embedding models, chunking strategies, and retrieval modes
-- [ ] Benchmark history visualization in dashboard with score trends
-- [ ] Project config file (`.ia-framework/project.json`) synced to dashboard
+<!-- v1.1 scope — building toward these. -->
+
+- [ ] LLM-based chunking as alternative indexing strategy (model-agnostic, local Ollama)
+- [ ] LLM generates prose summary per chunk before embedding (stored + prepended)
+- [ ] Parallel/multi-threaded embedding for indexing speed
+- [ ] Separate Qdrant collections per indexing strategy (AST vs LLM)
+- [ ] CLI strategy selection: AST (tree-sitter) or LLM (Ollama) at index time
+- [ ] CLI interactive Ollama model selection when configured model is missing
+- [ ] MCP search tools (`search_codebase`, `search_codebase_hybrid`) query both collections
+- [ ] MCP search results tagged with source strategy (ast/llm) and unified ranking
+- [ ] Dashboard search area: query input, ranked results with inline scores and match type
+- [ ] Dashboard per-search metrics panel: tokens, latency, chunk count, score distribution
+- [ ] Dashboard A/B strategy comparison: same query against AST vs LLM collections
+- [ ] Dashboard search history: persistent log with metrics, filterable, comparable
+- [ ] Dashboard analytics suite: chunk stats, embedding stats, retrieval stats (aggregate)
+- [ ] Better dashboard visualization: improved charts, filters, time ranges
+- [ ] RAG quality target: MRR > 0.7 through systematic strategy optimization
 
 ### Out of Scope
 
+- Auto-context injection mode — deferred to v2 (OpenCode lacks MCP Resources/Prompts support)
+- Cloud LLM for chunking — deferred to v3 (v1.1 focuses on local Ollama only)
 - Jira integration (watching board, updating status) — deferred to v2, v1 focuses on RAG quality
 - Full TDD enforcement on target projects — deferred to v2, framework itself follows TDD
 - Proactive Jira board watching and task suggestion — deferred to v2
@@ -66,7 +97,11 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 
 - **Language**: TypeScript — all components (installer logic, MCP servers, dashboard, benchmark runner)
 - **Testing**: Vitest with TDD — tests written before implementation for all framework code (ecosystem-aligned, zero-config for TS monorepos)
+- **TDD with Human Gate**: Test → Human Verification → Implementation for ALL work (features, fixes, hotfixes). No implementation begins until tests are reviewed and approved by the developer.
+- **Git Workflow**: Branch from main → work on feature branch → PR → human merges. Never auto-merge PRs.
 - **Code Quality**: ESLint + Prettier + strict TypeScript + architectural rules (no circular deps, layer boundaries)
+- **README Sync**: README.md must be updated after any user-facing changes, especially CLI commands
+- **CLAUDE.md Sync**: Any MCP tool/command change → update `agents inject` RAG_CONTENT → re-inject into target project's CLAUDE.md
 - **Infrastructure**: Docker required — Qdrant and dashboard run as containers
 - **Interface**: OpenCode is the primary developer interface — framework provides tools, not UI for coding
 - **Distribution**: Git repo — developers clone and run `./install.sh`
@@ -111,4 +146,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-07 — Phase 11 complete. Milestone v1.0 complete (11/11 phases, 34/34 plans). Hybrid BM25+dense search with RRF fusion added, 30-query corpus built, score threshold tuned to 0.3 for maximum recall. Core RAG pipeline validated against real codebases._
+_Last updated: 2026-04-09 — Milestone v1.1 started. Focus: RAG quality (MRR > 0.7), LLM-based chunking, dashboard evolution with search and analytics._
