@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-04-10T18:00:50.863Z"
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-04-10T18:05:54.434Z"
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -63,6 +63,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 13]: Used spread-based conditional property forwarding to handle exactOptionalPropertyTypes between ChunkingConfig and ChunkerConfig
 - [Phase 13]: Used p-queue for concurrent batch embedding with provider-aware defaults (ollama:3, openai:10)
 - [Phase 13]: Retry-once-then-skip pattern for embedding batch resilience with skippedChunks tracking
+- [Phase 13]: No ETA in progress display — stage bar, counts, stage name only per D-05
 
 ### Pending Todos
 
@@ -74,6 +75,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-10T18:00:50.860Z
-Stopped at: Completed 13-02-PLAN.md
+Last session: 2026-04-10T18:05:34.843Z
+Stopped at: Completed 13-03-PLAN.md
 Resume file: None

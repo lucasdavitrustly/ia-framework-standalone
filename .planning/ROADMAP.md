@@ -255,7 +255,7 @@ Plans:
 **Critical dependency:** INDX-13 (LLM chunking spike) is a GO/NO-GO gate. Phase 12 must complete first. If the spike fails, LLM-specific requirements (INDX-10, INDX-11, INDX-12) are descoped and the milestone pivots.
 
 - [x] **Phase 12: LLM Chunking Spike** - GO/NO-GO validation of LLM-based chunking feasibility via Ollama (completed 2026-04-10)
-- [ ] **Phase 13: Pipeline Refactoring & Parallel Embedding** - Extract ChunkingStrategy interface, add concurrent embedding with progress events
+- [x] **Phase 13: Pipeline Refactoring & Parallel Embedding** - Extract ChunkingStrategy interface, add concurrent embedding with progress events (completed 2026-04-10)
 - [ ] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage
 - [ ] **Phase 15: Multi-Collection Search & MCP Integration** - Cross-collection querying with RRF merging and source tagging
 - [ ] **Phase 16: Dashboard Search** - Search page with query input, collection selector, per-query metrics, and A/B comparison
@@ -298,7 +298,7 @@ Plans:
 
 - [x] 13-01-PLAN.md — Config schema + types + ChunkingStrategy interface with AstChunkingStrategy
 - [x] 13-02-PLAN.md — Pipeline refactoring with p-queue concurrency, retry/abort, strategy delegation
-- [ ] 13-03-PLAN.md — CLI stage-specific progress, batch fields in dashboard JSON, integration verification
+- [x] 13-03-PLAN.md — CLI stage-specific progress, batch fields in dashboard JSON, integration verification
 
 ### Phase 14: LLM Chunking Implementation & CLI
 
@@ -385,7 +385,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
 | 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
-| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 2/3 | In Progress|  |
+| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3 | Complete   | 2026-04-10 |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 0/?            | Not started | -          |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
