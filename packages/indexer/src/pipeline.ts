@@ -1,9 +1,9 @@
-import { parseFile } from '@ia-framework/ast-parser';
 import type { EmbeddingProvider } from '@ia-framework/embedding';
 import type { VectorStore, VectorPoint, ChunkPayload } from '@ia-framework/vector-store';
 import type { CodeChunk } from '@ia-framework/ast-parser';
 import type { ContextSource } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
+import PQueue from 'p-queue';
 import { walkFiles } from './file-walker.js';
 import {
   getLastIndexedCommit,
@@ -13,6 +13,8 @@ import {
 } from './incremental.js';
 import { chunkToDescription } from './chunk-description.js';
 import { computeTermFrequencySparseVector } from '@ia-framework/retrieval';
+import type { ChunkingStrategy } from './strategies/types.js';
+import { AstChunkingStrategy } from './strategies/ast-strategy.js';
 
 const logger = createLogger('indexer');
 
@@ -41,6 +43,8 @@ export interface IndexingConfig {
   contextSources?: ContextSource[] | undefined;
   /** Embedding concurrency override (default: provider-aware — Ollama=3, OpenAI=10) */
   embeddingConcurrency?: number | undefined;
+  /** Chunking strategy (default: AstChunkingStrategy). Phase 14 will add LlmChunkingStrategy. */
+  chunkingStrategy?: ChunkingStrategy | undefined;
   /** Optional dependency graph for building file-level import adjacency */
   dependencyGraph?:
     | {
@@ -66,12 +70,85 @@ export interface IndexingProgress {
 
 export type ProgressCallback = (progress: IndexingProgress) => void;
 
+/**
+ * Provider-aware concurrency defaults for embedding batch processing.
+ * Ollama: 3 (local model, limited by GPU VRAM)
+ * OpenAI: 10 (cloud API, higher rate limits)
+ */
+function getDefaultConcurrency(providerName: string): number {
+  switch (providerName) {
+    case 'ollama':
+      return 3;
+    case 'openai':
+      return 10;
+    default:
+      return 3; // Safe default
+  }
+}
+
+/**
+ * Embed a single batch with retry logic.
+ * Retries once on failure; if both attempts fail, throws.
+ */
+async function embedBatchWithRetry(
+  batch: CodeChunk[],
+  provider: EmbeddingProvider,
+  results: VectorPoint[],
+  maxRetries = 1,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const textDescriptions = batch.map((c) => chunkToDescription(c));
+      const codeTexts = batch.map((c) => c.content);
+      // Text and code embeddings run in parallel within each batch
+      const [textVectors, codeVectors] = await Promise.all([
+        provider.embedBatch(textDescriptions),
+        provider.embedBatch(codeTexts),
+      ]);
+      // Build VectorPoints from results
+      for (let j = 0; j < batch.length; j++) {
+        const chunk = batch[j]!;
+        const payload: ChunkPayload = {
+          chunkId: chunk.id,
+          filePath: chunk.filePath,
+          relativePath: chunk.relativePath,
+          language: chunk.language,
+          chunkType: chunk.chunkType,
+          name: chunk.name,
+          content: chunk.content,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          imports: chunk.imports,
+          exports: chunk.exports,
+          parentName: chunk.parentName,
+          indexedAt: new Date().toISOString(),
+        };
+        results.push({
+          id: chunk.id,
+          textVector: textVectors[j]!,
+          codeVector: codeVectors[j]!,
+          sparseVector: computeTermFrequencySparseVector(chunk.content),
+          payload,
+        });
+      }
+      return; // Success
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        logger.warn({ attempt, err }, 'Embedding batch failed — retrying');
+      }
+    }
+  }
+  throw lastError; // All retries exhausted
+}
+
 export class IndexingPipeline {
   async run(
     config: IndexingConfig,
     onProgress?: ProgressCallback,
     signal?: AbortSignal,
-  ): Promise<{ filesIndexed: number; chunksIndexed: number }> {
+  ): Promise<{ filesIndexed: number; chunksIndexed: number; skippedChunks: number }> {
     const {
       targetProjectPath,
       frameworkDir,
@@ -85,6 +162,8 @@ export class IndexingPipeline {
       incremental = false,
       contextSources,
       dependencyGraph,
+      chunkingStrategy,
+      embeddingConcurrency,
     } = config;
 
     // Initialize vector store collection
@@ -146,14 +225,15 @@ export class IndexingPipeline {
     };
     onProgress?.({ ...progress });
 
-    // Parse all files into chunks
+    // Parse all files into chunks using the configured strategy
+    const strategy = chunkingStrategy ?? new AstChunkingStrategy();
     const allChunks: CodeChunk[] = [];
     for (const filePath of filesToProcess) {
       progress.currentFile = filePath;
       try {
-        const chunks = await parseFile(filePath, {
-          projectRoot: targetProjectPath,
+        const chunks = await strategy.chunk(filePath, {
           maxChunkLines,
+          projectRoot: targetProjectPath,
         });
         allChunks.push(...chunks);
 
@@ -180,52 +260,52 @@ export class IndexingPipeline {
     progress.stage = 'embedding';
     onProgress?.({ ...progress });
 
-    // Embed chunks in batches
+    // Embed chunks in batches using p-queue for concurrent processing
+    const concurrency = embeddingConcurrency ?? getDefaultConcurrency(embeddingProvider.name);
+    const queue = new PQueue({ concurrency });
     const vectorPoints: VectorPoint[] = [];
+    let skippedChunks = 0;
+
+    // Build batch list
+    const batches: CodeChunk[][] = [];
     for (let i = 0; i < allChunks.length; i += embeddingBatchSize) {
-      // Check for cancellation before each batch
-      if (signal?.aborted) {
-        throw new Error('Indexing cancelled');
-      }
-
-      const batch = allChunks.slice(i, i + embeddingBatchSize);
-
-      // Embed prose descriptions for text vectors (semantic search)
-      const textDescriptions = batch.map((c) => chunkToDescription(c));
-      const textVectors = await embeddingProvider.embedBatch(textDescriptions);
-
-      // Embed raw code for code vectors (identifier/keyword search)
-      const codeTexts = batch.map((c) => c.content);
-      const codeVectors = await embeddingProvider.embedBatch(codeTexts);
-
-      for (let j = 0; j < batch.length; j++) {
-        const chunk = batch[j]!;
-        const payload: ChunkPayload = {
-          chunkId: chunk.id,
-          filePath: chunk.filePath,
-          relativePath: chunk.relativePath,
-          language: chunk.language,
-          chunkType: chunk.chunkType,
-          name: chunk.name,
-          content: chunk.content,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-          imports: chunk.imports,
-          exports: chunk.exports,
-          parentName: chunk.parentName,
-          indexedAt: new Date().toISOString(),
-        };
-        vectorPoints.push({
-          id: chunk.id,
-          textVector: textVectors[j]!, // prose description embedding
-          codeVector: codeVectors[j]!, // raw code embedding
-          sparseVector: computeTermFrequencySparseVector(chunk.content), // BM25 TF sparse
-          payload,
-        });
-      }
-      progress.chunksIndexed += batch.length;
-      onProgress?.({ ...progress });
+      batches.push(allChunks.slice(i, i + embeddingBatchSize));
     }
+
+    progress.batchesTotal = batches.length;
+    progress.batchesCompleted = 0;
+    onProgress?.({ ...progress });
+
+    // Abort integration: when signal fires, clear queued tasks
+    if (signal) {
+      signal.addEventListener(
+        'abort',
+        () => {
+          queue.clear();
+        },
+        { once: true },
+      );
+    }
+
+    await Promise.all(
+      batches.map((batch) =>
+        queue.add(async () => {
+          if (signal?.aborted) return; // Skip if already aborted
+
+          try {
+            await embedBatchWithRetry(batch, embeddingProvider, vectorPoints);
+          } catch {
+            // Retry exhausted — skip batch
+            skippedChunks += batch.length;
+            logger.warn({ batchSize: batch.length }, 'Embedding batch skipped after retry failure');
+          }
+
+          progress.batchesCompleted = (progress.batchesCompleted ?? 0) + 1;
+          progress.chunksIndexed = vectorPoints.length;
+          onProgress?.({ ...progress });
+        }),
+      ),
+    );
 
     // Process additional context sources
     if (contextSources && contextSources.length > 0) {
@@ -307,6 +387,7 @@ export class IndexingPipeline {
     return {
       filesIndexed: progress.filesProcessed,
       chunksIndexed: vectorPoints.length,
+      skippedChunks,
     };
   }
 }
