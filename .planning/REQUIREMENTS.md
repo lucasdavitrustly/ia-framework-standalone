@@ -97,9 +97,9 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 ### Indexing
 
 - [ ] **INDX-13**: Time-boxed spike validates LLM chunking quality, latency, and Ollama structured output feasibility — GO/NO-GO gate before all other v1.1 work proceeds
-- [ ] **INDX-10**: Developer can index codebase using LLM-based semantic chunking via Ollama as alternative to AST
-- [ ] **INDX-11**: LLM chunking identifies semantic boundaries and generates prose summaries per chunk in a single pass
-- [ ] **INDX-12**: LLM chunking results are cached by file content hash to avoid re-processing unchanged files
+- [x] **INDX-10**: Developer can index codebase using LLM-based semantic chunking via Ollama as alternative to AST
+- [x] **INDX-11**: LLM chunking identifies semantic boundaries and generates prose summaries per chunk in a single pass
+- [x] **INDX-12**: LLM chunking results are cached by file content hash to avoid re-processing unchanged files
 - [x] **INDX-14**: Embedding pipeline processes multiple batches concurrently via p-queue
 - [x] **INDX-15**: Embedding concurrency adapts to provider type (Ollama: 2-3, OpenAI: 5-10)
 - [x] **INDX-16**: Indexing pipeline emits progress events (phase, completed, total) for CLI and dashboard consumption
@@ -255,9 +255,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INDX-15     | Phase 13 | Complete |
 | INDX-16     | Phase 13 | Complete |
 | INDX-17     | Phase 13 | Complete |
-| INDX-10     | Phase 14 | Pending |
-| INDX-11     | Phase 14 | Pending |
-| INDX-12     | Phase 14 | Pending |
+| INDX-10     | Phase 14 | Complete |
+| INDX-11     | Phase 14 | Complete |
+| INDX-12     | Phase 14 | Complete |
 | CLIE-01     | Phase 14 | Pending |
 | CLIE-02     | Phase 14 | Pending |
 | CLIE-03     | Phase 14 | Pending |
