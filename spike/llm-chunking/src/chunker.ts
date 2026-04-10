@@ -74,9 +74,13 @@ export async function chunkFileWithWindowing(params: {
   numCtx?: number;
   overlapLines?: number;
 }): Promise<ChunkingResult> {
-  const numCtx = params.numCtx ?? 32768;
+  const maxCtx = params.numCtx ?? 32768;
   const overlapLines = params.overlapLines ?? 20; // per D-24 default
-  const maxSourceTokens = Math.floor(numCtx * 0.9);
+  // Use a conservative window size to avoid large KV cache allocation.
+  // Each window targets ~150 lines (≈3000 tokens of source), auto-sized via clampedPow2.
+  const WINDOW_TARGET_TOKENS = 3000; // tokens of source per window
+  const windowNumCtx = clampedPow2(WINDOW_TARGET_TOKENS * 2 + 800, 2048, maxCtx);
+  const maxSourceTokens = Math.floor(windowNumCtx * 0.9);
   const maxCharsPerWindow = maxSourceTokens * 4; // reverse of token estimation
 
   const lines = params.content.split('\n');
@@ -129,7 +133,7 @@ export async function chunkFileWithWindowing(params: {
     const genParams: Parameters<typeof generateChunks>[0] = {
       prompt,
       model: params.model,
-      numCtx,
+      numCtx: windowNumCtx,
     };
     if (params.baseUrl !== undefined) genParams.baseUrl = params.baseUrl;
     const result = await generateChunks(genParams);

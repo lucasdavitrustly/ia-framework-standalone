@@ -244,23 +244,26 @@ async function main(): Promise<void> {
     }
   }
 
-  const determinismResults = await Promise.all(
-    determinismFiles.map(async (file) => {
-      console.log(`  Testing determinism: ${file.relativePath} (${file.sizeCategory})...`);
-      let content: string;
-      try {
-        content = await readFile(file.filePath, 'utf-8');
-      } catch {
-        return {
-          filePath: file.filePath,
-          relativePath: file.relativePath,
-          runCount: 5,
-          isIdentical: false,
-          boundaries: [],
-          diffs: ['Could not read file'],
-        };
-      }
+  // Run determinism tests sequentially — parallel Ollama calls cause connection failures.
+  const determinismResults = [];
+  for (const file of determinismFiles) {
+    console.log(`  Testing determinism: ${file.relativePath} (${file.sizeCategory})...`);
+    let content: string;
+    try {
+      content = await readFile(file.filePath, 'utf-8');
+    } catch {
+      determinismResults.push({
+        filePath: file.filePath,
+        relativePath: file.relativePath,
+        runCount: 5,
+        isIdentical: false,
+        boundaries: [] as Array<Array<Array<{ startLine: number; endLine: number }>>>,
+        diffs: ['Could not read file'],
+      });
+      continue;
+    }
 
+    try {
       const detParams: Parameters<typeof runDeterminismTest>[0] = {
         filePath: file.filePath,
         content,
@@ -278,9 +281,20 @@ async function main(): Promise<void> {
           console.log(`    ${diff}`);
         }
       }
-      return det;
-    }),
-  );
+      determinismResults.push(det);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`  [error] Determinism test failed for ${file.relativePath}: ${errMsg}`);
+      determinismResults.push({
+        filePath: file.filePath,
+        relativePath: file.relativePath,
+        runCount: 5,
+        isIdentical: false,
+        boundaries: [] as Array<Array<Array<{ startLine: number; endLine: number }>>>,
+        diffs: [`Error: ${errMsg}`],
+      });
+    }
+  }
 
   // Step 7: Compute verdict
   const jsonValidityRate = totalAttempts > 0 ? successCount / totalAttempts : 0;

@@ -71,6 +71,7 @@ export async function runDeterminismTest(params: {
   if (params.baseUrl !== undefined) chunkParams.baseUrl = params.baseUrl;
   if (params.numCtx !== undefined) chunkParams.numCtx = params.numCtx;
 
+  // Run sequentially — parallel Ollama calls cause connection failures under load.
   for (let i = 0; i < runCount; i++) {
     const result = await chunkFile(chunkParams);
     allBoundaries.push(result.chunks.map((c) => ({ startLine: c.startLine, endLine: c.endLine })));
