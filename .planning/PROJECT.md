@@ -150,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-10 — Phase 12 (llm-chunking-spike) complete. GO verdict: `llama3.2:latest` meets all hard criteria (latency ≤60s, 100% JSON validity, deterministic across 5 runs). LLM chunking is an opt-in enhancement layer over AST, not a replacement (~24.6s/file mean). Phases 14-15 are unblocked. Next: Phase 13 (pipeline-refactoring-&-parallel-embedding)._
+_Last updated: 2026-04-10 — Phase 13 (pipeline-refactoring-parallel-embedding) complete. Indexing pipeline now supports parallel embedding via p-queue with provider-aware concurrency (Ollama: 3, OpenAI: 10), retry-once resilience, abort signal support, and ChunkingStrategy extensibility interface. CLI renders stage-specific progress with batch-level visibility. Next: Phase 14 (LLM Chunking Implementation & CLI)._
