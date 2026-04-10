@@ -796,3 +796,86 @@ describe('IndexingPipeline — dependencyGraph', () => {
     await expect(pipeline.run(makeConfig())).resolves.toBeDefined();
   });
 });
+
+// ── Description-aware text embedding tests ────────────────────────────────────
+describe('IndexingPipeline — description-aware text embedding', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `indexer-desc-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'foo.ts'), 'export function foo() {}');
+
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  it('uses chunk.description for text embedding when description is present', async () => {
+    const chunkWithDesc = {
+      ...makeChunk('chunk-1', join(tmpDir, 'foo.ts')),
+      description: 'A utility function that handles user authentication and session management',
+    };
+    mockParseFile.mockResolvedValue([chunkWithDesc]);
+
+    await pipeline.run(makeConfig({ embeddingBatchSize: 50 }));
+
+    // The first embedBatch call should be for text descriptions
+    // It should use the chunk.description, not chunkToDescription() output
+    const textEmbedCall = embeddingProvider.embedBatch.mock.calls[0];
+    expect(textEmbedCall![0]).toContain(
+      'A utility function that handles user authentication and session management',
+    );
+  });
+
+  it('falls back to chunkToDescription() when chunk has no description', async () => {
+    const chunkNoDesc = makeChunk('chunk-1', join(tmpDir, 'foo.ts'));
+    mockParseFile.mockResolvedValue([chunkNoDesc]);
+
+    await pipeline.run(makeConfig({ embeddingBatchSize: 50 }));
+
+    // The first embedBatch call should be for text descriptions
+    // It should use chunkToDescription() output (contains file path, language, etc.)
+    const textEmbedCall = embeddingProvider.embedBatch.mock.calls[0];
+    expect(textEmbedCall![0][0]).toContain('typescript');
+    expect(textEmbedCall![0][0]).toContain('function');
+  });
+
+  it('handles mixed batch with some chunks having description and some not', async () => {
+    const chunkWithDesc = {
+      ...makeChunk('chunk-1', join(tmpDir, 'foo.ts')),
+      description: 'LLM-generated prose summary for chunk 1',
+    };
+    const chunkNoDesc = makeChunk('chunk-2', join(tmpDir, 'foo.ts'));
+    mockParseFile.mockResolvedValue([chunkWithDesc, chunkNoDesc]);
+
+    await pipeline.run(makeConfig({ embeddingBatchSize: 50 }));
+
+    // First embedBatch call is for text descriptions
+    const textEmbedCall = embeddingProvider.embedBatch.mock.calls[0];
+    const textDescriptions = textEmbedCall![0] as string[];
+
+    // First chunk should use its description
+    expect(textDescriptions[0]).toBe('LLM-generated prose summary for chunk 1');
+    // Second chunk should use chunkToDescription() fallback
+    expect(textDescriptions[1]).toContain('typescript');
+    expect(textDescriptions[1]).toContain('function');
+  });
+});
