@@ -12,6 +12,13 @@ export type { ChunkingResult, LLMChunk };
  * Chunk a file using Ollama LLM.
  * Automatically switches to windowed processing for large files that exceed context.
  */
+/** Round up to the next power of 2, clamped to [min, max]. */
+function clampedPow2(value: number, min: number, max: number): number {
+  let p = min;
+  while (p < value && p < max) p *= 2;
+  return Math.min(p, max);
+}
+
 export async function chunkFile(params: {
   filePath: string;
   content: string;
@@ -20,12 +27,17 @@ export async function chunkFile(params: {
   baseUrl?: string;
   numCtx?: number;
 }): Promise<ChunkingResult> {
-  const numCtx = params.numCtx ?? 32768;
+  const maxCtx = params.numCtx ?? 32768;
   const estimatedTokens = Math.ceil(params.content.length / 4);
-  const maxSourceTokens = Math.floor(numCtx * 0.9);
+  const maxSourceTokens = Math.floor(maxCtx * 0.9);
 
   if (estimatedTokens < maxSourceTokens) {
-    // Single request — file fits within context window
+    // Single request — file fits within context window.
+    // Auto-size numCtx to avoid allocating a huge KV cache for small files.
+    // Use prompt tokens * 2 (headroom for output), rounded up to a power of 2.
+    const promptEstimate = Math.ceil(params.content.length / 4) + 400; // +400 for prompt template
+    const numCtx = clampedPow2(promptEstimate * 2, 2048, maxCtx);
+
     const prompt = buildPrompt(params.content, params.fileName);
     const generateParams: Parameters<typeof generateChunks>[0] = {
       prompt,
@@ -41,7 +53,7 @@ export async function chunkFile(params: {
       content: params.content,
       fileName: params.fileName,
       model: params.model,
-      numCtx,
+      numCtx: maxCtx,
     };
     if (params.baseUrl !== undefined) windowingParams.baseUrl = params.baseUrl;
     return chunkFileWithWindowing(windowingParams);
