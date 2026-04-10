@@ -9,6 +9,9 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from '@ia-framework/core';
 import { getModelInfo } from './ollama-client.js';
 import { chunkFile } from './chunker.js';
@@ -35,11 +38,25 @@ async function main(): Promise<void> {
   console.log('');
 
   // Step 1: Load config to get targetProjectPath and Ollama baseUrl
+  // Walk up from __dirname to find .ia-framework/project.json at the repo root,
+  // so the spike works regardless of which directory it is run from.
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const possibleRoots = [
+    process.cwd(),
+    resolve(__dirname, '../../..'), // spike/llm-chunking/src -> repo root
+    resolve(__dirname, '../..'),
+    resolve(__dirname, '..'),
+  ];
+  const configRelPath = '.ia-framework/project.json';
+  const configAbsPath =
+    possibleRoots.map((r) => resolve(r, configRelPath)).find((p) => existsSync(p)) ??
+    resolve(process.cwd(), configRelPath);
+
   let targetProjectPath: string;
   let baseUrl: string | undefined;
 
   try {
-    const config = await loadConfig('.ia-framework/project.json');
+    const config = await loadConfig(configAbsPath);
     targetProjectPath = config.targetProjectPath;
     baseUrl = config.embedding.baseUrl;
     console.log(`[config] Target project: ${targetProjectPath}`);
