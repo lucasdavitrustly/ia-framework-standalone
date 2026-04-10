@@ -110,20 +110,24 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 
 ## Key Decisions
 
-| Decision                          | Rationale                                                                       | Outcome                                       |
-| --------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
-| Qdrant for vector storage         | Mature, Docker-native, good TypeScript client, runs locally                     | — Pending                                     |
-| Provider-agnostic embeddings      | Let developers choose LLM/embedding provider (cloud or local)                   | — Pending                                     |
-| Monorepo structure                | All components co-located, simpler dependency management                        | — Pending                                     |
-| MCP + auto-context (configurable) | Both retrieval modes available, benchmarkable against each other                | — Pending                                     |
-| Clone anywhere + install script   | No npm publish needed, simple distribution for internal tool                    | — Pending                                     |
-| Standalone architecture           | Framework lives outside target project, GSD artifacts belong to target          | — Pending                                     |
-| AST-aware + dependency graph      | Better retrieval than generic text chunking — understands code structure        | — Pending                                     |
-| Jest for testing                  | Widely used, good TypeScript support, team familiarity                          | ⚠️ Revisit — switching to Vitest per research |
-| Vitest over Jest                  | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API | — Pending                                     |
-| Dual-vector search                | Text + code embeddings per point — avoids missing ~40% of queries               | — Pending                                     |
-| Full code quality enforcement     | Framework practices what it preaches — clean code standards                     | — Pending                                     |
-| Dashboard for benchmarks          | Visual benchmark history more actionable than CLI output                        | — Pending                                     |
+| Decision                                                    | Rationale                                                                              | Outcome                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Qdrant for vector storage                                   | Mature, Docker-native, good TypeScript client, runs locally                            | ✅ Validated — v1.0                            |
+| Provider-agnostic embeddings                                | Let developers choose LLM/embedding provider (cloud or local)                          | ✅ Validated — v1.0                            |
+| Monorepo structure                                          | All components co-located, simpler dependency management                               | ✅ Validated — v1.0                            |
+| MCP + auto-context (configurable)                           | Both retrieval modes available, benchmarkable against each other                       | ✅ Validated — v1.0 (auto-context deferred v2) |
+| Clone anywhere + install script                             | No npm publish needed, simple distribution for internal tool                           | ✅ Validated — v1.0                            |
+| Standalone architecture                                     | Framework lives outside target project, GSD artifacts belong to target                 | ✅ Validated — v1.0                            |
+| AST-aware + dependency graph                                | Better retrieval than generic text chunking — understands code structure               | ✅ Validated — v1.0                            |
+| Jest for testing                                            | Widely used, good TypeScript support, team familiarity                                 | ❌ Replaced — Vitest adopted                   |
+| Vitest over Jest                                            | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API        | ✅ Validated — v1.0                            |
+| Dual-vector search                                          | Text + code embeddings per point — avoids missing ~40% of queries                      | ✅ Validated — v1.0                            |
+| Full code quality enforcement                               | Framework practices what it preaches — clean code standards                            | ✅ Validated — v1.0                            |
+| Dashboard for benchmarks                                    | Visual benchmark history more actionable than CLI output                               | ✅ Validated — v1.0                            |
+| LLM chunking model: llama3.2 (3.2B) not qwen2.5-coder (14B) | 14B model caused OOM/crashes on large files; 3.2B is 4-5x faster within latency budget | ✅ Validated — Phase 12 spike                  |
+| LLM chunking: opt-in enhancement, not AST replacement       | Mean latency ~24.6s/file → 205+ min for 500 files; AST remains the fast default path   | ✅ Validated — Phase 12 spike                  |
+| clampedPow2 numCtx auto-sizing                              | Fixed 32K KV cache wastes VRAM on small files; dynamic sizing = 4-5x memory efficiency | ✅ Validated — Phase 12 spike                  |
+| Sequential Ollama calls for determinism                     | Concurrent calls cause OOM crashes; sequential is mandatory for stable throughput      | ✅ Validated — Phase 12 spike                  |
 
 ## Evolution
 
@@ -146,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-09 — Milestone v1.1 started. Focus: RAG quality (MRR > 0.7), LLM-based chunking, dashboard evolution with search and analytics._
+_Last updated: 2026-04-10 — Phase 12 (llm-chunking-spike) complete. GO verdict: `llama3.2:latest` meets all hard criteria (latency ≤60s, 100% JSON validity, deterministic across 5 runs). LLM chunking is an opt-in enhancement layer over AST, not a replacement (~24.6s/file mean). Phases 14-15 are unblocked. Next: Phase 13 (pipeline-refactoring-&-parallel-embedding)._

@@ -254,7 +254,7 @@ Plans:
 
 **Critical dependency:** INDX-13 (LLM chunking spike) is a GO/NO-GO gate. Phase 12 must complete first. If the spike fails, LLM-specific requirements (INDX-10, INDX-11, INDX-12) are descoped and the milestone pivots.
 
-- [ ] **Phase 12: LLM Chunking Spike** - GO/NO-GO validation of LLM-based chunking feasibility via Ollama
+- [x] **Phase 12: LLM Chunking Spike** - GO/NO-GO validation of LLM-based chunking feasibility via Ollama (completed 2026-04-10)
 - [ ] **Phase 13: Pipeline Refactoring & Parallel Embedding** - Extract ChunkingStrategy interface, add concurrent embedding with progress events
 - [ ] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage
 - [ ] **Phase 15: Multi-Collection Search & MCP Integration** - Cross-collection querying with RRF merging and source tagging
@@ -275,7 +275,11 @@ Plans:
 2. Measured latency (seconds/file, tokens/sec) is documented for 3+ file sizes with a clear viability assessment
 3. Same file produces consistent chunk boundaries across 5 runs with temperature=0 (determinism validated)
 4. GO/NO-GO decision is documented with evidence covering quality, latency, context window handling, and model recommendation
-   **Plans**: TBD
+   **Plans**: 1 plan
+
+Plans:
+
+- [ ] 12-01-PLAN.md — Build and run LLM chunking spike (scaffold, Ollama integration, measurement harnesses, GO/NO-GO report)
 
 ### Phase 13: Pipeline Refactoring & Parallel Embedding
 
@@ -374,7 +378,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 9. Database Context                           | v1.0      | 2/2            | Complete    | 2026-04-01 |
 | 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
 | 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
-| 12. LLM Chunking Spike                        | v1.1      | 0/?            | Not started | -          |
+| 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
 | 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 0/?            | Not started | -          |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 0/?            | Not started | -          |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
