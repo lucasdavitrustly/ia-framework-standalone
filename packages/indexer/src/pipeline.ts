@@ -99,7 +99,7 @@ async function embedBatchWithRetry(
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const textDescriptions = batch.map((c) => chunkToDescription(c));
+      const textDescriptions = batch.map((c) => c.description ?? chunkToDescription(c));
       const codeTexts = batch.map((c) => c.content);
       // Text and code embeddings run in parallel within each batch
       const [textVectors, codeVectors] = await Promise.all([
