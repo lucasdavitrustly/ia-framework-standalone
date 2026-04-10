@@ -292,7 +292,13 @@ Plans:
 2. Concurrency automatically adapts to provider type (Ollama: 2-3 concurrent, OpenAI: 5-10 concurrent) without manual configuration
 3. CLI and dashboard receive real-time progress events during indexing showing phase, completed count, and total count
 4. Developer can override default embedding concurrency via `embeddingConcurrency` in project.json
-   **Plans**: TBD
+   **Plans**: 3 plans
+
+Plans:
+
+- [ ] 13-01-PLAN.md — Config schema + types + ChunkingStrategy interface with AstChunkingStrategy
+- [ ] 13-02-PLAN.md — Pipeline refactoring with p-queue concurrency, retry/abort, strategy delegation
+- [ ] 13-03-PLAN.md — CLI stage-specific progress, batch fields in dashboard JSON, integration verification
 
 ### Phase 14: LLM Chunking Implementation & CLI
 
@@ -379,7 +385,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
 | 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
-| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 0/?            | Not started | -          |
+| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 0/3            | Not started | -          |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 0/?            | Not started | -          |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
