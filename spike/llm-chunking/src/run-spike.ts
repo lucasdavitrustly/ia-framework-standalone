@@ -23,7 +23,7 @@ import { compareWithAST } from './ast-comparison.js';
 import type { ComparisonResult } from './ast-comparison.js';
 import { writeReport } from './report.js';
 
-const MODEL = 'qwen2.5-coder:14b'; // Per D-15, D-17, D-21
+const MODEL = 'llama3.2:latest'; // Switched from qwen2.5-coder:14b — faster 3.2B model for spike validation
 const NUM_CTX = 32768; // 32K context window
 const DETERMINISM_FILES_PER_CATEGORY = 1; // 1 small, 1 medium, 1 large
 const OUTPUT_DIR = 'spike-output';
