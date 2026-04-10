@@ -312,7 +312,13 @@ Plans:
 3. CLI verifies the configured Ollama model is available before LLM indexing starts; prompts interactive model selection when the configured model is missing
 4. Re-running LLM indexing on unchanged files skips LLM processing (cached by file content hash)
 5. Running `ia-framework index` without `--strategy` flag defaults to AST chunking (backward compatible)
-   **Plans**: TBD
+   **Plans**: 3 plans
+
+Plans:
+
+- [ ] 14-01-PLAN.md — Types, config, and pipeline description-aware embedding
+- [ ] 14-02-PLAN.md — LlmChunkingStrategy with content-hash cache (port spike code)
+- [ ] 14-03-PLAN.md — CLI --strategy flag, Ollama model management, collection routing
 
 ### Phase 15: Multi-Collection Search & MCP Integration
 
@@ -385,7 +391,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
 | 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
-| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3 | Complete    | 2026-04-10 |
+| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete    | 2026-04-10 |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 0/?            | Not started | -          |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
