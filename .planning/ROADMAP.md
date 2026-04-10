@@ -385,7 +385,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
 | 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
-| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3 | Complete   | 2026-04-10 |
+| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3 | Complete    | 2026-04-10 |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 0/?            | Not started | -          |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
