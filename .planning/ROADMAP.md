@@ -256,7 +256,7 @@ Plans:
 
 - [x] **Phase 12: LLM Chunking Spike** - GO/NO-GO validation of LLM-based chunking feasibility via Ollama (completed 2026-04-10)
 - [x] **Phase 13: Pipeline Refactoring & Parallel Embedding** - Extract ChunkingStrategy interface, add concurrent embedding with progress events (completed 2026-04-10)
-- [ ] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage
+- [x] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage (completed 2026-04-10)
 - [ ] **Phase 15: Multi-Collection Search & MCP Integration** - Cross-collection querying with RRF merging and source tagging
 - [ ] **Phase 16: Dashboard Search** - Search page with query input, collection selector, per-query metrics, and A/B comparison
 - [ ] **Phase 17: Dashboard Search History** - Persistent search log with replay, filtering, and comparison
@@ -318,7 +318,7 @@ Plans:
 
 - [x] 14-01-PLAN.md — Types, config, and pipeline description-aware embedding
 - [x] 14-02-PLAN.md — LlmChunkingStrategy with content-hash cache (port spike code)
-- [ ] 14-03-PLAN.md — CLI --strategy flag, Ollama model management, collection routing
+- [x] 14-03-PLAN.md — CLI --strategy flag, Ollama model management, collection routing
 
 ### Phase 15: Multi-Collection Search & MCP Integration
 
@@ -392,7 +392,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
 | 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete    | 2026-04-10 |
-| 14. LLM Chunking Implementation & CLI         | v1.1      | 2/3 | In Progress|  |
+| 14. LLM Chunking Implementation & CLI         | v1.1      | 3/3 | Complete   | 2026-04-10 |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 0/?            | Not started | -          |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
 | 17. Dashboard Search History                  | v1.1      | 0/?            | Not started | -          |

@@ -115,9 +115,9 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 
 ### CLI
 
-- [ ] **CLIE-01**: Developer can select indexing strategy via `--strategy ast|llm` flag at index time
-- [ ] **CLIE-02**: CLI verifies configured Ollama model is available before starting LLM indexing
-- [ ] **CLIE-03**: CLI prompts interactive Ollama model selection when configured model is missing
+- [x] **CLIE-01**: Developer can select indexing strategy via `--strategy ast|llm` flag at index time
+- [x] **CLIE-02**: CLI verifies configured Ollama model is available before starting LLM indexing
+- [x] **CLIE-03**: CLI prompts interactive Ollama model selection when configured model is missing
 
 ### Dashboard
 
@@ -258,9 +258,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INDX-10     | Phase 14 | Complete |
 | INDX-11     | Phase 14 | Complete |
 | INDX-12     | Phase 14 | Complete |
-| CLIE-01     | Phase 14 | Pending |
-| CLIE-02     | Phase 14 | Pending |
-| CLIE-03     | Phase 14 | Pending |
+| CLIE-01     | Phase 14 | Complete |
+| CLIE-02     | Phase 14 | Complete |
+| CLIE-03     | Phase 14 | Complete |
 | RETR-07     | Phase 14 | Complete |
 | RETR-08     | Phase 15 | Pending |
 | RETR-09     | Phase 15 | Pending |

@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-04-10T20:21:47.624Z"
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-04-10T20:29:16.599Z"
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -69,6 +69,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Pipeline uses description ?? chunkToDescription(c) pattern — LLM descriptions take priority, fallback to heuristic
 - [Phase 14]: Content-hash cache key is SHA-256(fileContent):modelName for per-model cache isolation
 - [Phase 14]: LlmChunkingStrategy uses retry-once on Ollama failure per file (D-19)
+- [Phase 14]: Collection routing uses suffix pattern ({project}-llm) to keep AST and LLM chunks separate
+- [Phase 14]: Ollama verification is fail-fast at CLI level before any LLM chunking work
+- [Phase 14]: Default chunking model is llama3.2:latest when not configured in project.json
 
 ### Pending Todos
 
@@ -80,6 +83,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-10T19:40:42.589Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-04-10T20:29:16.597Z
+Stopped at: Completed 14-03-PLAN.md
 Resume file: None
