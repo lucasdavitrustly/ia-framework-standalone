@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Completed 13-01-PLAN.md (Type Foundation)
-last_updated: "2026-04-10T17:50:18.961Z"
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-04-10T18:00:50.863Z"
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 13 (pipeline-refactoring-parallel-embedding) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## v1.0 Performance Summary
 
@@ -61,6 +61,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11]: MCP default scoreThreshold 0.3 (benchmark-validated)
 - [Phase 11]: Embedding cost doubles with prose descriptions — acceptable for Ollama
 - [Phase 13]: Used spread-based conditional property forwarding to handle exactOptionalPropertyTypes between ChunkingConfig and ChunkerConfig
+- [Phase 13]: Used p-queue for concurrent batch embedding with provider-aware defaults (ollama:3, openai:10)
+- [Phase 13]: Retry-once-then-skip pattern for embedding batch resilience with skippedChunks tracking
 
 ### Pending Todos
 
@@ -72,6 +74,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-10T17:50:18.957Z
-Stopped at: Completed 13-01-PLAN.md (Type Foundation)
+Last session: 2026-04-10T18:00:50.860Z
+Stopped at: Completed 13-02-PLAN.md
 Resume file: None
