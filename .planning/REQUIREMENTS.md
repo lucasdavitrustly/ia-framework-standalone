@@ -102,8 +102,8 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 - [ ] **INDX-12**: LLM chunking results are cached by file content hash to avoid re-processing unchanged files
 - [ ] **INDX-14**: Embedding pipeline processes multiple batches concurrently via p-queue
 - [ ] **INDX-15**: Embedding concurrency adapts to provider type (Ollama: 2-3, OpenAI: 5-10)
-- [ ] **INDX-16**: Indexing pipeline emits progress events (phase, completed, total) for CLI and dashboard consumption
-- [ ] **INDX-17**: Embedding concurrency is configurable via project.json
+- [x] **INDX-16**: Indexing pipeline emits progress events (phase, completed, total) for CLI and dashboard consumption
+- [x] **INDX-17**: Embedding concurrency is configurable via project.json
 
 ### Retrieval
 
@@ -253,8 +253,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INDX-13     | Phase 12 | Pending |
 | INDX-14     | Phase 13 | Pending |
 | INDX-15     | Phase 13 | Pending |
-| INDX-16     | Phase 13 | Pending |
-| INDX-17     | Phase 13 | Pending |
+| INDX-16     | Phase 13 | Complete |
+| INDX-17     | Phase 13 | Complete |
 | INDX-10     | Phase 14 | Pending |
 | INDX-11     | Phase 14 | Pending |
 | INDX-12     | Phase 14 | Pending |
