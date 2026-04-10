@@ -21,18 +21,19 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ia-framework/core": "workspace:*",
     "@ia-framework/ast-parser": "workspace:*",
+    "@ia-framework/core": "workspace:*",
     "@ia-framework/embedding": "workspace:*",
-    "@ia-framework/vector-store": "workspace:*",
     "@ia-framework/retrieval": "workspace:*",
-    "tinyglobby": "^0.2.10",
-    "ignore": "^6.0.2"
+    "@ia-framework/vector-store": "workspace:*",
+    "ignore": "^6.0.2",
+    "p-queue": "^9.1.2",
+    "tinyglobby": "^0.2.10"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
-    "vitest": "^4.1.2",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.2"
   }
 }
