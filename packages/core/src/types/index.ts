@@ -12,7 +12,16 @@ export interface ChunkMetadata {
   /** Programming language of the file */
   language: string;
   /** Type of code construct: function, class, interface, module, etc. */
-  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other' | 'table' | 'view';
+  chunkType:
+    | 'function'
+    | 'class'
+    | 'interface'
+    | 'type'
+    | 'enum'
+    | 'module'
+    | 'other'
+    | 'table'
+    | 'view';
   /** Name of the construct (function name, class name, etc.) */
   name?: string | undefined;
   /** The actual source code text */
@@ -117,6 +126,8 @@ export interface IndexingConfig {
   maxChunkLines?: number | undefined;
   /** Whether to respect .gitignore (default: true) */
   respectGitignore?: boolean | undefined;
+  /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
+  embeddingConcurrency?: number | undefined;
 }
 
 /**

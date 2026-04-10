@@ -20,6 +20,8 @@ export const IndexingConfigSchema = z.object({
   excludePatterns: z.array(z.string()),
   maxChunkLines: z.number().int().positive().optional(),
   respectGitignore: z.boolean().optional(),
+  /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
+  embeddingConcurrency: z.number().int().positive().optional(),
 });
 
 export const ProjectProfileSchema = z.object({

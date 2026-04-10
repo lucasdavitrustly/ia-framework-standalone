@@ -293,13 +293,43 @@ Browse available models: https://ollama.com/search
 
         const BAR_WIDTH = 20;
         const renderProgress = (progress: IndexingProgress): void => {
-          const pct =
-            progress.filesTotal > 0
-              ? Math.round((progress.filesProcessed / progress.filesTotal) * 100)
-              : 0;
-          const filled = Math.round((pct / 100) * BAR_WIDTH);
-          const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
-          const line = `  [${bar}] ${String(pct).padStart(3)}%  ${progress.stage}  ${progress.filesProcessed}/${progress.filesTotal} files  ${progress.chunksIndexed} chunks`;
+          let line: string;
+          switch (progress.stage) {
+            case 'walking':
+              line = `  ⠋ Discovering files...`;
+              break;
+            case 'parsing': {
+              const pct =
+                progress.filesTotal > 0
+                  ? Math.round((progress.filesProcessed / progress.filesTotal) * 100)
+                  : 0;
+              const filled = Math.round((pct / 100) * BAR_WIDTH);
+              const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+              const fileName = progress.currentFile
+                ? ` ${progress.currentFile.split('/').pop()}`
+                : '';
+              line = `  [${bar}] ${String(pct).padStart(3)}%  parsing  ${progress.filesProcessed}/${progress.filesTotal} files${fileName}`;
+              break;
+            }
+            case 'embedding': {
+              const batchPct =
+                (progress.batchesTotal ?? 0) > 0
+                  ? Math.round(((progress.batchesCompleted ?? 0) / progress.batchesTotal!) * 100)
+                  : 0;
+              const filled = Math.round((batchPct / 100) * BAR_WIDTH);
+              const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+              line = `  [${bar}] ${String(batchPct).padStart(3)}%  embedding  batch ${progress.batchesCompleted ?? 0}/${progress.batchesTotal ?? '?'}  ${progress.chunksIndexed} chunks`;
+              break;
+            }
+            case 'storing':
+              line = `  ⠋ Storing ${progress.chunksIndexed} points in Qdrant...`;
+              break;
+            case 'done':
+              line = `  ✓ Done`;
+              break;
+            default:
+              line = `  ${progress.stage}`;
+          }
           process.stdout.write(`\r\x1b[2K${line}`);
         };
 
@@ -313,10 +343,13 @@ Browse available models: https://ollama.com/search
           chunksTotal: 0,
           chunksIndexed: 0,
           currentFile: null,
+          batchesTotal: null,
+          batchesCompleted: null,
           startedAt,
           updatedAt: startedAt,
         });
 
+        const startTime = Date.now();
         const result = await pipeline.run(
           {
             targetProjectPath: config.targetProjectPath,
@@ -329,6 +362,7 @@ Browse available models: https://ollama.com/search
             maxChunkLines: config.indexing?.maxChunkLines,
             incremental: !options.force,
             dependencyGraph,
+            embeddingConcurrency: config.indexing?.embeddingConcurrency,
           },
           (progress: IndexingProgress) => {
             renderProgress(progress);
@@ -341,6 +375,8 @@ Browse available models: https://ollama.com/search
               chunksTotal: progress.chunksTotal,
               chunksIndexed: progress.chunksIndexed,
               currentFile: progress.currentFile ?? null,
+              batchesTotal: progress.batchesTotal ?? null,
+              batchesCompleted: progress.batchesCompleted ?? null,
               startedAt,
               updatedAt: new Date().toISOString(),
             });
@@ -366,10 +402,18 @@ Browse available models: https://ollama.com/search
             });
           },
         );
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         process.stdout.write('\n');
+
+        if (result.skippedChunks > 0) {
+          console.log(
+            `\n  ⚠ ${result.skippedChunks} chunks skipped due to embedding failures (will be retried on next index)`,
+          );
+        }
+
         console.log(
-          `\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files`,
+          `\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files in ${elapsed}s`,
         );
 
         // Mark indexing complete in the progress file
@@ -381,6 +425,9 @@ Browse available models: https://ollama.com/search
           chunksTotal: result.chunksIndexed,
           chunksIndexed: result.chunksIndexed,
           currentFile: null,
+          batchesTotal: null,
+          batchesCompleted: null,
+          skippedChunks: result.skippedChunks,
           startedAt,
           completedAt: new Date().toISOString(),
         });

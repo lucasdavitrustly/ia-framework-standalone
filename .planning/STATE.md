@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Phase 12 discuss-phase complete — 25 decisions captured in 12-CONTEXT.md, ready for /gsd-plan-phase 12
-last_updated: "2026-04-10T14:34:53.665Z"
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-04-10T18:09:58.558Z"
 progress:
   total_phases: 7
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # Project State
@@ -19,11 +19,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 12 — llm-chunking-spike
+**Current focus:** Phase 13 — pipeline-refactoring-parallel-embedding
 
 ## Current Position
 
-Phase: 13
+Phase: 14
 Plan: Not started
 
 ## v1.0 Performance Summary
@@ -60,6 +60,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11]: Hybrid search as separate MCP tool (search_codebase_hybrid)
 - [Phase 11]: MCP default scoreThreshold 0.3 (benchmark-validated)
 - [Phase 11]: Embedding cost doubles with prose descriptions — acceptable for Ollama
+- [Phase 13]: Used spread-based conditional property forwarding to handle exactOptionalPropertyTypes between ChunkingConfig and ChunkerConfig
+- [Phase 13]: Used p-queue for concurrent batch embedding with provider-aware defaults (ollama:3, openai:10)
+- [Phase 13]: Retry-once-then-skip pattern for embedding batch resilience with skippedChunks tracking
+- [Phase 13]: No ETA in progress display — stage bar, counts, stage name only per D-05
 
 ### Pending Todos
 
@@ -71,6 +75,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-09
-Stopped at: Phase 12 discuss-phase complete — 25 decisions captured in 12-CONTEXT.md, ready for /gsd-plan-phase 12
-Resume file: .planning/phases/12-llm-chunking-spike/12-CONTEXT.md
+Last session: 2026-04-10T18:05:34.843Z
+Stopped at: Completed 13-03-PLAN.md
+Resume file: None
