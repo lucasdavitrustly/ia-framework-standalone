@@ -39,6 +39,8 @@ export interface IndexingConfig {
   incremental?: boolean | undefined;
   /** Optional additional context sources (DB schema, docs, etc.) */
   contextSources?: ContextSource[] | undefined;
+  /** Embedding concurrency override (default: provider-aware — Ollama=3, OpenAI=10) */
+  embeddingConcurrency?: number | undefined;
   /** Optional dependency graph for building file-level import adjacency */
   dependencyGraph?:
     | {
@@ -56,6 +58,10 @@ export interface IndexingProgress {
   chunksTotal: number;
   chunksIndexed: number;
   currentFile?: string | undefined;
+  /** Total number of embedding batches to process */
+  batchesTotal?: number | undefined;
+  /** Number of embedding batches completed so far */
+  batchesCompleted?: number | undefined;
 }
 
 export type ProgressCallback = (progress: IndexingProgress) => void;
