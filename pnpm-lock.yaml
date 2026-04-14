@@ -362,6 +362,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)
+      '@qdrant/js-client-rest':
+        specifier: ^1.13.0
+        version: 1.17.0(typescript@5.9.3)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
