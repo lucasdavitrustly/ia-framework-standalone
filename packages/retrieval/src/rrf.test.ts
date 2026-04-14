@@ -34,13 +34,13 @@ describe('rrfMerge', () => {
 
     expect(result).toHaveLength(3);
     // RRF scores: 1/(60+0+1)=1/61, 1/(60+1+1)=1/62, 1/(60+2+1)=1/63
-    expect(result[0].score).toBeCloseTo(1 / (k + 0 + 1), 10);
-    expect(result[1].score).toBeCloseTo(1 / (k + 1 + 1), 10);
-    expect(result[2].score).toBeCloseTo(1 / (k + 2 + 1), 10);
+    expect(result[0]!.score).toBeCloseTo(1 / (k + 0 + 1), 10);
+    expect(result[1]!.score).toBeCloseTo(1 / (k + 1 + 1), 10);
+    expect(result[2]!.score).toBeCloseTo(1 / (k + 2 + 1), 10);
     // Order preserved (highest RRF score first)
-    expect(result[0].chunkId).toBe('a');
-    expect(result[1].chunkId).toBe('b');
-    expect(result[2].chunkId).toBe('c');
+    expect(result[0]!.chunkId).toBe('a');
+    expect(result[1]!.chunkId).toBe('b');
+    expect(result[2]!.chunkId).toBe('c');
   });
 
   it('Test 2: two lists with no overlapping chunkIds returns all results sorted by RRF score', () => {
@@ -64,10 +64,10 @@ describe('rrfMerge', () => {
     expect(chunkIds).toContain('c');
     expect(chunkIds).toContain('d');
     // First two should have higher scores than last two
-    expect(result[0].score).toBeCloseTo(1 / (k + 0 + 1), 10);
-    expect(result[1].score).toBeCloseTo(1 / (k + 0 + 1), 10);
-    expect(result[2].score).toBeCloseTo(1 / (k + 1 + 1), 10);
-    expect(result[3].score).toBeCloseTo(1 / (k + 1 + 1), 10);
+    expect(result[0]!.score).toBeCloseTo(1 / (k + 0 + 1), 10);
+    expect(result[1]!.score).toBeCloseTo(1 / (k + 0 + 1), 10);
+    expect(result[2]!.score).toBeCloseTo(1 / (k + 1 + 1), 10);
+    expect(result[3]!.score).toBeCloseTo(1 / (k + 1 + 1), 10);
   });
 
   it('Test 3: two lists with one overlapping chunkId produces summed RRF scores', () => {
@@ -88,7 +88,7 @@ describe('rrfMerge', () => {
     // summed: 1/61 (rank 0 in list1) + 1/61 (rank 0 in list2)
     expect(shared!.score).toBeCloseTo(1 / (k + 1) + 1 / (k + 1), 10);
     // shared should be ranked first (highest score)
-    expect(result[0].chunkId).toBe('shared');
+    expect(result[0]!.chunkId).toBe('shared');
   });
 
   it('Test 4: empty lists returns empty array', () => {
@@ -102,8 +102,8 @@ describe('rrfMerge', () => {
     const result = rrfMerge(lists, 10);
 
     expect(result).toHaveLength(1);
-    expect(result[0].chunkId).toBe('a');
-    expect(result[0].score).toBeCloseTo(1 / (k + 0 + 1), 10);
+    expect(result[0]!.chunkId).toBe('a');
+    expect(result[0]!.score).toBeCloseTo(1 / (k + 0 + 1), 10);
   });
 
   it('Test 6: limit truncation — 3 results per list, limit=4 returns top 4', () => {
