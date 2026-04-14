@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Completed 14-03-PLAN.md
-last_updated: "2026-04-10T20:29:16.599Z"
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-04-14T18:42:50.904Z"
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 10
+  completed_plans: 9
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 14 — llm-chunking-implementation-cli
+**Current focus:** Phase 15 — multi-collection-search-mcp-integration
 
 ## Current Position
 
-Phase: 14 (llm-chunking-implementation-cli) — EXECUTING
-Plan: 3 of 3
+Phase: 15 (multi-collection-search-mcp-integration) — EXECUTING
+Plan: 2 of 2
 
 ## v1.0 Performance Summary
 
@@ -72,6 +72,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Collection routing uses suffix pattern ({project}-llm) to keep AST and LLM chunks separate
 - [Phase 14]: Ollama verification is fail-fast at CLI level before any LLM chunking work
 - [Phase 14]: Default chunking model is llama3.2:latest when not configured in project.json
+- [Phase 15]: Over-fetch with limit*2 per engine before RRF ensures good candidates without ballooning API calls
+- [Phase 15]: searchWithExpansion routes through this.getFile() (all collections) rather than individual engine.searchWithExpansion to avoid single-collection bias in graph expansion
 
 ### Pending Todos
 
@@ -83,6 +85,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-10T20:29:16.597Z
-Stopped at: Completed 14-03-PLAN.md
+Last session: 2026-04-14T18:42:50.900Z
+Stopped at: Completed 15-01-PLAN.md
 Resume file: None

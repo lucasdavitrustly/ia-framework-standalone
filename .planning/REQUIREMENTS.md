@@ -109,9 +109,9 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 
 - [x] **RETR-07**: Each indexing strategy stores chunks in a separate Qdrant collection ({project}-ast, {project}-llm)
 - [ ] **RETR-08**: MCP search tools (search_codebase, search_codebase_hybrid) query all active collections
-- [ ] **RETR-09**: Cross-collection results are merged via Reciprocal Rank Fusion for fair ranking
-- [ ] **RETR-10**: Each search result is tagged with source strategy (ast/llm) for provenance
-- [ ] **RETR-11**: Search works normally when only one collection exists (backward compatible)
+- [x] **RETR-09**: Cross-collection results are merged via Reciprocal Rank Fusion for fair ranking
+- [x] **RETR-10**: Each search result is tagged with source strategy (ast/llm) for provenance
+- [x] **RETR-11**: Search works normally when only one collection exists (backward compatible)
 
 ### CLI
 
@@ -263,9 +263,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLIE-03     | Phase 14 | Complete |
 | RETR-07     | Phase 14 | Complete |
 | RETR-08     | Phase 15 | Pending |
-| RETR-09     | Phase 15 | Pending |
-| RETR-10     | Phase 15 | Pending |
-| RETR-11     | Phase 15 | Pending |
+| RETR-09     | Phase 15 | Complete |
+| RETR-10     | Phase 15 | Complete |
+| RETR-11     | Phase 15 | Complete |
 | DASH-07     | Phase 16 | Pending |
 | DASH-08     | Phase 16 | Pending |
 | DASH-09     | Phase 16 | Pending |
