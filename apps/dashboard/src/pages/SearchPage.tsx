@@ -8,6 +8,8 @@ import SearchNoResults from '../components/search/SearchNoResults.tsx';
 import SearchResultList from '../components/search/SearchResultList.tsx';
 import SearchSkeleton from '../components/search/SearchSkeleton.tsx';
 import NoCollectionsBlock from '../components/search/NoCollectionsBlock.tsx';
+import MetricsPanel from '../components/search/MetricsPanel.tsx';
+import ABComparisonLayout from '../components/search/ABComparisonLayout.tsx';
 
 type SearchState =
   | 'blocked'
@@ -37,10 +39,6 @@ export default function SearchPage() {
     ast: SearchMetrics;
     llm: SearchMetrics;
   } | null>(null);
-
-  // Suppress unused variable warnings for A/B state (used in Plan 03)
-  void abResults;
-  void abMetrics;
 
   useEffect(() => {
     DashboardClient.getSearchCollections()
@@ -136,13 +134,23 @@ export default function SearchPage() {
           )}
           {state === 'no-results' && <SearchNoResults threshold={threshold} />}
           {state === 'results' && (
-            <SearchResultList
-              results={results}
-              expandedId={expandedId}
-              onToggleExpand={(id) => setExpandedId(expandedId === id ? null : id)}
+            <>
+              <SearchResultList
+                results={results}
+                expandedId={expandedId}
+                onToggleExpand={(id) => setExpandedId(expandedId === id ? null : id)}
+              />
+              {metrics && <MetricsPanel metrics={metrics} results={results} />}
+            </>
+          )}
+          {state === 'compared' && abResults && abMetrics && (
+            <ABComparisonLayout
+              astResults={abResults.ast}
+              llmResults={abResults.llm}
+              astMetrics={abMetrics.ast}
+              llmMetrics={abMetrics.llm}
             />
           )}
-          {/* A/B comparison rendering (state === 'compared') will be added in Plan 03 */}
           {state === 'comparing' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <SearchSkeleton />
