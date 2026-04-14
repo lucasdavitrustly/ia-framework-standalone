@@ -399,7 +399,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
 | 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete    | 2026-04-10 |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 4/4            | Complete    | 2026-04-14 |
-| 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2 | Complete   | 2026-04-14 |
+| 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2 | Complete    | 2026-04-14 |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
 | 17. Dashboard Search History                  | v1.1      | 0/?            | Not started | -          |
 | 18. Dashboard Analytics                       | v1.1      | 0/?            | Not started | -          |
