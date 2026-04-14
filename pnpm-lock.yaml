@@ -158,6 +158,9 @@ importers:
       '@ia-framework/vector-store':
         specifier: workspace:*
         version: link:../vector-store
+      '@qdrant/js-client-rest':
+        specifier: ^1.13.0
+        version: 1.17.0(typescript@5.9.3)
       commander:
         specifier: ^13.0.0
         version: 13.1.0

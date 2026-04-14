@@ -33,12 +33,13 @@
     "@ia-framework/project-detector": "workspace:*",
     "@ia-framework/retrieval": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
+    "@qdrant/js-client-rest": "^1.13.0",
     "commander": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
-    "vitest": "^4.1.2",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.2"
   }
 }
