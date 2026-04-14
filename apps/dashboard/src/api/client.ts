@@ -124,6 +124,49 @@ export interface ApiDbStatus {
   error?: string;
 }
 
+// Search result DTO (per D-24)
+export interface SearchResult {
+  id: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+  source: 'ast' | 'llm';
+  chunkType: string;
+  matchedVector: string;
+  content: string;
+  description?: string;
+}
+
+// Per-query metrics (per D-24)
+export interface SearchMetrics {
+  latencyMs: number;
+  chunksScanned: number;
+  resultsReturned: number;
+  scoreRange: { min: number; max: number };
+}
+
+// Search response (per D-24)
+export interface SearchResponse {
+  results: SearchResult[];
+  metrics: SearchMetrics;
+}
+
+// Search request body (per D-23)
+export interface SearchRequest {
+  query: string;
+  limit: number;
+  scoreThreshold: number;
+  collections: string[];
+}
+
+// Collection info (per D-25)
+export interface CollectionInfo {
+  name: string;
+  type: 'ast' | 'llm';
+  chunkCount: number;
+}
+
 // Base URL — same origin via Vite proxy in dev; relative path in production
 const BASE = '';
 
@@ -149,4 +192,14 @@ export const DashboardClient = {
   getBenchmarkRun: (runId: string) => get<BenchmarkRun>(`/api/benchmarks/${runId}`),
   getIndexingStatus: () => get<ApiIndexingStatus>('/api/indexing/status'),
   getDbStatus: () => get<ApiDbStatus>('/api/db/status'),
+  getSearchCollections: () => get<CollectionInfo[]>('/api/search/collections'),
+  search: async (request: SearchRequest): Promise<SearchResponse> => {
+    const res = await fetch(`${BASE}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error(`Search error ${res.status}`);
+    return res.json() as Promise<SearchResponse>;
+  },
 };
