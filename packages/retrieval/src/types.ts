@@ -43,6 +43,8 @@ export interface RetrievalResult {
   score: number;
   /** Which vector(s) contributed to this result */
   matchedVector: 'text' | 'code' | 'both';
+  /** Which collection/strategy produced this result */
+  source?: 'ast' | 'llm' | undefined;
 }
 
 /**
