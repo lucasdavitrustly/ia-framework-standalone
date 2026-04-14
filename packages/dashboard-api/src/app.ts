@@ -7,6 +7,7 @@ import type {
 } from '@ia-framework/observability';
 import type { BenchmarkRun } from '@ia-framework/benchmark';
 import type { ProjectConfig } from '@ia-framework/core';
+import type { CollectionEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
 import { IndexingStateManager } from './indexing-state.js';
 import { statusRouter } from './routes/status.js';
 import { configRouter } from './routes/config.js';
@@ -14,6 +15,7 @@ import { metricsRouter } from './routes/metrics.js';
 import { benchmarksRouter } from './routes/benchmarks.js';
 import { indexingRouter } from './routes/indexing.js';
 import { dbRouter } from './routes/db.js';
+import { searchRouter } from './routes/search.js';
 
 export interface MetricsStoreDep {
   getTotalStats(): TotalStats;
@@ -35,6 +37,13 @@ export interface AppDependencies {
   frameworkDir: string;
   /** Optional fetch override for testing */
   fetchFn?: typeof fetch;
+  /** Search dependencies — undefined when no Qdrant collections are available */
+  search?: {
+    collectionEngines: CollectionEngine[];
+    multiSearchEngine: MultiCollectionSearchEngine;
+    getCollectionInfo: (collectionName: string) => Promise<{ pointCount: number } | null>;
+    baseCollectionName: string;
+  };
 }
 
 export function createApp(deps: AppDependencies): Hono {
@@ -62,6 +71,11 @@ export function createApp(deps: AppDependencies): Hono {
   app.route('/api/benchmarks', benchmarksApp);
   app.route('/api/indexing', indexingApp);
   app.route('/api/db', dbRouter({ frameworkDir: deps.frameworkDir }));
+
+  if (deps.search) {
+    const searchApp = searchRouter(deps.search);
+    app.route('/api/search', searchApp);
+  }
 
   return app;
 }
