@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-04-14T18:42:50.904Z"
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-04-14T18:51:10.058Z"
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 10
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -74,6 +74,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Default chunking model is llama3.2:latest when not configured in project.json
 - [Phase 15]: Over-fetch with limit*2 per engine before RRF ensures good candidates without ballooning API calls
 - [Phase 15]: searchWithExpansion routes through this.getFile() (all collections) rather than individual engine.searchWithExpansion to avoid single-collection bias in graph expansion
+- [Phase 15-multi-collection-search-mcp-integration]: McpServerConfig.searchEngine widened to SearchEngine | MultiCollectionSearchEngine — both satisfy tool duck types
+- [Phase 15-multi-collection-search-mcp-integration]: @qdrant/js-client-rest must be added explicitly to mcp-server and cli packages (not inherited from vector-store)
 
 ### Pending Todos
 
@@ -85,6 +87,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-14T18:42:50.900Z
-Stopped at: Completed 15-01-PLAN.md
+Last session: 2026-04-14T18:51:10.055Z
+Stopped at: Completed 15-02-PLAN.md
 Resume file: None
