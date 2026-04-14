@@ -57,8 +57,8 @@ AI that actually understands the codebase — better context means better code o
 - [ ] Separate Qdrant collections per indexing strategy (AST vs LLM)
 - [ ] CLI strategy selection: AST (tree-sitter) or LLM (Ollama) at index time
 - [ ] CLI interactive Ollama model selection when configured model is missing
-- [ ] MCP search tools (`search_codebase`, `search_codebase_hybrid`) query both collections
-- [ ] MCP search results tagged with source strategy (ast/llm) and unified ranking
+- [x] MCP search tools (`search_codebase`, `search_codebase_hybrid`) query both collections — Validated in Phase 15: multi-collection-search-mcp-integration
+- [x] MCP search results tagged with source strategy (ast/llm) and unified ranking — Validated in Phase 15: multi-collection-search-mcp-integration
 - [ ] Dashboard search area: query input, ranked results with inline scores and match type
 - [ ] Dashboard per-search metrics panel: tokens, latency, chunk count, score distribution
 - [ ] Dashboard A/B strategy comparison: same query against AST vs LLM collections
@@ -150,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-10 — Phase 13 (pipeline-refactoring-parallel-embedding) complete. Indexing pipeline now supports parallel embedding via p-queue with provider-aware concurrency (Ollama: 3, OpenAI: 10), retry-once resilience, abort signal support, and ChunkingStrategy extensibility interface. CLI renders stage-specific progress with batch-level visibility. Next: Phase 14 (LLM Chunking Implementation & CLI)._
+_Last updated: 2026-04-14 — Phase 15 (multi-collection-search-mcp-integration) complete. MCP server now discovers AST + LLM Qdrant collections at startup, creates per-collection SearchEngines, wraps them in MultiCollectionSearchEngine with RRF fusion (k=60), and passes to all MCP tools. Source tags [ast]/[llm] appear in search-codebase, search-codebase-hybrid, and get-file output. CLI search command uses same multi-collection discovery. Requirements RETR-08, RETR-09, RETR-10, RETR-11 validated. Next: Phase 16 (dashboard-search)._
