@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
 status: unknown
-stopped_at: Completed 15-02-PLAN.md
-last_updated: "2026-04-14T18:59:39.012Z"
+stopped_at: Completed 16-CONTEXT.md (discuss-phase)
+last_updated: '2026-04-14T23:00:00.000Z'
 progress:
   total_phases: 7
   completed_phases: 4
@@ -19,7 +19,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 15 — multi-collection-search-mcp-integration
+**Current focus:** Phase 16 — dashboard-search (context gathered, ready for planning)
 
 ## Current Position
 
@@ -72,7 +72,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Collection routing uses suffix pattern ({project}-llm) to keep AST and LLM chunks separate
 - [Phase 14]: Ollama verification is fail-fast at CLI level before any LLM chunking work
 - [Phase 14]: Default chunking model is llama3.2:latest when not configured in project.json
-- [Phase 15]: Over-fetch with limit*2 per engine before RRF ensures good candidates without ballooning API calls
+- [Phase 15]: Over-fetch with limit\*2 per engine before RRF ensures good candidates without ballooning API calls
 - [Phase 15]: searchWithExpansion routes through this.getFile() (all collections) rather than individual engine.searchWithExpansion to avoid single-collection bias in graph expansion
 - [Phase 15-multi-collection-search-mcp-integration]: McpServerConfig.searchEngine widened to SearchEngine | MultiCollectionSearchEngine — both satisfy tool duck types
 - [Phase 15-multi-collection-search-mcp-integration]: @qdrant/js-client-rest must be added explicitly to mcp-server and cli packages (not inherited from vector-store)
@@ -87,6 +87,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-14T18:51:10.055Z
-Stopped at: Completed 15-02-PLAN.md
-Resume file: None
+Last session: 2026-04-14T23:00:00.000Z
+Stopped at: Completed 16-CONTEXT.md (discuss-phase for Phase 16)
+Resume file: .planning/phases/16-dashboard-search/16-CONTEXT.md
