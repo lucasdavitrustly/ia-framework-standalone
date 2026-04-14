@@ -350,7 +350,13 @@ Plans:
 2. Developer can select which collection(s) to search: AST only, LLM only, or both (merged)
 3. Each search displays per-query metrics panel: latency, chunks scanned, and score distribution visualization
 4. Developer can run the same query against AST and LLM collections side-by-side for A/B comparison with visual diff of rankings
-   **Plans**: TBD
+   **Plans**: 3 plans
+
+Plans:
+
+- [ ] 16-01-PLAN.md — Backend search API (POST /api/search + GET /api/search/collections, DI wiring)
+- [ ] 16-02-PLAN.md — Frontend search page (navigation, SearchBar, SearchResultList, state components)
+- [ ] 16-03-PLAN.md — Metrics panel + A/B comparison (MetricsPanel, ScoreDistributionChart, ABComparisonLayout)
 
 ### Phase 17: Dashboard Search History
 
@@ -399,7 +405,7 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete    | 2026-04-10 |
 | 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete    | 2026-04-10 |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 4/4            | Complete    | 2026-04-14 |
-| 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2 | Complete    | 2026-04-14 |
+| 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2            | Complete    | 2026-04-14 |
 | 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
 | 17. Dashboard Search History                  | v1.1      | 0/?            | Not started | -          |
 | 18. Dashboard Analytics                       | v1.1      | 0/?            | Not started | -          |
