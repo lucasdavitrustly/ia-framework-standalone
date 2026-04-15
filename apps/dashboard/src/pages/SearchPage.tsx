@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { DashboardClient } from '../api/client.ts';
 import type { CollectionInfo, SearchMetrics, SearchResult } from '../api/client.ts';
 import SearchBar from '../components/search/SearchBar.tsx';
@@ -23,8 +24,9 @@ type SearchState =
   | 'compare-error';
 
 export default function SearchPage() {
+  const [searchParams] = useSearchParams();
   const [state, setState] = useState<SearchState>('idle');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(searchParams.get('q') ?? '');
   const [collection, setCollection] = useState<'both' | 'ast' | 'llm'>('both');
   const [limit, setLimit] = useState(10);
   const [threshold, setThreshold] = useState(0.3);
@@ -126,6 +128,16 @@ export default function SearchPage() {
             disabled={state === 'loading' || state === 'comparing'}
             collections={collections}
           />
+          {(state === 'results' || state === 'compared' || state === 'no-results') && (
+            <div className="flex justify-end mb-2">
+              <Link
+                to="/rag/search/history"
+                className="text-sm text-indigo-400 hover:text-indigo-300"
+              >
+                View history →
+              </Link>
+            </div>
+          )}
           {state === 'idle' && <SearchEmpty />}
           {state === 'loading' && <SearchSkeleton />}
           {state === 'error' && <SearchError onRetry={handleRetry} />}

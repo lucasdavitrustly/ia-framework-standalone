@@ -150,6 +150,7 @@ export interface SearchMetrics {
 export interface SearchResponse {
   results: SearchResult[];
   metrics: SearchMetrics;
+  historyId?: string;
 }
 
 // Search request body (per D-23)
@@ -165,6 +166,45 @@ export interface CollectionInfo {
   name: string;
   type: 'ast' | 'llm';
   chunkCount: number;
+}
+
+// Search history types (per DASH-12, DASH-13, DASH-14)
+export interface SearchHistoryEntry {
+  id: string;
+  query: string;
+  params: { limit: number; scoreThreshold: number; collections: string[] };
+  results: SearchResult[];
+  metrics: SearchMetrics;
+  collection: string;
+  resultCount: number;
+  topScore: number;
+  latencyMs: number;
+  createdAt: string;
+}
+
+export interface SearchHistoryListResult {
+  entries: SearchHistoryEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface SearchHistoryFilters {
+  q?: string;
+  collection?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  minScore?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ReplayResponse {
+  original: { results: SearchResult[]; metrics: SearchMetrics };
+  fresh: { results: SearchResult[]; metrics: SearchMetrics };
+  warning?: string;
 }
 
 // Base URL — same origin via Vite proxy in dev; relative path in production
@@ -201,5 +241,33 @@ export const DashboardClient = {
     });
     if (!res.ok) throw new Error(`Search error ${res.status}`);
     return res.json() as Promise<SearchResponse>;
+  },
+  getSearchHistory: (filters?: SearchHistoryFilters) => {
+    const qs = new URLSearchParams();
+    if (filters?.q) qs.set('q', filters.q);
+    if (filters?.collection) qs.set('collection', filters.collection);
+    if (filters?.dateFrom) qs.set('dateFrom', filters.dateFrom);
+    if (filters?.dateTo) qs.set('dateTo', filters.dateTo);
+    if (filters?.minScore !== undefined) qs.set('minScore', String(filters.minScore));
+    if (filters?.sortBy) qs.set('sortBy', filters.sortBy);
+    if (filters?.sortOrder) qs.set('sortOrder', filters.sortOrder);
+    if (filters?.page !== undefined) qs.set('page', String(filters.page));
+    if (filters?.pageSize !== undefined) qs.set('pageSize', String(filters.pageSize));
+    const q = qs.toString();
+    return get<SearchHistoryListResult>(`/api/search/history${q ? `?${q}` : ''}`);
+  },
+  getSearchHistoryEntry: (id: string) => get<SearchHistoryEntry>(`/api/search/history/${id}`),
+  replaySearch: async (id: string): Promise<ReplayResponse> => {
+    const res = await fetch(`${BASE}/api/search/history/${id}/replay`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Replay error ${res.status}`);
+    return res.json() as Promise<ReplayResponse>;
+  },
+  deleteSearchHistoryEntry: async (id: string): Promise<void> => {
+    const res = await fetch(`${BASE}/api/search/history/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Delete error ${res.status}`);
+  },
+  clearSearchHistory: async (): Promise<void> => {
+    const res = await fetch(`${BASE}/api/search/history`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Clear error ${res.status}`);
   },
 };
