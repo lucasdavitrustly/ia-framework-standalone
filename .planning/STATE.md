@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
-status: unknown
-stopped_at: Completed 16-CONTEXT.md (discuss-phase)
-last_updated: '2026-04-14T23:00:00.000Z'
+status: between_phases
+stopped_at: Completed Phase 16 (dashboard-search) — all 3 plans verified
+last_updated: '2026-04-14T22:00:00.000Z'
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  completed_phases: 5
+  total_plans: 16
+  completed_plans: 14
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 16 — dashboard-search (context gathered, ready for planning)
+**Current focus:** Phase 16 — dashboard-search
 
 ## Current Position
 
-Phase: 16
-Plan: Not started
+Phase: 16 (dashboard-search) — COMPLETE
+Next: Phase 17 (dashboard-search-history)
 
 ## v1.0 Performance Summary
 
@@ -76,6 +76,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15]: searchWithExpansion routes through this.getFile() (all collections) rather than individual engine.searchWithExpansion to avoid single-collection bias in graph expansion
 - [Phase 15-multi-collection-search-mcp-integration]: McpServerConfig.searchEngine widened to SearchEngine | MultiCollectionSearchEngine — both satisfy tool duck types
 - [Phase 15-multi-collection-search-mcp-integration]: @qdrant/js-client-rest must be added explicitly to mcp-server and cli packages (not inherited from vector-store)
+- [Phase 16]: DependencyGraph.getNeighborFiles is sync (string[]) but SearchEngineConfig expects async (Promise<string[]>) — server.ts wraps with Promise.resolve() adapter rather than modifying DependencyGraph
 
 ### Pending Todos
 
@@ -87,6 +88,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-14T23:00:00.000Z
-Stopped at: Completed 16-CONTEXT.md (discuss-phase for Phase 16)
-Resume file: .planning/phases/16-dashboard-search/16-CONTEXT.md
+Last session: 2026-04-14T22:00:00.000Z
+Stopped at: Completed Phase 16 (dashboard-search) — all 3 plans verified, ROADMAP + STATE updated
+Resume file: .planning/phases/16-dashboard-search/16-VERIFICATION.md

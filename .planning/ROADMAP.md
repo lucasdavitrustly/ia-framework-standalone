@@ -258,7 +258,7 @@ Plans:
 - [x] **Phase 13: Pipeline Refactoring & Parallel Embedding** - Extract ChunkingStrategy interface, add concurrent embedding with progress events (completed 2026-04-10)
 - [x] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage (completed 2026-04-14)
 - [x] **Phase 15: Multi-Collection Search & MCP Integration** - Cross-collection querying with RRF merging and source tagging (completed 2026-04-14)
-- [ ] **Phase 16: Dashboard Search** - Search page with query input, collection selector, per-query metrics, and A/B comparison
+- [x] **Phase 16: Dashboard Search** - Search page with query input, collection selector, per-query metrics, and A/B comparison (completed 2026-04-14)
 - [ ] **Phase 17: Dashboard Search History** - Persistent search log with replay, filtering, and comparison
 - [ ] **Phase 18: Dashboard Analytics** - Strategy comparison charts, RAG quality trends, token breakdowns, score distributions
 
@@ -354,9 +354,9 @@ Plans:
 
 Plans:
 
-- [ ] 16-01-PLAN.md — Backend search API (POST /api/search + GET /api/search/collections, DI wiring)
-- [ ] 16-02-PLAN.md — Frontend search page (navigation, SearchBar, SearchResultList, state components)
-- [ ] 16-03-PLAN.md — Metrics panel + A/B comparison (MetricsPanel, ScoreDistributionChart, ABComparisonLayout)
+- [x] 16-01-PLAN.md — Backend search API (POST /api/search + GET /api/search/collections, DI wiring)
+- [x] 16-02-PLAN.md — Frontend search page (navigation, SearchBar, SearchResultList, state components)
+- [x] 16-03-PLAN.md — Metrics panel + A/B comparison (MetricsPanel, ScoreDistributionChart, ABComparisonLayout)
 
 ### Phase 17: Dashboard Search History
 
@@ -406,6 +406,6 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete    | 2026-04-10 |
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 4/4            | Complete    | 2026-04-14 |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2            | Complete    | 2026-04-14 |
-| 16. Dashboard Search                          | v1.1      | 0/?            | Not started | -          |
+| 16. Dashboard Search                          | v1.1      | 3/3            | Complete    | 2026-04-14 |
 | 17. Dashboard Search History                  | v1.1      | 0/?            | Not started | -          |
 | 18. Dashboard Analytics                       | v1.1      | 0/?            | Not started | -          |
