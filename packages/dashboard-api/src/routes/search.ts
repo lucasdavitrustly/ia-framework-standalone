@@ -1,6 +1,11 @@
 import { Hono } from 'hono';
-import type { CollectionEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
+import type {
+  CollectionEngine,
+  MultiCollectionSearchEngine,
+  RetrievalResult,
+} from '@ia-framework/retrieval';
 import type { RetrievalQuery } from '@ia-framework/retrieval';
+import type { SearchHistoryStore, SearchHistoryListParams } from '../search-history-store.js';
 
 export interface SearchDeps {
   /** Individual engines for single-collection queries */
@@ -11,6 +16,38 @@ export interface SearchDeps {
   getCollectionInfo: (collectionName: string) => Promise<{ pointCount: number } | null>;
   /** Base collection name e.g. 'ia-framework' — used for GET /collections */
   baseCollectionName: string;
+  /** Optional search history store — graceful when not available */
+  searchHistoryStore?: SearchHistoryStore;
+}
+
+/** Map a raw RetrievalResult to the search response / history DTO shape */
+function mapResult(r: RetrievalResult): {
+  id: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+  source: string;
+  chunkType: string;
+  matchedVector: string;
+  content: string;
+  description?: string;
+} {
+  const base = {
+    id: r.chunkId,
+    filePath: r.relativePath,
+    startLine: r.startLine,
+    endLine: r.endLine,
+    score: r.score,
+    source: r.source ?? 'ast',
+    chunkType: r.chunkType,
+    matchedVector: r.matchedVector,
+    content: r.content,
+  };
+  if (r.name !== undefined) {
+    return { ...base, description: r.name };
+  }
+  return base;
 }
 
 export function searchRouter(deps: SearchDeps): Hono {
@@ -48,7 +85,7 @@ export function searchRouter(deps: SearchDeps): Hono {
       const wantBoth = collections.includes('both') || (wantAst && wantLlm);
 
       const start = Date.now();
-      let rawResults;
+      let rawResults: RetrievalResult[];
 
       if (wantBoth) {
         rawResults = await deps.multiSearchEngine.search(retrievalQuery);
@@ -90,18 +127,7 @@ export function searchRouter(deps: SearchDeps): Hono {
       }
 
       // Map to response DTO (drop imports/exports)
-      const results = rawResults.map((r) => ({
-        id: r.chunkId,
-        filePath: r.relativePath,
-        startLine: r.startLine,
-        endLine: r.endLine,
-        score: r.score,
-        source: r.source ?? 'ast',
-        chunkType: r.chunkType,
-        matchedVector: r.matchedVector,
-        content: r.content,
-        description: r.name,
-      }));
+      const results = rawResults.map(mapResult);
 
       const metrics = {
         latencyMs,
@@ -113,10 +139,148 @@ export function searchRouter(deps: SearchDeps): Hono {
         },
       };
 
-      return c.json({ results, metrics });
+      // Auto-save search to history
+      let historyId: string | undefined;
+      if (deps.searchHistoryStore) {
+        try {
+          const collectionLabel = wantBoth ? 'both' : wantAst ? 'ast' : wantLlm ? 'llm' : 'both';
+          historyId = deps.searchHistoryStore.saveEntry({
+            query,
+            params: { limit, scoreThreshold, collections: body.collections ?? ['both'] },
+            results,
+            metrics,
+            collection: collectionLabel,
+            resultCount: results.length,
+            topScore: metrics.scoreRange.max,
+            latencyMs: metrics.latencyMs,
+          });
+        } catch {
+          // Auto-save failure should not fail the search — silently ignore
+        }
+      }
+
+      return c.json({ results, metrics, historyId });
     } catch (err) {
       return c.json({ error: String(err) }, 500);
     }
+  });
+
+  // GET /history — list history entries with filters
+  app.get('/history', (c) => {
+    if (!deps.searchHistoryStore) return c.json({ error: 'History not available' }, 503);
+    // Build params only with defined values (required by exactOptionalPropertyTypes)
+    const params: SearchHistoryListParams = {};
+    const q = c.req.query('q');
+    if (q) params.q = q;
+    const collection = c.req.query('collection');
+    if (collection) params.collection = collection;
+    const dateFrom = c.req.query('dateFrom');
+    if (dateFrom) params.dateFrom = dateFrom;
+    const dateTo = c.req.query('dateTo');
+    if (dateTo) params.dateTo = dateTo;
+    const minScoreStr = c.req.query('minScore');
+    if (minScoreStr) params.minScore = parseFloat(minScoreStr);
+    const sortByStr = c.req.query('sortBy') as SearchHistoryListParams['sortBy'] | undefined;
+    if (sortByStr) params.sortBy = sortByStr;
+    const sortOrderStr = c.req.query('sortOrder');
+    if (sortOrderStr === 'asc' || sortOrderStr === 'desc') params.sortOrder = sortOrderStr;
+    const pageStr = c.req.query('page');
+    if (pageStr) params.page = parseInt(pageStr, 10);
+    const pageSizeStr = c.req.query('pageSize');
+    if (pageSizeStr) params.pageSize = parseInt(pageSizeStr, 10);
+    const result = deps.searchHistoryStore.list(params);
+    return c.json(result);
+  });
+
+  // GET /history/:id — get single entry
+  app.get('/history/:id', (c) => {
+    if (!deps.searchHistoryStore) return c.json({ error: 'History not available' }, 503);
+    const entry = deps.searchHistoryStore.getById(c.req.param('id'));
+    if (!entry) return c.json({ error: 'Not found' }, 404);
+    return c.json(entry);
+  });
+
+  // POST /history/:id/replay — re-execute saved query
+  app.post('/history/:id/replay', async (c) => {
+    if (!deps.searchHistoryStore) return c.json({ error: 'History not available' }, 503);
+    const entry = deps.searchHistoryStore.getById(c.req.param('id'));
+    if (!entry) return c.json({ error: 'Not found' }, 404);
+
+    const retrievalQuery: RetrievalQuery = {
+      text: entry.query,
+      limit: entry.params.limit,
+      scoreThreshold: entry.params.scoreThreshold,
+    };
+
+    const collections = entry.params.collections;
+    const replayWantAst = collections.includes('ast');
+    const replayWantLlm = collections.includes('llm');
+    const replayWantBoth = collections.includes('both') || (replayWantAst && replayWantLlm);
+
+    const start = Date.now();
+    let rawResults: RetrievalResult[];
+    let collectionWarning: string | undefined;
+
+    try {
+      if (replayWantBoth) {
+        rawResults = await deps.multiSearchEngine.search(retrievalQuery);
+      } else if (replayWantAst) {
+        const engineEntry = deps.collectionEngines.find((e) => e.name === 'ast');
+        if (!engineEntry) {
+          collectionWarning = 'AST collection no longer available';
+          rawResults = [];
+        } else {
+          rawResults = await engineEntry.engine.search(retrievalQuery);
+        }
+      } else if (replayWantLlm) {
+        const engineEntry = deps.collectionEngines.find((e) => e.name === 'llm');
+        if (!engineEntry) {
+          collectionWarning = 'LLM collection no longer available';
+          rawResults = [];
+        } else {
+          rawResults = await engineEntry.engine.search(retrievalQuery);
+        }
+      } else {
+        rawResults = await deps.multiSearchEngine.search(retrievalQuery);
+      }
+    } catch {
+      return c.json({ error: 'Replay search failed' }, 500);
+    }
+
+    const latencyMs = Date.now() - start;
+
+    const freshResults = rawResults.map(mapResult);
+
+    const freshMetrics = {
+      latencyMs,
+      chunksScanned: 0,
+      resultsReturned: freshResults.length,
+      scoreRange: {
+        min: freshResults.length > 0 ? Math.min(...freshResults.map((r) => r.score)) : 0,
+        max: freshResults.length > 0 ? Math.max(...freshResults.map((r) => r.score)) : 0,
+      },
+    };
+
+    return c.json({
+      original: { results: entry.results, metrics: entry.metrics },
+      fresh: { results: freshResults, metrics: freshMetrics },
+      ...(collectionWarning ? { warning: collectionWarning } : {}),
+    });
+  });
+
+  // DELETE /history/:id — delete single entry
+  app.delete('/history/:id', (c) => {
+    if (!deps.searchHistoryStore) return c.json({ error: 'History not available' }, 503);
+    const deleted = deps.searchHistoryStore.deleteById(c.req.param('id'));
+    if (!deleted) return c.json({ error: 'Not found' }, 404);
+    return c.json({ ok: true });
+  });
+
+  // DELETE /history — clear all entries
+  app.delete('/history', (c) => {
+    if (!deps.searchHistoryStore) return c.json({ error: 'History not available' }, 503);
+    deps.searchHistoryStore.clearAll();
+    return c.json({ ok: true });
   });
 
   // GET /collections — discover available Qdrant collections

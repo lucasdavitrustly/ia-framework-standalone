@@ -8,6 +8,7 @@ import type {
 import type { BenchmarkRun } from '@ia-framework/benchmark';
 import type { ProjectConfig } from '@ia-framework/core';
 import type { CollectionEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
+import type { SearchHistoryStore } from './search-history-store.js';
 import { IndexingStateManager } from './indexing-state.js';
 import { statusRouter } from './routes/status.js';
 import { configRouter } from './routes/config.js';
@@ -43,6 +44,7 @@ export interface AppDependencies {
     multiSearchEngine: MultiCollectionSearchEngine;
     getCollectionInfo: (collectionName: string) => Promise<{ pointCount: number } | null>;
     baseCollectionName: string;
+    searchHistoryStore?: SearchHistoryStore;
   };
 }
 

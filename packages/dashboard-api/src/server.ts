@@ -15,6 +15,7 @@ import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { ConfigWatcher } from './config-watcher.js';
 import { IndexingStateManager } from './indexing-state.js';
+import { SearchHistoryStore } from './search-history-store.js';
 import { createApp } from './app.js';
 import type { AppDependencies } from './app.js';
 
@@ -37,6 +38,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
   // Initialize stores
   const metricsStore = new MetricsStore(join(frameworkDir, 'metrics.sqlite'));
   const benchmarkStore = new BenchmarkStore(join(frameworkDir, 'benchmarks.sqlite'));
+  const searchHistoryStore = new SearchHistoryStore(join(frameworkDir, 'search-history.sqlite'));
   const indexingState = new IndexingStateManager();
 
   // Initialize embedding provider and vector store only when config is available
@@ -125,6 +127,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
             }
           },
           baseCollectionName,
+          searchHistoryStore,
         };
       }
     } catch (err) {
@@ -164,6 +167,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
     configWatcher.stop();
     metricsStore.close();
     benchmarkStore.close();
+    searchHistoryStore.close();
     process.exit(0);
   });
 }
