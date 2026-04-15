@@ -29,6 +29,7 @@ export default function MetricsPanel({ metrics, results }: MetricsPanelProps) {
             <StatCard
               label="Score Range"
               value={`${metrics.scoreRange.min.toFixed(3)}–${metrics.scoreRange.max.toFixed(3)}`}
+              sub="RRF score"
             />
           </div>
           <ScoreDistributionChart results={results} />

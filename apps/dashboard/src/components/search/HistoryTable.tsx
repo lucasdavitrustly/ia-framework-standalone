@@ -17,12 +17,15 @@ interface HistoryTableProps {
   onDelete: (id: string) => void;
 }
 
-const SORT_COLUMNS: Array<{ key: string; label: string }> = [
+const RRF_TOOLTIP =
+  'Reciprocal Rank Fusion (RRF) score. When searching across multiple collections, results are re-ranked by the formula 1/(60+rank). Top results typically score 0.013–0.016 — not comparable to cosine similarity.';
+
+const SORT_COLUMNS: Array<{ key: string; label: string; title?: string }> = [
   { key: 'created_at', label: 'Date' },
   { key: 'query', label: 'Query' },
   { key: 'collection', label: 'Collection' },
   { key: 'result_count', label: 'Results' },
-  { key: 'top_score', label: 'Top Score' },
+  { key: 'top_score', label: 'Top Score', title: RRF_TOOLTIP },
   { key: 'latency_ms', label: 'Latency' },
 ];
 
@@ -76,8 +79,10 @@ export default function HistoryTable({
                   key={col.key}
                   className="px-4 py-3 text-left cursor-pointer hover:text-gray-300 select-none"
                   onClick={() => handleSort(col.key)}
+                  title={col.title}
                 >
                   {col.label}
+                  {col.title && <span className="ml-1 text-gray-600">ℹ</span>}
                   {sortBy === col.key && (
                     <span className="ml-1">{sortOrder === 'asc' ? '▲' : '▼'}</span>
                   )}

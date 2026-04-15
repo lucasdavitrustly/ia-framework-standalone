@@ -19,7 +19,12 @@ export default function SearchResultList({
       <div className="flex items-center px-4 py-3 bg-gray-800/60 text-xs text-gray-500 uppercase tracking-wider">
         <span className="flex-1">File</span>
         <span className="w-24">Lines</span>
-        <span className="w-20">Score</span>
+        <span
+          className="w-20 cursor-help"
+          title="Reciprocal Rank Fusion (RRF) score. When searching across multiple collections, results are re-ranked by the formula 1/(60+rank). Top results typically score 0.013–0.016 — not comparable to cosine similarity."
+        >
+          Score ℹ
+        </span>
         <span className="w-20">Source</span>
         <span className="w-24">Type</span>
       </div>
