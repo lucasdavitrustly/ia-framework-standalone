@@ -49,9 +49,9 @@ services:
     depends_on:
       - qdrant
     # host.docker.internal is provided automatically by Docker Desktop (macOS/Windows).
-    # On Linux with Docker Engine it must be added explicitly via extra_hosts.
-    extra_hosts:
-      - 'host.docker.internal:host-gateway'
+    # On Linux with Docker Engine, uncomment the extra_hosts block below:
+    # extra_hosts:
+    #   - 'host.docker.internal:host-gateway'
     healthcheck:
       test:
         [

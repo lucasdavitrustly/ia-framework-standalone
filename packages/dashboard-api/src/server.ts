@@ -66,7 +66,17 @@ export async function startServer(options: ServerOptions): Promise<void> {
   let searchDeps: AppDependencies['search'] = undefined;
   if (config) {
     try {
-      const embeddingProvider = createEmbeddingProvider(config.embedding);
+      // Apply OLLAMA_BASE_URL env var override (same pattern as QDRANT_HOST).
+      // Inside the Docker container, config.embedding.baseUrl may be "localhost"
+      // (from project.json) which resolves to the container itself — not the host.
+      // docker-compose.yml sets OLLAMA_BASE_URL=http://host.docker.internal:11434
+      // so the container can reach Ollama on the host machine.
+      const ollamaBaseUrl = process.env['OLLAMA_BASE_URL'] ?? config.embedding.baseUrl;
+      const embeddingConfig =
+        ollamaBaseUrl !== config.embedding.baseUrl
+          ? { ...config.embedding, baseUrl: ollamaBaseUrl }
+          : config.embedding;
+      const embeddingProvider = createEmbeddingProvider(embeddingConfig);
       const qdrantHost = process.env['QDRANT_HOST'] ?? config.vectorStore.host;
       const qdrantPort = config.vectorStore.port;
       const qdrantApiKey = config.vectorStore.apiKey;
