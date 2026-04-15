@@ -368,7 +368,12 @@ Plans:
 1. Every dashboard search is automatically persisted with query text, results, scores, strategy, and timestamp
 2. Developer can replay any past query to compare results before and after re-indexing
 3. Search history is filterable by date range, strategy used, query text substring, and minimum relevance score
-   **Plans**: TBD
+   **Plans**: 2 plans
+
+Plans:
+
+- [ ] 17-01-PLAN.md — Backend: SearchHistoryStore (SQLite), API endpoints (auto-save, list, filter, replay, delete), DI wiring
+- [ ] 17-02-PLAN.md — Frontend: History page, HistoryTable, HistoryFilterBar, ReplayDiffLayout, navigation + checkpoint
 
 ### Phase 18: Dashboard Analytics
 
