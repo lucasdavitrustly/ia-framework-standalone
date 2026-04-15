@@ -17,6 +17,7 @@ import { benchmarksRouter } from './routes/benchmarks.js';
 import { indexingRouter } from './routes/indexing.js';
 import { dbRouter } from './routes/db.js';
 import { searchRouter } from './routes/search.js';
+import { analyticsRouter } from './routes/analytics.js';
 
 export interface MetricsStoreDep {
   getTotalStats(): TotalStats;
@@ -62,6 +63,10 @@ export function createApp(deps: AppDependencies): Hono {
   const configApp = configRouter({ configWatcher: deps.configWatcher });
   const metricsApp = metricsRouter({ metricsStore: deps.metricsStore });
   const benchmarksApp = benchmarksRouter({ benchmarkStore: deps.benchmarkStore });
+  const analyticsApp = analyticsRouter({
+    benchmarkStore: deps.benchmarkStore,
+    metricsStore: deps.metricsStore,
+  });
   const indexingApp = indexingRouter({
     indexingState: deps.indexingState,
     frameworkDir: deps.frameworkDir,
@@ -71,6 +76,7 @@ export function createApp(deps: AppDependencies): Hono {
   app.route('/api/config', configApp);
   app.route('/api/metrics', metricsApp);
   app.route('/api/benchmarks', benchmarksApp);
+  app.route('/api/analytics', analyticsApp);
   app.route('/api/indexing', indexingApp);
   app.route('/api/db', dbRouter({ frameworkDir: deps.frameworkDir }));
 
