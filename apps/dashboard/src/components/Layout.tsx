@@ -20,6 +20,7 @@ export default function Layout() {
           </div>
           <NavLink to="/tokens" label="Token Usage" />
           <NavLink to="/benchmarks" label="Benchmarks" />
+          <NavLink to="/analytics" label="Analytics" />
           <NavLink to="/config" label="Config" />
         </nav>
       </aside>

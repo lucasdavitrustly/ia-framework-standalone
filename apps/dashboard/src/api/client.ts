@@ -207,6 +207,46 @@ export interface ReplayResponse {
   warning?: string;
 }
 
+// Analytics DTOs (mirror packages/dashboard-api/src/routes/analytics-types.ts)
+export interface BenchmarkTrendPoint {
+  runId: string;
+  label?: string;
+  timestamp: string;
+  mrr: number;
+  hitAtK: number;
+  avgLatencyMs: number;
+  collectionName: string;
+  isBaseline: boolean;
+}
+
+export interface StrategyComparisonRow {
+  collectionName: string;
+  runCount: number;
+  avgMrr: number;
+  avgHitAtK: number;
+  avgLatencyMs: number;
+}
+
+export interface ScoreBucket {
+  label: string;
+  bucketStart: number;
+  bucketEnd: number;
+  count: number;
+}
+
+export interface ScoreDistributionEntry {
+  collectionName: string;
+  buckets: ScoreBucket[];
+  totalQueries: number;
+}
+
+export interface TokenBreakdownEntry {
+  strategy: string;
+  totalTokens: number;
+  avgTokensPerQuery: number;
+  totalQueries: number;
+}
+
 // Base URL — same origin via Vite proxy in dev; relative path in production
 const BASE = '';
 
@@ -270,4 +310,20 @@ export const DashboardClient = {
     const res = await fetch(`${BASE}/api/search/history`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Clear error ${res.status}`);
   },
+  getAnalyticsBenchmarkTrends: (limit = 50) =>
+    get<{ trends: BenchmarkTrendPoint[] }>(`/api/analytics/benchmark-trends?limit=${limit}`).then(
+      (r) => r.trends,
+    ),
+  getAnalyticsStrategyComparison: () =>
+    get<{ strategies: StrategyComparisonRow[] }>('/api/analytics/strategy-comparison').then(
+      (r) => r.strategies,
+    ),
+  getAnalyticsScoreDistribution: () =>
+    get<{ distributions: ScoreDistributionEntry[] }>('/api/analytics/score-distribution').then(
+      (r) => r.distributions,
+    ),
+  getAnalyticsTokenBreakdown: () =>
+    get<{ breakdown: TokenBreakdownEntry[] }>('/api/analytics/token-breakdown').then(
+      (r) => r.breakdown,
+    ),
 };

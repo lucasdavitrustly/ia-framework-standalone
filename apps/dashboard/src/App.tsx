@@ -6,6 +6,7 @@ import Benchmarks from './pages/Benchmarks.tsx';
 import Config from './pages/Config.tsx';
 import SearchPage from './pages/SearchPage.tsx';
 import SearchHistoryPage from './pages/SearchHistoryPage.tsx';
+import AnalyticsPage from './pages/AnalyticsPage.tsx';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="rag/search/history" element={<SearchHistoryPage />} />
           <Route path="tokens" element={<TokenUsage />} />
           <Route path="benchmarks" element={<Benchmarks />} />
+          <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="config" element={<Config />} />
         </Route>
       </Routes>
