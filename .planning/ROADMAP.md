@@ -259,7 +259,7 @@ Plans:
 - [x] **Phase 14: LLM Chunking Implementation & CLI** - Full LLM chunking pipeline, CLI strategy flags, Ollama model management, multi-collection storage (completed 2026-04-14)
 - [x] **Phase 15: Multi-Collection Search & MCP Integration** - Cross-collection querying with RRF merging and source tagging (completed 2026-04-14)
 - [x] **Phase 16: Dashboard Search** - Search page with query input, collection selector, per-query metrics, and A/B comparison (completed 2026-04-14)
-- [ ] **Phase 17: Dashboard Search History** - Persistent search log with replay, filtering, and comparison
+- [x] **Phase 17: Dashboard Search History** - Persistent search log with replay, filtering, and comparison (completed 2026-04-15)
 - [ ] **Phase 18: Dashboard Analytics** - Strategy comparison charts, RAG quality trends, token breakdowns, score distributions
 
 ## Phase Details
@@ -372,8 +372,8 @@ Plans:
 
 Plans:
 
-- [ ] 17-01-PLAN.md — Backend: SearchHistoryStore (SQLite), API endpoints (auto-save, list, filter, replay, delete), DI wiring
-- [ ] 17-02-PLAN.md — Frontend: History page, HistoryTable, HistoryFilterBar, ReplayDiffLayout, navigation + checkpoint
+- [x] 17-01-PLAN.md — Backend: SearchHistoryStore (SQLite), API endpoints (auto-save, list, filter, replay, delete), DI wiring
+- [x] 17-02-PLAN.md — Frontend: History page, HistoryTable, HistoryFilterBar, ReplayDiffLayout, navigation + checkpoint
 
 ### Phase 18: Dashboard Analytics
 
@@ -412,5 +412,5 @@ Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
 | 14. LLM Chunking Implementation & CLI         | v1.1      | 4/4            | Complete    | 2026-04-14 |
 | 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2            | Complete    | 2026-04-14 |
 | 16. Dashboard Search                          | v1.1      | 3/3            | Complete    | 2026-04-14 |
-| 17. Dashboard Search History                  | v1.1      | 0/?            | Not started | -          |
+| 17. Dashboard Search History                  | v1.1      | 2/2            | Complete    | 2026-04-15 |
 | 18. Dashboard Analytics                       | v1.1      | 0/?            | Not started | -          |

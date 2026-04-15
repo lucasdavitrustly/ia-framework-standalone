@@ -30,6 +30,7 @@ export default function MetricsPanel({ metrics, results }: MetricsPanelProps) {
               label="Score Range"
               value={`${metrics.scoreRange.min.toFixed(3)}–${metrics.scoreRange.max.toFixed(3)}`}
               sub="RRF score"
+              tooltip="Reciprocal Rank Fusion (RRF) score. When searching across multiple collections, results are re-ranked by the formula 1/(60+rank). Top results typically score 0.013–0.016 — not comparable to cosine similarity."
             />
           </div>
           <ScoreDistributionChart results={results} />

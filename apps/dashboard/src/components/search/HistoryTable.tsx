@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { SearchHistoryEntry } from '../../api/client.ts';
+import Tooltip from '../Tooltip.tsx';
 import SearchResultList from './SearchResultList.tsx';
 import MetricsPanel from './MetricsPanel.tsx';
 
@@ -79,10 +80,16 @@ export default function HistoryTable({
                   key={col.key}
                   className="px-4 py-3 text-left cursor-pointer hover:text-gray-300 select-none"
                   onClick={() => handleSort(col.key)}
-                  title={col.title}
                 >
-                  {col.label}
-                  {col.title && <span className="ml-1 text-gray-600">ℹ</span>}
+                  {col.title ? (
+                    <Tooltip text={col.title}>
+                      <span>
+                        {col.label} <span className="text-gray-600">ℹ</span>
+                      </span>
+                    </Tooltip>
+                  ) : (
+                    col.label
+                  )}
                   {sortBy === col.key && (
                     <span className="ml-1">{sortOrder === 'asc' ? '▲' : '▼'}</span>
                   )}
