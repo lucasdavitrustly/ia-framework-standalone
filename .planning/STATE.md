@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
-status: active
-stopped_at: Phase 17 complete — ready for Phase 18 (Dashboard Analytics)
-last_updated: '2026-04-15T16:45:00.000Z'
+status: complete
+stopped_at: Phase 18 complete — v1.1 milestone shipped
+last_updated: '2026-04-16T00:00:00.000Z'
 progress:
   total_phases: 7
-  completed_phases: 6
-  total_plans: 15
-  completed_plans: 17
+  completed_phases: 7
+  total_plans: 17
+  completed_plans: 19
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 18 — dashboard-analytics
+**Current focus:** v1.1 complete — ready to plan v1.2 or next milestone
 
 ## Current Position
 
-Phase: 18 (dashboard-analytics) — ready to start
-Plan: not yet started
+Phase: 18 (dashboard-analytics) — COMPLETE
+Milestone: v1.1 — SHIPPED 2026-04-16
 
 ## v1.0 Performance Summary
 
@@ -34,6 +34,14 @@ Plan: not yet started
 - Total plans completed: 34
 - Average duration: ~14 min/plan
 - Total execution time: ~7 hours
+
+## v1.1 Performance Summary
+
+**Velocity (v1.1):**
+
+- Total phases: 7
+- Total plans completed: 17 (+ 2 context/summary files)
+- Phases: 12 → 13 → 14 → 15 → 16 → 17 → 18
 
 ## Accumulated Context
 
@@ -77,6 +85,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15-multi-collection-search-mcp-integration]: McpServerConfig.searchEngine widened to SearchEngine | MultiCollectionSearchEngine — both satisfy tool duck types
 - [Phase 15-multi-collection-search-mcp-integration]: @qdrant/js-client-rest must be added explicitly to mcp-server and cli packages (not inherited from vector-store)
 - [Phase 16]: DependencyGraph.getNeighborFiles is sync (string[]) but SearchEngineConfig expects async (Promise<string[]>) — server.ts wraps with Promise.resolve() adapter rather than modifying DependencyGraph
+- [Phase 18]: Score bucketing uses floor(rr \* 10) with rr >= 1.0 clamped to bucket 9 — inclusive upper bound for perfect MRR scores
+- [Phase 18]: analyticsRouter uses listRuns(1000) for aggregation queries — pragmatic limit for local single-user tool
 
 ### Pending Todos
 
@@ -84,10 +94,10 @@ None.
 
 ### Blockers/Concerns
 
-- INDX-13 spike is GO/NO-GO gate — if spike fails, INDX-10/11/12 descope and milestone pivots
+None — v1.1 complete.
 
 ## Session Continuity
 
-Last session: 2026-04-15T16:45:00.000Z
-Stopped at: Phase 17 complete — ready for Phase 18 (Dashboard Analytics)
-Resume file: .planning/phases/18-dashboard-analytics/ (not yet created)
+Last session: 2026-04-16T00:00:00.000Z
+Stopped at: Phase 18 complete — v1.1 milestone shipped
+Resume file: Plan next milestone (v1.2) when ready
