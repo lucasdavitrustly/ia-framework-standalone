@@ -14,8 +14,13 @@ export default function Layout() {
         </div>
         <nav className="flex-1 py-4 space-y-1 px-2">
           <NavLink to="/" label="Overview" />
+          <NavLink to="/rag/search" label="Search" />
+          <div className="pl-4">
+            <NavLink to="/rag/search/history" label="History" />
+          </div>
           <NavLink to="/tokens" label="Token Usage" />
           <NavLink to="/benchmarks" label="Benchmarks" />
+          <NavLink to="/analytics" label="Analytics" />
           <NavLink to="/config" label="Config" />
         </nav>
       </aside>

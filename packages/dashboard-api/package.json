@@ -30,6 +30,9 @@
     "@ia-framework/observability": "workspace:*",
     "@ia-framework/retrieval": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
+    "@qdrant/js-client-rest": "^1.13.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "better-sqlite3": "^12.8.0",
     "chokidar": "^4.0.0",
     "hono": "^4.12.9"
   },
@@ -37,7 +40,7 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "vitest": "^4.1.2",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.2"
   }
 }

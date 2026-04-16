@@ -57,11 +57,11 @@ AI that actually understands the codebase — better context means better code o
 - [ ] Separate Qdrant collections per indexing strategy (AST vs LLM)
 - [ ] CLI strategy selection: AST (tree-sitter) or LLM (Ollama) at index time
 - [ ] CLI interactive Ollama model selection when configured model is missing
-- [ ] MCP search tools (`search_codebase`, `search_codebase_hybrid`) query both collections
-- [ ] MCP search results tagged with source strategy (ast/llm) and unified ranking
-- [ ] Dashboard search area: query input, ranked results with inline scores and match type
-- [ ] Dashboard per-search metrics panel: tokens, latency, chunk count, score distribution
-- [ ] Dashboard A/B strategy comparison: same query against AST vs LLM collections
+- [x] MCP search tools (`search_codebase`, `search_codebase_hybrid`) query both collections — Validated in Phase 15: multi-collection-search-mcp-integration
+- [x] MCP search results tagged with source strategy (ast/llm) and unified ranking — Validated in Phase 15: multi-collection-search-mcp-integration
+- [x] Dashboard search area: query input, ranked results with inline scores and match type — Validated in Phase 16: dashboard-search
+- [x] Dashboard per-search metrics panel: tokens, latency, chunk count, score distribution — Validated in Phase 16: dashboard-search
+- [x] Dashboard A/B strategy comparison: same query against AST vs LLM collections — Validated in Phase 16: dashboard-search
 - [ ] Dashboard search history: persistent log with metrics, filterable, comparable
 - [ ] Dashboard analytics suite: chunk stats, embedding stats, retrieval stats (aggregate)
 - [ ] Better dashboard visualization: improved charts, filters, time ranges
@@ -110,24 +110,24 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 
 ## Key Decisions
 
-| Decision                                                    | Rationale                                                                              | Outcome                                        |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Qdrant for vector storage                                   | Mature, Docker-native, good TypeScript client, runs locally                            | ✅ Validated — v1.0                            |
-| Provider-agnostic embeddings                                | Let developers choose LLM/embedding provider (cloud or local)                          | ✅ Validated — v1.0                            |
-| Monorepo structure                                          | All components co-located, simpler dependency management                               | ✅ Validated — v1.0                            |
-| MCP + auto-context (configurable)                           | Both retrieval modes available, benchmarkable against each other                       | ✅ Validated — v1.0 (auto-context deferred v2) |
-| Clone anywhere + install script                             | No npm publish needed, simple distribution for internal tool                           | ✅ Validated — v1.0                            |
-| Standalone architecture                                     | Framework lives outside target project, GSD artifacts belong to target                 | ✅ Validated — v1.0                            |
-| AST-aware + dependency graph                                | Better retrieval than generic text chunking — understands code structure               | ✅ Validated — v1.0                            |
-| Jest for testing                                            | Widely used, good TypeScript support, team familiarity                                 | ❌ Replaced — Vitest adopted                   |
-| Vitest over Jest                                            | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API        | ✅ Validated — v1.0                            |
-| Dual-vector search                                          | Text + code embeddings per point — avoids missing ~40% of queries                      | ✅ Validated — v1.0                            |
-| Full code quality enforcement                               | Framework practices what it preaches — clean code standards                            | ✅ Validated — v1.0                            |
-| Dashboard for benchmarks                                    | Visual benchmark history more actionable than CLI output                               | ✅ Validated — v1.0                            |
-| LLM chunking model: llama3.2 (3.2B) not qwen2.5-coder (14B) | 14B model caused OOM/crashes on large files; 3.2B is 4-5x faster within latency budget | ✅ Validated — Phase 12 spike                  |
-| LLM chunking: opt-in enhancement, not AST replacement       | Mean latency ~24.6s/file → 205+ min for 500 files; AST remains the fast default path   | ✅ Validated — Phase 12 spike                  |
-| clampedPow2 numCtx auto-sizing                              | Fixed 32K KV cache wastes VRAM on small files; dynamic sizing = 4-5x memory efficiency | ✅ Validated — Phase 12 spike                  |
-| Sequential Ollama calls for determinism                     | Concurrent calls cause OOM crashes; sequential is mandatory for stable throughput      | ✅ Validated — Phase 12 spike                  |
+| Decision                                                    | Rationale                                                                                                                                                           | Outcome                                        |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Qdrant for vector storage                                   | Mature, Docker-native, good TypeScript client, runs locally                                                                                                         | ✅ Validated — v1.0                            |
+| Provider-agnostic embeddings                                | Let developers choose LLM/embedding provider (cloud or local)                                                                                                       | ✅ Validated — v1.0                            |
+| Monorepo structure                                          | All components co-located, simpler dependency management                                                                                                            | ✅ Validated — v1.0                            |
+| MCP + auto-context (configurable)                           | Both retrieval modes available, benchmarkable against each other                                                                                                    | ✅ Validated — v1.0 (auto-context deferred v2) |
+| Clone anywhere + install script                             | No npm publish needed, simple distribution for internal tool                                                                                                        | ✅ Validated — v1.0                            |
+| Standalone architecture                                     | Framework lives outside target project, GSD artifacts belong to target                                                                                              | ✅ Validated — v1.0                            |
+| AST-aware + dependency graph                                | Better retrieval than generic text chunking — understands code structure                                                                                            | ✅ Validated — v1.0                            |
+| Jest for testing                                            | Widely used, good TypeScript support, team familiarity                                                                                                              | ❌ Replaced — Vitest adopted                   |
+| Vitest over Jest                                            | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API                                                                                     | ✅ Validated — v1.0                            |
+| Dual-vector search                                          | Text + code embeddings per point — avoids missing ~40% of queries                                                                                                   | ✅ Validated — v1.0                            |
+| Full code quality enforcement                               | Framework practices what it preaches — clean code standards                                                                                                         | ✅ Validated — v1.0                            |
+| Dashboard for benchmarks                                    | Visual benchmark history more actionable than CLI output                                                                                                            | ✅ Validated — v1.0                            |
+| LLM chunking model: llama3.2 (3.2B) not qwen2.5-coder (14B) | 14B model caused OOM/crashes on large files; 3.2B is 4-5x faster within latency budget                                                                              | ✅ Validated — Phase 12 spike                  |
+| LLM chunking: opt-in enhancement, not AST replacement       | Mean latency ~24.6s/file → 205+ min for 500 files; AST remains the fast default path                                                                                | ✅ Validated — Phase 12 spike                  |
+| clampedPow2 numCtx auto-sizing                              | Fixed 32K KV cache wastes VRAM on small files; dynamic sizing = 4-5x memory efficiency                                                                              | ✅ Validated — Phase 12 spike                  |
+| DependencyGraph.getNeighborFiles sync/async mismatch        | DependencyGraph returns sync string[]; SearchEngineConfig expects async — wrapped with Promise.resolve() adapter in server.ts rather than modifying DependencyGraph | ✅ Validated — Phase 16: dashboard-search      |
 
 ## Evolution
 
@@ -150,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-10 — Phase 12 (llm-chunking-spike) complete. GO verdict: `llama3.2:latest` meets all hard criteria (latency ≤60s, 100% JSON validity, deterministic across 5 runs). LLM chunking is an opt-in enhancement layer over AST, not a replacement (~24.6s/file mean). Phases 14-15 are unblocked. Next: Phase 13 (pipeline-refactoring-&-parallel-embedding)._
+_Last updated: 2026-04-14 — Phase 16 (dashboard-search) complete. Dashboard now has a full search page at /rag/search: SearchBar with collection selector (AST/LLM/both), ranked results with file paths, scores, and inline code previews, per-query MetricsPanel (latency, chunks scanned, score distribution chart), and A/B comparison layout for side-by-side AST vs LLM ranking. Backend adds POST /api/search and GET /api/search/collections routes wired into DI. Requirements DASH-07, DASH-08, DASH-09, DASH-10 validated. Next: Phase 17 (dashboard-search-history)._

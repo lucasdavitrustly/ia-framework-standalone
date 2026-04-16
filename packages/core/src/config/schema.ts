@@ -15,11 +15,22 @@ export const VectorStoreConfigSchema = z.object({
   apiKey: z.string().optional(),
 });
 
+export const LlmConfigSchema = z.object({
+  /** Ollama model for LLM chunking (e.g. 'llama3.2:latest') — separate from embedding model */
+  model: z.string().min(1),
+  /** Ollama base URL (default: http://localhost:11434) */
+  ollamaUrl: z.string().url().default('http://localhost:11434'),
+});
+
 export const IndexingConfigSchema = z.object({
   includePatterns: z.array(z.string()),
   excludePatterns: z.array(z.string()),
   maxChunkLines: z.number().int().positive().optional(),
   respectGitignore: z.boolean().optional(),
+  /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
+  embeddingConcurrency: z.number().int().positive().optional(),
+  /** LLM chunking configuration (optional — when present, enables LLM-based chunking strategy) */
+  llm: LlmConfigSchema.optional(),
 });
 
 export const ProjectProfileSchema = z.object({

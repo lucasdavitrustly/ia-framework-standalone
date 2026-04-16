@@ -124,6 +124,129 @@ export interface ApiDbStatus {
   error?: string;
 }
 
+// Search result DTO (per D-24)
+export interface SearchResult {
+  id: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+  source: 'ast' | 'llm';
+  chunkType: string;
+  matchedVector: string;
+  content: string;
+  description?: string;
+}
+
+// Per-query metrics (per D-24)
+export interface SearchMetrics {
+  latencyMs: number;
+  chunksScanned: number;
+  resultsReturned: number;
+  scoreRange: { min: number; max: number };
+}
+
+// Search response (per D-24)
+export interface SearchResponse {
+  results: SearchResult[];
+  metrics: SearchMetrics;
+  historyId?: string;
+}
+
+// Search request body (per D-23)
+export interface SearchRequest {
+  query: string;
+  limit: number;
+  scoreThreshold: number;
+  collections: string[];
+}
+
+// Collection info (per D-25)
+export interface CollectionInfo {
+  name: string;
+  type: 'ast' | 'llm';
+  chunkCount: number;
+}
+
+// Search history types (per DASH-12, DASH-13, DASH-14)
+export interface SearchHistoryEntry {
+  id: string;
+  query: string;
+  params: { limit: number; scoreThreshold: number; collections: string[] };
+  results: SearchResult[];
+  metrics: SearchMetrics;
+  collection: string;
+  resultCount: number;
+  topScore: number;
+  latencyMs: number;
+  createdAt: string;
+}
+
+export interface SearchHistoryListResult {
+  entries: SearchHistoryEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface SearchHistoryFilters {
+  q?: string;
+  collection?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  minScore?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ReplayResponse {
+  original: { results: SearchResult[]; metrics: SearchMetrics };
+  fresh: { results: SearchResult[]; metrics: SearchMetrics };
+  warning?: string;
+}
+
+// Analytics DTOs (mirror packages/dashboard-api/src/routes/analytics-types.ts)
+export interface BenchmarkTrendPoint {
+  runId: string;
+  label?: string;
+  timestamp: string;
+  mrr: number;
+  hitAtK: number;
+  avgLatencyMs: number;
+  collectionName: string;
+  isBaseline: boolean;
+}
+
+export interface StrategyComparisonRow {
+  collectionName: string;
+  runCount: number;
+  avgMrr: number;
+  avgHitAtK: number;
+  avgLatencyMs: number;
+}
+
+export interface ScoreBucket {
+  label: string;
+  bucketStart: number;
+  bucketEnd: number;
+  count: number;
+}
+
+export interface ScoreDistributionEntry {
+  collectionName: string;
+  buckets: ScoreBucket[];
+  totalQueries: number;
+}
+
+export interface TokenBreakdownEntry {
+  strategy: string;
+  totalTokens: number;
+  avgTokensPerQuery: number;
+  totalQueries: number;
+}
+
 // Base URL — same origin via Vite proxy in dev; relative path in production
 const BASE = '';
 
@@ -149,4 +272,58 @@ export const DashboardClient = {
   getBenchmarkRun: (runId: string) => get<BenchmarkRun>(`/api/benchmarks/${runId}`),
   getIndexingStatus: () => get<ApiIndexingStatus>('/api/indexing/status'),
   getDbStatus: () => get<ApiDbStatus>('/api/db/status'),
+  getSearchCollections: () => get<CollectionInfo[]>('/api/search/collections'),
+  search: async (request: SearchRequest): Promise<SearchResponse> => {
+    const res = await fetch(`${BASE}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error(`Search error ${res.status}`);
+    return res.json() as Promise<SearchResponse>;
+  },
+  getSearchHistory: (filters?: SearchHistoryFilters) => {
+    const qs = new URLSearchParams();
+    if (filters?.q) qs.set('q', filters.q);
+    if (filters?.collection) qs.set('collection', filters.collection);
+    if (filters?.dateFrom) qs.set('dateFrom', filters.dateFrom);
+    if (filters?.dateTo) qs.set('dateTo', filters.dateTo);
+    if (filters?.minScore !== undefined) qs.set('minScore', String(filters.minScore));
+    if (filters?.sortBy) qs.set('sortBy', filters.sortBy);
+    if (filters?.sortOrder) qs.set('sortOrder', filters.sortOrder);
+    if (filters?.page !== undefined) qs.set('page', String(filters.page));
+    if (filters?.pageSize !== undefined) qs.set('pageSize', String(filters.pageSize));
+    const q = qs.toString();
+    return get<SearchHistoryListResult>(`/api/search/history${q ? `?${q}` : ''}`);
+  },
+  getSearchHistoryEntry: (id: string) => get<SearchHistoryEntry>(`/api/search/history/${id}`),
+  replaySearch: async (id: string): Promise<ReplayResponse> => {
+    const res = await fetch(`${BASE}/api/search/history/${id}/replay`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Replay error ${res.status}`);
+    return res.json() as Promise<ReplayResponse>;
+  },
+  deleteSearchHistoryEntry: async (id: string): Promise<void> => {
+    const res = await fetch(`${BASE}/api/search/history/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Delete error ${res.status}`);
+  },
+  clearSearchHistory: async (): Promise<void> => {
+    const res = await fetch(`${BASE}/api/search/history`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Clear error ${res.status}`);
+  },
+  getAnalyticsBenchmarkTrends: (limit = 50) =>
+    get<{ trends: BenchmarkTrendPoint[] }>(`/api/analytics/benchmark-trends?limit=${limit}`).then(
+      (r) => r.trends,
+    ),
+  getAnalyticsStrategyComparison: () =>
+    get<{ strategies: StrategyComparisonRow[] }>('/api/analytics/strategy-comparison').then(
+      (r) => r.strategies,
+    ),
+  getAnalyticsScoreDistribution: () =>
+    get<{ distributions: ScoreDistributionEntry[] }>('/api/analytics/score-distribution').then(
+      (r) => r.distributions,
+    ),
+  getAnalyticsTokenBreakdown: () =>
+    get<{ breakdown: TokenBreakdownEntry[] }>('/api/analytics/token-breakdown').then(
+      (r) => r.breakdown,
+    ),
 };

@@ -10,3 +10,15 @@ export {
   saveLastIndexedCommit,
 } from './incremental.js';
 export { chunkToDescription } from './chunk-description.js';
+export {
+  AstChunkingStrategy,
+  LlmChunkingStrategy,
+  LlmChunkCache,
+  isOllamaReachable,
+} from './strategies/index.js';
+export type {
+  ChunkingStrategy,
+  ChunkingConfig,
+  LlmChunkingOptions,
+  CachedChunkEntry,
+} from './strategies/index.js';

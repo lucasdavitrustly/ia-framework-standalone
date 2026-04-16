@@ -2,9 +2,14 @@ import { Command } from 'commander';
 import { join, dirname } from 'node:path';
 import { loadConfig, createLogger } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
+import { QdrantClient } from '@qdrant/js-client-rest';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
-import { SearchEngine, DependencyGraph } from '@ia-framework/retrieval';
-import type { RetrievalResult } from '@ia-framework/retrieval';
+import {
+  SearchEngine,
+  DependencyGraph,
+  MultiCollectionSearchEngine,
+} from '@ia-framework/retrieval';
+import type { CollectionEngine, RetrievalResult } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 
 export function searchCommand(): Command {
@@ -29,12 +34,7 @@ export function searchCommand(): Command {
           // config.vectorStore.host may be "qdrant" (the Docker service name), which only
           // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
           const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
-          const vectorStore = new QdrantVectorStore({
-            host: qdrantHost,
-            port: config.vectorStore.port,
-            collectionName: config.vectorStore.collectionName,
-            apiKey: config.vectorStore.apiKey,
-          });
+          const baseCollectionName = config.vectorStore.collectionName;
 
           // Set up dependency graph for search expansion (if graph.sqlite exists)
           const frameworkDir = dirname(configPath);
@@ -54,10 +54,47 @@ export function searchCommand(): Command {
             // Graph not available — search will work without expansion
           }
 
-          const searchEngine = new SearchEngine({
-            embeddingProvider,
-            vectorStore,
-            dependencyGraph,
+          // Discover active collections — convention: {base} for AST, {base}-llm for LLM
+          const qdrantClient = new QdrantClient({
+            host: qdrantHost,
+            port: config.vectorStore.port,
+            ...(config.vectorStore.apiKey ? { apiKey: config.vectorStore.apiKey } : {}),
+          });
+
+          const candidateCollections: Array<{ name: 'ast' | 'llm'; collectionName: string }> = [
+            { name: 'ast', collectionName: baseCollectionName },
+            { name: 'llm', collectionName: `${baseCollectionName}-llm` },
+          ];
+
+          const collectionEngines: CollectionEngine[] = [];
+
+          for (const candidate of candidateCollections) {
+            const { exists } = await qdrantClient.collectionExists(candidate.collectionName);
+            if (exists) {
+              const vectorStore = new QdrantVectorStore({
+                host: qdrantHost,
+                port: config.vectorStore.port,
+                collectionName: candidate.collectionName,
+                apiKey: config.vectorStore.apiKey,
+              });
+              const engine = new SearchEngine({
+                embeddingProvider,
+                vectorStore,
+                // Only wire dependency graph to AST engines — LLM chunks have empty imports/exports
+                dependencyGraph: candidate.name === 'ast' ? dependencyGraph : undefined,
+              });
+              collectionEngines.push({ name: candidate.name, engine });
+            }
+          }
+
+          if (collectionEngines.length === 0) {
+            console.error('✗ No indexed collections found. Run "ia-framework index" first.');
+            process.exit(1);
+          }
+
+          const searchEngine = new MultiCollectionSearchEngine({
+            engines: collectionEngines,
+            ...(dependencyGraph !== undefined ? { dependencyGraph } : {}),
           });
 
           const limit = parseInt(options.limit, 10);
@@ -120,8 +157,11 @@ export function searchCommand(): Command {
               : ` (${result.chunkType})`;
             const score = result.score.toFixed(3);
             const matched = result.matchedVector;
+            const source = result.source ? ` [${result.source}]` : '';
 
-            console.log(`─── ${result.relativePath}${name} [score: ${score}, matched: ${matched}]`);
+            console.log(
+              `─── ${result.relativePath}${name} [score: ${score}, matched: ${matched}]${source}`,
+            );
 
             const preview = result.content.slice(0, 400);
             const truncated = result.content.length > 400;
