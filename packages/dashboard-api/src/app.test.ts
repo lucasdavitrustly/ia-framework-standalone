@@ -89,6 +89,7 @@ function makeDeps(overrides: Partial<AppDependencies> = {}): AppDependencies {
         vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
       }),
     },
+    configPath: '/tmp/test-project.json',
     indexingState,
     frameworkDir: '/tmp/.ia-framework',
     fetchFn: mockFetch,
@@ -143,6 +144,7 @@ describe('createApp', () => {
   it('GET /api/config with no config → 503', async () => {
     deps = makeDeps({
       configWatcher: { getConfig: vi.fn().mockReturnValue(null) },
+      configPath: '/tmp/test-project.json',
     });
     const app = createApp(deps);
     const res = await app.request('/api/config');

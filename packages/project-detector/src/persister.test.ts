@@ -75,6 +75,53 @@ describe('persistProfile', () => {
   });
 });
 
+describe('persistProfile LLM config', () => {
+  it('writes indexing.llm when llmModel option is set', async () => {
+    await writeFile(configPath, JSON.stringify(minimalConfig));
+    await persistProfile(profile, configPath, { llmModel: 'gemma3:4b' });
+    const raw = await readFile(configPath, 'utf-8');
+    const saved = JSON.parse(raw);
+    expect(saved.indexing.llm.model).toBe('gemma3:4b');
+    expect(saved.indexing.llm.ollamaUrl).toBe('http://localhost:11434');
+  });
+
+  it('writes custom ollamaUrl when llmUrl option is set', async () => {
+    await writeFile(configPath, JSON.stringify(minimalConfig));
+    await persistProfile(profile, configPath, {
+      llmModel: 'llama3.2:latest',
+      llmUrl: 'http://gpu-server:11434',
+    });
+    const raw = await readFile(configPath, 'utf-8');
+    const saved = JSON.parse(raw);
+    expect(saved.indexing.llm.ollamaUrl).toBe('http://gpu-server:11434');
+  });
+
+  it('does NOT write indexing.llm when llmModel is not set', async () => {
+    await writeFile(configPath, JSON.stringify(minimalConfig));
+    await persistProfile(profile, configPath);
+    const raw = await readFile(configPath, 'utf-8');
+    const saved = JSON.parse(raw);
+    expect(saved.indexing).toBeUndefined();
+  });
+
+  it('merges llm into existing indexing config without clobbering', async () => {
+    const configWithIndexing = {
+      ...minimalConfig,
+      indexing: {
+        includePatterns: ['**/*.ts'],
+        excludePatterns: ['**/dist/**'],
+      },
+    };
+    await writeFile(configPath, JSON.stringify(configWithIndexing));
+    await persistProfile(profile, configPath, { llmModel: 'gemma3:4b' });
+    const raw = await readFile(configPath, 'utf-8');
+    const saved = JSON.parse(raw);
+    expect(saved.indexing.includePatterns).toEqual(['**/*.ts']);
+    expect(saved.indexing.excludePatterns).toEqual(['**/dist/**']);
+    expect(saved.indexing.llm.model).toBe('gemma3:4b');
+  });
+});
+
 describe('readPersistedProfile', () => {
   it('returns the profile from an existing config file', async () => {
     await writeFile(configPath, JSON.stringify({ ...minimalConfig, profile }));

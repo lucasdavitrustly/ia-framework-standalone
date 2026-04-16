@@ -6,6 +6,8 @@ export interface PersistOptions {
   embeddingProvider?: 'openai' | 'ollama' | undefined;
   embeddingModel?: string | undefined;
   embeddingDimensions?: number | undefined;
+  llmModel?: string | undefined;
+  llmUrl?: string | undefined;
 }
 
 const DEFAULT_VECTOR_STORE = {
@@ -43,7 +45,23 @@ export async function persistProfile(
       ...(options.embeddingDimensions ? { dimensions: options.embeddingDimensions } : {}),
     },
     vectorStore: existing.vectorStore ?? DEFAULT_VECTOR_STORE,
-    ...(existing.indexing ? { indexing: existing.indexing } : {}),
+    ...(existing.indexing || options.llmModel
+      ? {
+          indexing: {
+            ...existing.indexing,
+            ...(options.llmModel
+              ? {
+                  llm: {
+                    model: options.llmModel,
+                    ollamaUrl: options.llmUrl ?? 'http://localhost:11434',
+                  },
+                }
+              : existing.indexing?.llm
+                ? { llm: existing.indexing.llm }
+                : {}),
+          } as NonNullable<ProjectConfig['indexing']>,
+        }
+      : {}),
     profile,
   };
 

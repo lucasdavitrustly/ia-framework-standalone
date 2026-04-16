@@ -150,6 +150,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
     metricsStore,
     benchmarkStore,
     configWatcher,
+    configPath,
     indexingState,
     frameworkDir,
     ...(searchDeps !== undefined ? { search: searchDeps } : {}),

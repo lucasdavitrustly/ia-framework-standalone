@@ -35,6 +35,7 @@ export interface AppDependencies {
   metricsStore: MetricsStoreDep;
   benchmarkStore: BenchmarkStoreDep;
   configWatcher: { getConfig(): ProjectConfig | null };
+  configPath: string;
   indexingState: IndexingStateManager;
   frameworkDir: string;
   /** Optional fetch override for testing */
@@ -60,7 +61,10 @@ export function createApp(deps: AppDependencies): Hono {
   };
 
   const statusApp = statusRouter(statusDeps);
-  const configApp = configRouter({ configWatcher: deps.configWatcher });
+  const configApp = configRouter({
+    configWatcher: deps.configWatcher,
+    configPath: deps.configPath,
+  });
   const metricsApp = metricsRouter({ metricsStore: deps.metricsStore });
   const benchmarksApp = benchmarksRouter({ benchmarkStore: deps.benchmarkStore });
   const analyticsApp = analyticsRouter({

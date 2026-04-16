@@ -96,8 +96,14 @@ None.
 
 None — v1.1 complete.
 
+### Quick Tasks Completed
+
+| #          | Description                                                                        | Date       | Commit  | Directory                                                                                                           |
+| ---------- | ---------------------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| 260416-fkg | Add LLM chunking model config to project.json init, dashboard settings, and README | 2026-04-16 | d8badcf | [260416-fkg-add-llm-chunking-model-config-to-project](./quick/260416-fkg-add-llm-chunking-model-config-to-project/) |
+
 ## Session Continuity
 
-Last session: 2026-04-16T00:00:00.000Z
-Stopped at: Phase 18 complete — v1.1 milestone shipped
+Last activity: 2026-04-16 - Completed quick task 260416-fkg: Add LLM chunking model config to project.json init, dashboard settings, and README
+Stopped at: Quick task 260416-fkg complete
 Resume file: Plan next milestone (v1.2) when ready

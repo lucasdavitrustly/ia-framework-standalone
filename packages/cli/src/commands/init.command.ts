@@ -16,6 +16,8 @@ export function initCommand(): Command {
     .option('-f, --force', 'Overwrite existing configuration')
     .option('--embed-model <model>', 'Embedding model name')
     .option('--embed-dims <dims>', 'Embedding dimensions')
+    .option('--llm-model <model>', 'Ollama model for LLM chunking (e.g. llama3.2:latest)')
+    .option('--llm-url <url>', 'Ollama URL for LLM chunking (default: http://localhost:11434)')
     .action(
       async (
         targetPath: string,
@@ -24,6 +26,8 @@ export function initCommand(): Command {
           force?: boolean;
           embedModel?: string;
           embedDims?: string;
+          llmModel?: string;
+          llmUrl?: string;
         },
       ) => {
         const configPath =
@@ -61,6 +65,13 @@ export function initCommand(): Command {
             persistOptions.embeddingDimensions = parseInt(options.embedDims, 10);
           }
 
+          if (options.llmModel) {
+            persistOptions.llmModel = options.llmModel;
+          }
+          if (options.llmUrl) {
+            persistOptions.llmUrl = options.llmUrl;
+          }
+
           await persistProfile(profile, configPath, persistOptions);
 
           console.log('Detected profile:');
@@ -75,6 +86,10 @@ export function initCommand(): Command {
             console.log(
               `  Embed model:     ${options.embedModel}${options.embedDims ? ` (${options.embedDims}d)` : ''}`,
             );
+          }
+
+          if (options.llmModel) {
+            console.log(`  LLM chunking:    ${options.llmModel}`);
           }
 
           console.log(`\nConfig written to: ${configPath}`);

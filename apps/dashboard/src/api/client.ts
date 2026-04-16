@@ -100,7 +100,11 @@ export interface ProjectConfig {
   targetProjectPath: string;
   embedding: { provider: string; model: string };
   vectorStore: { host: string; port: number; collectionName: string };
-  indexing?: { includePatterns: string[]; excludePatterns: string[] };
+  indexing?: {
+    includePatterns: string[];
+    excludePatterns: string[];
+    llm?: { model: string; ollamaUrl?: string };
+  };
   profile?: ProjectProfile;
 }
 
@@ -259,6 +263,15 @@ async function get<T>(path: string): Promise<T> {
 export const DashboardClient = {
   getStatus: () => get<ApiStatus>('/api/status'),
   getConfig: () => get<ProjectConfig>('/api/config'),
+  updateConfig: async (patch: Partial<ProjectConfig>): Promise<ProjectConfig> => {
+    const res = await fetch(`${BASE}/api/config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`Config update error ${res.status}`);
+    return res.json() as Promise<ProjectConfig>;
+  },
   getMetrics: () => get<ApiMetrics>('/api/metrics'),
   getMetricsEvents: (params?: { limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
