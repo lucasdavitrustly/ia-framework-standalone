@@ -21,11 +21,12 @@ Your Project                  ia-framework                    OpenCode
                             └──────────────┘
 ```
 
-1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks (not arbitrary text splits), splits oversized constructs with signature-preserving context, then generates dual embeddings (text + code vectors) stored in Qdrant
-2. **Serves context via MCP** — OpenCode calls `search_codebase`, `get_file`, and `get_dependencies` tools during conversations to pull in relevant code
-3. **Expands results along the dependency graph** — search results include 1-2 hops of imported files so the AI sees the full picture
-4. **Tracks everything** — token usage, retrieval quality, indexing status, all visible in a browser dashboard
-5. **Benchmarks RAG quality** — measure Hit@K and MRR to prove the system actually helps and tune configurations
+1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks (AST strategy), or uses an LLM to generate rich prose summaries (LLM strategy). Generates dual embeddings (text + code vectors) stored in Qdrant with BM25 sparse vectors for hybrid search
+2. **Serves context via MCP** — OpenCode calls `search_codebase`, `search_codebase_hybrid`, `get_file`, and `get_dependencies` tools during conversations to pull in relevant code
+3. **Supports multi-collection search** — query AST and LLM collections simultaneously with Reciprocal Rank Fusion (RRF) merging and source tagging
+4. **Expands results along the dependency graph** — search results include 1-2 hops of imported files so the AI sees the full picture
+5. **Tracks everything** — token usage, retrieval quality, indexing status, all visible in a browser dashboard
+6. **Benchmarks RAG quality** — measure Hit@K and MRR to prove the system actually helps and tune configurations
 
 ## Architecture
 
@@ -101,18 +102,31 @@ After it completes:
 
 > Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready.
 
-## Recent Improvements
+## Recent Improvements (v1.1 — RAG Quality & Dashboard Evolution)
 
-- **Hybrid search (MRR-optimized)** — New `search_codebase_hybrid` MCP tool combines BM25 sparse vectors with dense semantic vectors and fuses results with Reciprocal Rank Fusion (RRF). Use it alongside `search_codebase` for higher recall on exact-match queries.
-- **MRR-tuned score threshold** — Default `score_threshold` lowered from 0.5 → 0.3 based on a benchmark sweep (tested 0.3/0.4/0.5/0.6); 0.3 delivers max recall at equal precision (MRR=0.50 across the range, 0.6 dropped to MRR=0.46).
-- **Prose-description embeddings** — Text vectors now embed a structured prose description of each chunk (name, type, file, signature, docstring) instead of raw source. Improves semantic search quality, especially for non-text-heavy code.
-- **Corpus generator CLI** — `ia-framework benchmark init-corpus` generates a starter benchmark corpus using an LLM to write queries from your indexed chunks — no manual editing to get started.
-- **Graceful indexing stop** — `ia-framework index-stop` signals a running index job to halt cleanly after the current batch. The dashboard Stop button does the same.
-- **Dashboard live updates** — The dashboard polls for progress every 2 seconds and automatically reflects CLI-triggered indexing — no manual refresh needed.
+### New in v1.1
+
+- **LLM-based semantic chunking** — New `--strategy llm` option for `ia-framework index` uses Ollama to generate rich prose summaries of code chunks, stored in a separate `{project}-llm` collection. Content-hash caching (SHA-256) avoids re-processing unchanged files. Use alongside AST chunking for complementary retrieval strategies.
+- **Multi-collection search** — Search across both AST and LLM collections simultaneously with Reciprocal Rank Fusion (RRF) merging. Results are tagged with their source (`ast`/`llm`) so you can see which strategy found each match.
+- **Dashboard Search page** — Interactive search directly in the dashboard with collection selector (AST/LLM/both), result list with source tags, latency metrics, score distribution charts, and an A/B comparison layout for side-by-side strategy evaluation.
+- **Dashboard Search History** — All searches are auto-persisted to SQLite. Filter by date, strategy, query text, or minimum score. Replay past searches and diff results before/after re-indexing.
+- **Dashboard Analytics** — MRR and latency trend charts over time, strategy comparison (radar/bar charts + comparison table), score distribution histograms, and token breakdown charts (indexing vs query, AST/LLM split).
+- **`ia-framework init` command** — Auto-detect your target project's tech stack (language, framework, package manager, test runner) with interactive confirmation and project.json generation.
+- **Java language support** — tree-sitter Java grammar added for AST-aware chunking of Java codebases.
+- **251+ tests** across 14 packages (up from 218), all passing with TDD.
+
+### From v1.0
+
+- **Hybrid search (MRR-optimized)** — `search_codebase_hybrid` MCP tool combines BM25 sparse vectors with dense semantic vectors via Reciprocal Rank Fusion (RRF).
+- **MRR-tuned score threshold** — Default `score_threshold` lowered from 0.5 → 0.3 based on benchmark sweep (MRR=0.50 across 0.3/0.4/0.5; 0.6 dropped to MRR=0.46).
+- **Prose-description embeddings** — Text vectors embed structured prose descriptions instead of raw source for better semantic matching.
+- **Corpus generator CLI** — `ia-framework benchmark init-corpus` generates a 30-query benchmark corpus using a local LLM.
+- **Graceful indexing stop** — `ia-framework index-stop` or dashboard Stop button halts indexing after the current batch.
+- **Dashboard live updates** — Polls for progress every 2 seconds during CLI-triggered indexing.
 - **Multi-schema PostgreSQL indexing** — `db index` supports databases with multiple schemas.
-- **Embedding model switching** — Switch models at any time with `--model`; dimension discovery and collection migration are handled automatically.
-- **Qwen3 embedding support** — `qwen3-embedding:0.6b`, `1.7b`, and `4b` variants are recognized with correct dimensions (1024d, 2048d, 2560d).
-- **32KB+ file support** — tree-sitter upgrade removes the previous file size limit for large source files.
+- **Embedding model switching** — Switch models at any time with `--model`; dimension discovery and collection migration handled automatically.
+- **Qwen3 embedding support** — `qwen3-embedding:0.6b`, `1.7b`, and `4b` variants recognized with correct dimensions.
+- **32KB+ file support** — tree-sitter upgrade removes the previous file size limit.
 
 ---
 
@@ -131,7 +145,7 @@ pnpm install
 pnpm build
 
 # Verify everything works
-pnpm test        # 218 tests across 13 packages
+pnpm test        # 251+ tests across 14 packages
 pnpm typecheck   # Type-check all packages
 ```
 
@@ -306,11 +320,14 @@ docker compose up -d dashboard
 
 Open http://localhost:3000 to see:
 
-- **Overview** — Qdrant health, indexed chunks, token usage, benchmark scores — includes a **"Start Indexing"** button to trigger the initial (or a fresh) index run
-- **Config** — Detected project profile, current configuration
+- **Overview** — Qdrant health, indexed chunks, token usage, benchmark scores, database status — includes a **"Start Indexing"** button to trigger the initial (or a fresh) index run
+- **Config** — Detected project profile, current configuration (live-synced via file watcher)
 - **Token Usage** — Daily token consumption charts, per-query breakdown
 - **Benchmarks** — Hit@K and MRR trends over time
 - **Indexing** — Trigger re-indexing, view progress
+- **Search** — Interactive codebase search with collection selector (AST/LLM/both), source-tagged results, latency metrics, score distribution charts, and A/B comparison layout for strategy evaluation
+- **Search History** — Auto-persisted search log with filtering (date, strategy, query text, min score) and replay/diff for before/after comparison
+- **Analytics** — MRR and latency trends, strategy comparison (radar/bar charts + table), score distribution histograms, token breakdown charts (indexing vs query, AST/LLM split)
 
 ### Step 10: Inject RAG Guidance (Optional)
 
@@ -340,14 +357,22 @@ ia-framework hello
 Verify the CLI is installed and working. Prints available commands and the dashboard URL. Run this after install to confirm everything is set up.
 
 ```bash
+ia-framework init [options]
+  --config <path>    Path to project.json
+```
+
+Auto-detect your target project's tech stack (language, framework, package manager, test runner, build commands). Presents an interactive confirmation and saves the detected profile to `project.json`.
+
+```bash
 ia-framework index [options]
+  --strategy <type>  Chunking strategy: "ast" (default) or "llm"
   --force            Re-index all files (skip incremental detection)
   --model <name>     Override embedding model for this run (auto-pulls if not installed,
                      auto-discovers dimensions, detects collection mismatches)
   --config <path>    Path to project.json
 ```
 
-Indexes your target project into Qdrant using AST-aware chunking. Subsequent runs are incremental — only files changed since the last indexed git commit are re-processed. Use `--force` to re-index everything.
+Indexes your target project into Qdrant. With `--strategy ast` (default), uses tree-sitter AST-aware chunking. With `--strategy llm`, uses Ollama to generate rich prose summaries stored in a separate `{project}-llm` collection with content-hash caching. Subsequent runs are incremental — only files changed since the last indexed git commit are re-processed. Use `--force` to re-index everything.
 
 ```bash
 ia-framework index-stop [options]
@@ -889,7 +914,7 @@ pnpm lint           # ESLint + Prettier
 | `@ia-framework/vector-store`     | 8     | Qdrant dual-vector storage                          |
 | `@ia-framework/indexer`          | 17    | File walker, incremental indexing, context sources  |
 | `@ia-framework/retrieval`        | 24    | Search engine, dependency graph, hop expansion      |
-| `@ia-framework/mcp-server`       | 17    | 5 MCP tools via stdio transport                     |
+| `@ia-framework/mcp-server`       | 17    | 6 MCP tools via stdio transport                     |
 | `@ia-framework/observability`    | 27    | Token counting, metrics SQLite store                |
 | `@ia-framework/benchmark`        | 19    | Hit@K, MRR, benchmark store, comparison             |
 | `@ia-framework/project-detector` | 19    | Language, framework, package manager detection      |
