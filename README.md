@@ -106,7 +106,7 @@ After it completes:
 
 ### New in v1.1
 
-- **LLM-based semantic chunking** — New `--strategy llm` option for `ia-framework index` uses Ollama to generate rich prose summaries of code chunks, stored in a separate `{project}-llm` collection. Content-hash caching (SHA-256) avoids re-processing unchanged files. Use alongside AST chunking for complementary retrieval strategies.
+- **LLM-based semantic chunking** — New `--strategy llm` option for `ia-framework index` uses Ollama to generate rich prose summaries of code chunks, stored in a separate `{project}-llm` collection. Content-hash caching (SHA-256) avoids re-processing unchanged files. Use alongside AST chunking for complementary retrieval strategies. The chunking model can be pre-configured via `init --llm-model` or in project.json's `indexing.llm.model`.
 - **Multi-collection search** — Search across both AST and LLM collections simultaneously with Reciprocal Rank Fusion (RRF) merging. Results are tagged with their source (`ast`/`llm`) so you can see which strategy found each match.
 - **Dashboard Search page** — Interactive search directly in the dashboard with collection selector (AST/LLM/both), result list with source tags, latency metrics, score distribution charts, and an A/B comparison layout for side-by-side strategy evaluation.
 - **Dashboard Search History** — All searches are auto-persisted to SQLite. Filter by date, strategy, query text, or minimum score. Replay past searches and diff results before/after re-indexing.
@@ -231,7 +231,11 @@ mkdir -p .ia-framework
       "**/coverage/**",
       "**/__pycache__/**"
     ],
-    "respectGitignore": true
+    "respectGitignore": true,
+    "llm": {
+      "model": "llama3.2:latest",
+      "ollamaUrl": "http://localhost:11434"
+    }
   }
 }
 ```
@@ -359,6 +363,8 @@ Verify the CLI is installed and working. Prints available commands and the dashb
 ```bash
 ia-framework init [options]
   --config <path>    Path to project.json
+  --llm-model <model>  Ollama model for LLM chunking (e.g. llama3.2:latest)
+  --llm-url <url>      Ollama URL for LLM chunking (default: http://localhost:11434)
 ```
 
 Auto-detect your target project's tech stack (language, framework, package manager, test runner, build commands). Presents an interactive confirmation and saves the detected profile to `project.json`.
@@ -683,7 +689,11 @@ The main config file is `.ia-framework/project.json`:
     "includePatterns": ["**/*.ts", "**/*.py"],
     "excludePatterns": ["**/node_modules/**"],
     "respectGitignore": true,
-    "maxChunkLines": 200
+    "maxChunkLines": 200,
+    "llm": {
+      "model": "llama3.2:latest",
+      "ollamaUrl": "http://localhost:11434"
+    }
   },
   "retrieval": {
     "mode": "mcp-only", // "mcp-only", "auto-context" (v2), "combined" (v2)
