@@ -224,10 +224,16 @@ Browse available models: https://ollama.com/search
           // config.vectorStore.host may be "qdrant" (the Docker service name), which only
           // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
           const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
+
+          // Route collection name based on strategy BEFORE creating vectorStore (D-06, D-08, RETR-07)
+          const baseCollectionName = config.vectorStore.collectionName;
+          const collectionName =
+            options.strategy === 'llm' ? `${baseCollectionName}-llm` : baseCollectionName;
+
           const vectorStore = new QdrantVectorStore({
             host: qdrantHost,
             port: config.vectorStore.port,
-            collectionName: config.vectorStore.collectionName,
+            collectionName,
             apiKey: config.vectorStore.apiKey,
           });
 
@@ -290,11 +296,6 @@ Browse available models: https://ollama.com/search
           const pipeline = new IndexingPipeline();
           const BAR_WIDTH = 20;
 
-          // Route collection name based on strategy (D-06, D-08, RETR-07)
-          const baseCollectionName = config.vectorStore.collectionName;
-          const collectionName =
-            options.strategy === 'llm' ? `${baseCollectionName}-llm` : baseCollectionName;
-
           // LLM strategy setup: Ollama verification, model management, strategy creation
           let chunkingStrategy: ChunkingStrategy | undefined;
           let chunkingModel = '';
@@ -333,19 +334,12 @@ Browse available models: https://ollama.com/search
               }
             }
 
-            // d. Create LlmChunkingStrategy with per-file progress callback (D-18)
+            // d. Create LlmChunkingStrategy (D-18)
             const cachePath = join(frameworkDir, 'llm-chunk-cache.json');
             const llmStrategy = new LlmChunkingStrategy({
               model: chunkingModel,
               ollamaUrl,
               cachePath,
-              onFileProgress: (fileName: string, fileIndex: number, totalFiles: number) => {
-                const pct = Math.round((fileIndex / totalFiles) * 100);
-                const filled = Math.round((pct / 100) * BAR_WIDTH);
-                const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
-                const line = `  [${bar}] ${String(pct).padStart(3)}%  chunking  [${fileIndex}/${totalFiles}] ${fileName}`;
-                process.stdout.write(`\r\x1b[2K${line}`);
-              },
             });
             await llmStrategy.loadCache();
             chunkingStrategy = llmStrategy;

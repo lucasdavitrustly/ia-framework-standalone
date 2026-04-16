@@ -22,8 +22,6 @@ export interface LlmChunkingOptions {
   ollamaUrl?: string;
   /** Path to the LLM chunk cache JSON file */
   cachePath: string;
-  /** Optional per-file progress callback for CLI display */
-  onFileProgress?: (fileName: string, fileIndex: number, totalFiles: number) => void;
 }
 
 /** Extension → language mapping for CodeChunk.language field */
@@ -103,13 +101,11 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
   private readonly model: string;
   private readonly ollamaUrl: string | undefined;
   private readonly cache: LlmChunkCache;
-  private readonly onFileProgress?: LlmChunkingOptions['onFileProgress'];
 
   constructor(options: LlmChunkingOptions) {
     this.model = options.model;
     this.ollamaUrl = options.ollamaUrl;
     this.cache = new LlmChunkCache(options.cachePath);
-    this.onFileProgress = options.onFileProgress;
   }
 
   /**
