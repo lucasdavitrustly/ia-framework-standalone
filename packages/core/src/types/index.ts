@@ -128,6 +128,8 @@ export interface IndexingConfig {
   respectGitignore?: boolean | undefined;
   /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
   embeddingConcurrency?: number | undefined;
+  /** LLM chunking configuration (optional — model and Ollama URL for LLM-based chunking strategy) */
+  llm?: { model: string; ollamaUrl: string } | undefined;
 }
 
 /**

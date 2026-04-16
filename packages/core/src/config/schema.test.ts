@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { IndexingConfigSchema } from './schema.js';
+import { IndexingConfigSchema, LlmConfigSchema } from './schema.js';
 
 describe('IndexingConfigSchema — embeddingConcurrency', () => {
   const validBase = {
@@ -36,5 +36,50 @@ describe('IndexingConfigSchema — embeddingConcurrency', () => {
   it('accepts valid config without embeddingConcurrency (backward compatible)', () => {
     const result = IndexingConfigSchema.parse(validBase);
     expect(result.embeddingConcurrency).toBeUndefined();
+  });
+});
+
+describe('LlmConfigSchema', () => {
+  it('accepts valid LLM config with model and ollamaUrl', () => {
+    const result = LlmConfigSchema.parse({
+      model: 'llama3.2:latest',
+      ollamaUrl: 'http://localhost:11434',
+    });
+    expect(result.model).toBe('llama3.2:latest');
+    expect(result.ollamaUrl).toBe('http://localhost:11434');
+  });
+
+  it('defaults ollamaUrl to http://localhost:11434 when omitted', () => {
+    const result = LlmConfigSchema.parse({ model: 'llama3.2:latest' });
+    expect(result.ollamaUrl).toBe('http://localhost:11434');
+  });
+
+  it('requires model field', () => {
+    expect(() => LlmConfigSchema.parse({})).toThrow();
+  });
+
+  it('rejects empty model string', () => {
+    expect(() => LlmConfigSchema.parse({ model: '' })).toThrow();
+  });
+});
+
+describe('IndexingConfigSchema — llm section', () => {
+  const validBase = {
+    includePatterns: ['**/*.ts'],
+    excludePatterns: ['node_modules/**'],
+  };
+
+  it('accepts IndexingConfigSchema with llm section', () => {
+    const result = IndexingConfigSchema.parse({
+      ...validBase,
+      llm: { model: 'llama3.2:latest', ollamaUrl: 'http://localhost:11434' },
+    });
+    expect(result.llm).toBeDefined();
+    expect(result.llm!.model).toBe('llama3.2:latest');
+  });
+
+  it('accepts IndexingConfigSchema without llm section (backward compatible)', () => {
+    const result = IndexingConfigSchema.parse(validBase);
+    expect(result.llm).toBeUndefined();
   });
 });

@@ -1,0 +1,920 @@
+{
+  "model": "llama3.2:latest",
+  "modelInfo": {
+    "parameterSize": "3.2B",
+    "contextLength": 131072
+  },
+  "timestamp": "2026-04-10T14:26:00.532Z",
+  "latencyRecords": [
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryReject.java",
+      "relativePath": "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryReject.java",
+      "lineCount": 50,
+      "sizeCategory": "small",
+      "totalDurationMs": 4484.069375,
+      "promptTokens": 706,
+      "outputTokens": 47,
+      "tokensPerSec": 55.79339177108654,
+      "usedWindowing": false,
+      "windowCount": 1
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryFailover.java",
+      "relativePath": "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryFailover.java",
+      "lineCount": 51,
+      "sizeCategory": "small",
+      "totalDurationMs": 3086.049166,
+      "promptTokens": 729,
+      "outputTokens": 62,
+      "tokensPerSec": 54.069755496216814,
+      "usedWindowing": false,
+      "windowCount": 1
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/process/ProcessReaderImplTest.java",
+      "relativePath": "adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/process/ProcessReaderImplTest.java",
+      "lineCount": 199,
+      "sizeCategory": "medium",
+      "totalDurationMs": 46788.555209,
+      "promptTokens": 1965,
+      "outputTokens": 1185,
+      "tokensPerSec": 50.854291104021755,
+      "usedWindowing": false,
+      "windowCount": 1
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/payment-gateway-server/src/test/acceptance/java/com/paywithmybank/paypro/config/ContextInitializer.java",
+      "relativePath": "payment-gateway-server/src/test/acceptance/java/com/paywithmybank/paypro/config/ContextInitializer.java",
+      "lineCount": 197,
+      "sizeCategory": "medium",
+      "totalDurationMs": 5853.063208,
+      "promptTokens": 2732,
+      "outputTokens": 38,
+      "tokensPerSec": 51.90335928867353,
+      "usedWindowing": false,
+      "windowCount": 1
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/returns/ReturnEntriesHandlerTest.java",
+      "relativePath": "adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/returns/ReturnEntriesHandlerTest.java",
+      "lineCount": 499,
+      "sizeCategory": "large",
+      "totalDurationMs": 37660.3035,
+      "promptTokens": 6403,
+      "outputTokens": 614,
+      "tokensPerSec": 43.319595559321016,
+      "usedWindowing": false,
+      "windowCount": 1
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/EntryCore.java",
+      "relativePath": "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/EntryCore.java",
+      "lineCount": 536,
+      "sizeCategory": "large",
+      "totalDurationMs": 49681.238791,
+      "promptTokens": 5139,
+      "outputTokens": 1077,
+      "tokensPerSec": 44.712828209690784,
+      "usedWindowing": false,
+      "windowCount": 1
+    }
+  ],
+  "determinismResults": [
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryReject.java",
+      "relativePath": "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryReject.java",
+      "runCount": 5,
+      "isIdentical": true,
+      "boundaries": [
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            }
+          ]
+        ]
+      ],
+      "diffs": []
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/process/ProcessReaderImplTest.java",
+      "relativePath": "adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/process/ProcessReaderImplTest.java",
+      "runCount": 5,
+      "isIdentical": true,
+      "boundaries": [
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            },
+            {
+              "startLine": 24,
+              "endLine": 27
+            },
+            {
+              "startLine": 28,
+              "endLine": 30
+            },
+            {
+              "startLine": 33,
+              "endLine": 44
+            },
+            {
+              "startLine": 47,
+              "endLine": 54
+            },
+            {
+              "startLine": 56,
+              "endLine": 57
+            },
+            {
+              "startLine": 59,
+              "endLine": 64
+            },
+            {
+              "startLine": 66,
+              "endLine": 69
+            },
+            {
+              "startLine": 71,
+              "endLine": 72
+            },
+            {
+              "startLine": 74,
+              "endLine": 75
+            },
+            {
+              "startLine": 77,
+              "endLine": 80
+            },
+            {
+              "startLine": 82,
+              "endLine": 83
+            },
+            {
+              "startLine": 85,
+              "endLine": 86
+            },
+            {
+              "startLine": 88,
+              "endLine": 89
+            },
+            {
+              "startLine": 91,
+              "endLine": 92
+            },
+            {
+              "startLine": 93,
+              "endLine": 94
+            },
+            {
+              "startLine": 96,
+              "endLine": 97
+            },
+            {
+              "startLine": 99,
+              "endLine": 100
+            },
+            {
+              "startLine": 102,
+              "endLine": 103
+            },
+            {
+              "startLine": 105,
+              "endLine": 106
+            },
+            {
+              "startLine": 108,
+              "endLine": 109
+            },
+            {
+              "startLine": 111,
+              "endLine": 112
+            },
+            {
+              "startLine": 114,
+              "endLine": 115
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            },
+            {
+              "startLine": 24,
+              "endLine": 27
+            },
+            {
+              "startLine": 28,
+              "endLine": 30
+            },
+            {
+              "startLine": 33,
+              "endLine": 44
+            },
+            {
+              "startLine": 47,
+              "endLine": 54
+            },
+            {
+              "startLine": 56,
+              "endLine": 57
+            },
+            {
+              "startLine": 59,
+              "endLine": 64
+            },
+            {
+              "startLine": 66,
+              "endLine": 69
+            },
+            {
+              "startLine": 71,
+              "endLine": 72
+            },
+            {
+              "startLine": 74,
+              "endLine": 75
+            },
+            {
+              "startLine": 77,
+              "endLine": 80
+            },
+            {
+              "startLine": 82,
+              "endLine": 83
+            },
+            {
+              "startLine": 85,
+              "endLine": 86
+            },
+            {
+              "startLine": 88,
+              "endLine": 89
+            },
+            {
+              "startLine": 91,
+              "endLine": 92
+            },
+            {
+              "startLine": 93,
+              "endLine": 94
+            },
+            {
+              "startLine": 96,
+              "endLine": 97
+            },
+            {
+              "startLine": 99,
+              "endLine": 100
+            },
+            {
+              "startLine": 102,
+              "endLine": 103
+            },
+            {
+              "startLine": 105,
+              "endLine": 106
+            },
+            {
+              "startLine": 108,
+              "endLine": 109
+            },
+            {
+              "startLine": 111,
+              "endLine": 112
+            },
+            {
+              "startLine": 114,
+              "endLine": 115
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            },
+            {
+              "startLine": 24,
+              "endLine": 27
+            },
+            {
+              "startLine": 28,
+              "endLine": 30
+            },
+            {
+              "startLine": 33,
+              "endLine": 44
+            },
+            {
+              "startLine": 47,
+              "endLine": 54
+            },
+            {
+              "startLine": 56,
+              "endLine": 57
+            },
+            {
+              "startLine": 59,
+              "endLine": 64
+            },
+            {
+              "startLine": 66,
+              "endLine": 69
+            },
+            {
+              "startLine": 71,
+              "endLine": 72
+            },
+            {
+              "startLine": 74,
+              "endLine": 75
+            },
+            {
+              "startLine": 77,
+              "endLine": 80
+            },
+            {
+              "startLine": 82,
+              "endLine": 83
+            },
+            {
+              "startLine": 85,
+              "endLine": 86
+            },
+            {
+              "startLine": 88,
+              "endLine": 89
+            },
+            {
+              "startLine": 91,
+              "endLine": 92
+            },
+            {
+              "startLine": 93,
+              "endLine": 94
+            },
+            {
+              "startLine": 96,
+              "endLine": 97
+            },
+            {
+              "startLine": 99,
+              "endLine": 100
+            },
+            {
+              "startLine": 102,
+              "endLine": 103
+            },
+            {
+              "startLine": 105,
+              "endLine": 106
+            },
+            {
+              "startLine": 108,
+              "endLine": 109
+            },
+            {
+              "startLine": 111,
+              "endLine": 112
+            },
+            {
+              "startLine": 114,
+              "endLine": 115
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            },
+            {
+              "startLine": 24,
+              "endLine": 27
+            },
+            {
+              "startLine": 28,
+              "endLine": 30
+            },
+            {
+              "startLine": 33,
+              "endLine": 44
+            },
+            {
+              "startLine": 47,
+              "endLine": 54
+            },
+            {
+              "startLine": 56,
+              "endLine": 57
+            },
+            {
+              "startLine": 59,
+              "endLine": 64
+            },
+            {
+              "startLine": 66,
+              "endLine": 69
+            },
+            {
+              "startLine": 71,
+              "endLine": 72
+            },
+            {
+              "startLine": 74,
+              "endLine": 75
+            },
+            {
+              "startLine": 77,
+              "endLine": 80
+            },
+            {
+              "startLine": 82,
+              "endLine": 83
+            },
+            {
+              "startLine": 85,
+              "endLine": 86
+            },
+            {
+              "startLine": 88,
+              "endLine": 89
+            },
+            {
+              "startLine": 91,
+              "endLine": 92
+            },
+            {
+              "startLine": 93,
+              "endLine": 94
+            },
+            {
+              "startLine": 96,
+              "endLine": 97
+            },
+            {
+              "startLine": 99,
+              "endLine": 100
+            },
+            {
+              "startLine": 102,
+              "endLine": 103
+            },
+            {
+              "startLine": 105,
+              "endLine": 106
+            },
+            {
+              "startLine": 108,
+              "endLine": 109
+            },
+            {
+              "startLine": 111,
+              "endLine": 112
+            },
+            {
+              "startLine": 114,
+              "endLine": 115
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 20
+            },
+            {
+              "startLine": 24,
+              "endLine": 27
+            },
+            {
+              "startLine": 28,
+              "endLine": 30
+            },
+            {
+              "startLine": 33,
+              "endLine": 44
+            },
+            {
+              "startLine": 47,
+              "endLine": 54
+            },
+            {
+              "startLine": 56,
+              "endLine": 57
+            },
+            {
+              "startLine": 59,
+              "endLine": 64
+            },
+            {
+              "startLine": 66,
+              "endLine": 69
+            },
+            {
+              "startLine": 71,
+              "endLine": 72
+            },
+            {
+              "startLine": 74,
+              "endLine": 75
+            },
+            {
+              "startLine": 77,
+              "endLine": 80
+            },
+            {
+              "startLine": 82,
+              "endLine": 83
+            },
+            {
+              "startLine": 85,
+              "endLine": 86
+            },
+            {
+              "startLine": 88,
+              "endLine": 89
+            },
+            {
+              "startLine": 91,
+              "endLine": 92
+            },
+            {
+              "startLine": 93,
+              "endLine": 94
+            },
+            {
+              "startLine": 96,
+              "endLine": 97
+            },
+            {
+              "startLine": 99,
+              "endLine": 100
+            },
+            {
+              "startLine": 102,
+              "endLine": 103
+            },
+            {
+              "startLine": 105,
+              "endLine": 106
+            },
+            {
+              "startLine": 108,
+              "endLine": 109
+            },
+            {
+              "startLine": 111,
+              "endLine": 112
+            },
+            {
+              "startLine": 114,
+              "endLine": 115
+            }
+          ]
+        ]
+      ],
+      "diffs": []
+    },
+    {
+      "filePath": "/users/rafael.goncalves/paywithmybank/source/core/payment-gateway/adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/returns/ReturnEntriesHandlerTest.java",
+      "relativePath": "adapters/payment-gateway-generic-ach/src/test/java/com/paywithmybank/paypro/generic/ach/application/command/returns/ReturnEntriesHandlerTest.java",
+      "runCount": 5,
+      "isIdentical": true,
+      "boundaries": [
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 26
+            },
+            {
+              "startLine": 27,
+              "endLine": 53
+            },
+            {
+              "startLine": 54,
+              "endLine": 55
+            },
+            {
+              "startLine": 56,
+              "endLine": 80
+            },
+            {
+              "startLine": 81,
+              "endLine": 83
+            },
+            {
+              "startLine": 84,
+              "endLine": 112
+            },
+            {
+              "startLine": 113,
+              "endLine": 121
+            },
+            {
+              "startLine": 122,
+              "endLine": 137
+            },
+            {
+              "startLine": 138,
+              "endLine": 149
+            },
+            {
+              "startLine": 150,
+              "endLine": 159
+            },
+            {
+              "startLine": 160,
+              "endLine": 177
+            },
+            {
+              "startLine": 178,
+              "endLine": 200
+            },
+            {
+              "startLine": 201,
+              "endLine": 217
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 26
+            },
+            {
+              "startLine": 27,
+              "endLine": 53
+            },
+            {
+              "startLine": 54,
+              "endLine": 55
+            },
+            {
+              "startLine": 56,
+              "endLine": 80
+            },
+            {
+              "startLine": 81,
+              "endLine": 83
+            },
+            {
+              "startLine": 84,
+              "endLine": 112
+            },
+            {
+              "startLine": 113,
+              "endLine": 121
+            },
+            {
+              "startLine": 122,
+              "endLine": 137
+            },
+            {
+              "startLine": 138,
+              "endLine": 149
+            },
+            {
+              "startLine": 150,
+              "endLine": 159
+            },
+            {
+              "startLine": 160,
+              "endLine": 177
+            },
+            {
+              "startLine": 178,
+              "endLine": 200
+            },
+            {
+              "startLine": 201,
+              "endLine": 217
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 26
+            },
+            {
+              "startLine": 27,
+              "endLine": 53
+            },
+            {
+              "startLine": 54,
+              "endLine": 55
+            },
+            {
+              "startLine": 56,
+              "endLine": 80
+            },
+            {
+              "startLine": 81,
+              "endLine": 83
+            },
+            {
+              "startLine": 84,
+              "endLine": 112
+            },
+            {
+              "startLine": 113,
+              "endLine": 121
+            },
+            {
+              "startLine": 122,
+              "endLine": 137
+            },
+            {
+              "startLine": 138,
+              "endLine": 149
+            },
+            {
+              "startLine": 150,
+              "endLine": 159
+            },
+            {
+              "startLine": 160,
+              "endLine": 177
+            },
+            {
+              "startLine": 178,
+              "endLine": 200
+            },
+            {
+              "startLine": 201,
+              "endLine": 217
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 26
+            },
+            {
+              "startLine": 27,
+              "endLine": 53
+            },
+            {
+              "startLine": 54,
+              "endLine": 55
+            },
+            {
+              "startLine": 56,
+              "endLine": 80
+            },
+            {
+              "startLine": 81,
+              "endLine": 83
+            },
+            {
+              "startLine": 84,
+              "endLine": 112
+            },
+            {
+              "startLine": 113,
+              "endLine": 121
+            },
+            {
+              "startLine": 122,
+              "endLine": 137
+            },
+            {
+              "startLine": 138,
+              "endLine": 149
+            },
+            {
+              "startLine": 150,
+              "endLine": 159
+            },
+            {
+              "startLine": 160,
+              "endLine": 177
+            },
+            {
+              "startLine": 178,
+              "endLine": 200
+            },
+            {
+              "startLine": 201,
+              "endLine": 217
+            }
+          ]
+        ],
+        [
+          [
+            {
+              "startLine": 1,
+              "endLine": 26
+            },
+            {
+              "startLine": 27,
+              "endLine": 53
+            },
+            {
+              "startLine": 54,
+              "endLine": 55
+            },
+            {
+              "startLine": 56,
+              "endLine": 80
+            },
+            {
+              "startLine": 81,
+              "endLine": 83
+            },
+            {
+              "startLine": 84,
+              "endLine": 112
+            },
+            {
+              "startLine": 113,
+              "endLine": 121
+            },
+            {
+              "startLine": 122,
+              "endLine": 137
+            },
+            {
+              "startLine": 138,
+              "endLine": 149
+            },
+            {
+              "startLine": 150,
+              "endLine": 159
+            },
+            {
+              "startLine": 160,
+              "endLine": 177
+            },
+            {
+              "startLine": 178,
+              "endLine": 200
+            },
+            {
+              "startLine": 201,
+              "endLine": 217
+            }
+          ]
+        ]
+      ],
+      "diffs": []
+    }
+  ],
+  "jsonValidityRate": 1,
+  "totalFilesProcessed": 6,
+  "failedFiles": [],
+  "projectedIndexingTime": {
+    "files500": "~205 minutes",
+    "files2000": "~820 minutes"
+  },
+  "verdict": "GO",
+  "verdictReason": "Latency: PASS (max 49681ms, ceiling 60000ms) | JSON validity: PASS (100.0%, required 100%) | Determinism: PASS (3/3 files identical across 5 runs)"
+}

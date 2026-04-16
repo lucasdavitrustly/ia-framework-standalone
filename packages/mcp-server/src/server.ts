@@ -5,11 +5,11 @@ import { registerGetFileTool } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
 import { registerQueryDatabaseTool } from './tools/query-database.js';
 import { registerIndexDatabaseSchemaTool } from './tools/index-database-schema.js';
-import type { SearchEngine } from '@ia-framework/retrieval';
+import type { SearchEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 
 export interface McpServerConfig {
-  searchEngine: SearchEngine;
+  searchEngine: SearchEngine | MultiCollectionSearchEngine;
   serverName?: string | undefined;
   serverVersion?: string | undefined;
   /** Optional observability — if provided, every search_codebase call is logged */

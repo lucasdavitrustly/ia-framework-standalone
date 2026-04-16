@@ -23,9 +23,10 @@ export type ToolOutput = CallToolResult;
  * Same format as search_codebase for consistency.
  */
 function formatResult(result: RetrievalResult, index: number): string {
+  const sourceTag = result.source ? ` [${result.source}]` : '';
   const header = result.name
-    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(3)} [hybrid]`
-    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(3)} [hybrid]`;
+    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(3)} [hybrid]${sourceTag}`
+    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(3)} [hybrid]${sourceTag}`;
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
   return `${header}\n${codeBlock}`;

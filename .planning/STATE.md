@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: RAG Quality & Dashboard Evolution
-status: unknown
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-04-10T18:09:58.558Z"
+status: complete
+stopped_at: Phase 18 complete — v1.1 milestone shipped
+last_updated: '2026-04-16T00:00:00.000Z'
 progress:
   total_phases: 7
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 7
+  total_plans: 17
+  completed_plans: 19
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 13 — pipeline-refactoring-parallel-embedding
+**Current focus:** v1.1 complete — ready to plan v1.2 or next milestone
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
+Phase: 18 (dashboard-analytics) — COMPLETE
+Milestone: v1.1 — SHIPPED 2026-04-16
 
 ## v1.0 Performance Summary
 
@@ -34,6 +34,14 @@ Plan: Not started
 - Total plans completed: 34
 - Average duration: ~14 min/plan
 - Total execution time: ~7 hours
+
+## v1.1 Performance Summary
+
+**Velocity (v1.1):**
+
+- Total phases: 7
+- Total plans completed: 17 (+ 2 context/summary files)
+- Phases: 12 → 13 → 14 → 15 → 16 → 17 → 18
 
 ## Accumulated Context
 
@@ -64,6 +72,21 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 13]: Used p-queue for concurrent batch embedding with provider-aware defaults (ollama:3, openai:10)
 - [Phase 13]: Retry-once-then-skip pattern for embedding batch resilience with skippedChunks tracking
 - [Phase 13]: No ETA in progress display — stage bar, counts, stage name only per D-05
+- [Phase 14]: Extended CodeChunk with optional description field and semantic chunkType to support LLM-generated descriptions
+- [Phase 14]: Added LlmConfigSchema (model + ollamaUrl) to indexing config for LLM chunking provider settings
+- [Phase 14]: Pipeline uses description ?? chunkToDescription(c) pattern — LLM descriptions take priority, fallback to heuristic
+- [Phase 14]: Content-hash cache key is SHA-256(fileContent):modelName for per-model cache isolation
+- [Phase 14]: LlmChunkingStrategy uses retry-once on Ollama failure per file (D-19)
+- [Phase 14]: Collection routing uses suffix pattern ({project}-llm) to keep AST and LLM chunks separate
+- [Phase 14]: Ollama verification is fail-fast at CLI level before any LLM chunking work
+- [Phase 14]: Default chunking model is llama3.2:latest when not configured in project.json
+- [Phase 15]: Over-fetch with limit\*2 per engine before RRF ensures good candidates without ballooning API calls
+- [Phase 15]: searchWithExpansion routes through this.getFile() (all collections) rather than individual engine.searchWithExpansion to avoid single-collection bias in graph expansion
+- [Phase 15-multi-collection-search-mcp-integration]: McpServerConfig.searchEngine widened to SearchEngine | MultiCollectionSearchEngine — both satisfy tool duck types
+- [Phase 15-multi-collection-search-mcp-integration]: @qdrant/js-client-rest must be added explicitly to mcp-server and cli packages (not inherited from vector-store)
+- [Phase 16]: DependencyGraph.getNeighborFiles is sync (string[]) but SearchEngineConfig expects async (Promise<string[]>) — server.ts wraps with Promise.resolve() adapter rather than modifying DependencyGraph
+- [Phase 18]: Score bucketing uses floor(rr \* 10) with rr >= 1.0 clamped to bucket 9 — inclusive upper bound for perfect MRR scores
+- [Phase 18]: analyticsRouter uses listRuns(1000) for aggregation queries — pragmatic limit for local single-user tool
 
 ### Pending Todos
 
@@ -71,10 +94,10 @@ None.
 
 ### Blockers/Concerns
 
-- INDX-13 spike is GO/NO-GO gate — if spike fails, INDX-10/11/12 descope and milestone pivots
+None — v1.1 complete.
 
 ## Session Continuity
 
-Last session: 2026-04-10T18:05:34.843Z
-Stopped at: Completed 13-03-PLAN.md
-Resume file: None
+Last session: 2026-04-16T00:00:00.000Z
+Stopped at: Phase 18 complete — v1.1 milestone shipped
+Resume file: Plan next milestone (v1.2) when ready

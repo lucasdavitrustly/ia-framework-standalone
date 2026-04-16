@@ -97,9 +97,9 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 ### Indexing
 
 - [ ] **INDX-13**: Time-boxed spike validates LLM chunking quality, latency, and Ollama structured output feasibility — GO/NO-GO gate before all other v1.1 work proceeds
-- [ ] **INDX-10**: Developer can index codebase using LLM-based semantic chunking via Ollama as alternative to AST
-- [ ] **INDX-11**: LLM chunking identifies semantic boundaries and generates prose summaries per chunk in a single pass
-- [ ] **INDX-12**: LLM chunking results are cached by file content hash to avoid re-processing unchanged files
+- [x] **INDX-10**: Developer can index codebase using LLM-based semantic chunking via Ollama as alternative to AST
+- [x] **INDX-11**: LLM chunking identifies semantic boundaries and generates prose summaries per chunk in a single pass
+- [x] **INDX-12**: LLM chunking results are cached by file content hash to avoid re-processing unchanged files
 - [x] **INDX-14**: Embedding pipeline processes multiple batches concurrently via p-queue
 - [x] **INDX-15**: Embedding concurrency adapts to provider type (Ollama: 2-3, OpenAI: 5-10)
 - [x] **INDX-16**: Indexing pipeline emits progress events (phase, completed, total) for CLI and dashboard consumption
@@ -107,17 +107,17 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 
 ### Retrieval
 
-- [ ] **RETR-07**: Each indexing strategy stores chunks in a separate Qdrant collection ({project}-ast, {project}-llm)
-- [ ] **RETR-08**: MCP search tools (search_codebase, search_codebase_hybrid) query all active collections
-- [ ] **RETR-09**: Cross-collection results are merged via Reciprocal Rank Fusion for fair ranking
-- [ ] **RETR-10**: Each search result is tagged with source strategy (ast/llm) for provenance
-- [ ] **RETR-11**: Search works normally when only one collection exists (backward compatible)
+- [x] **RETR-07**: Each indexing strategy stores chunks in a separate Qdrant collection ({project}-ast, {project}-llm)
+- [x] **RETR-08**: MCP search tools (search_codebase, search_codebase_hybrid) query all active collections
+- [x] **RETR-09**: Cross-collection results are merged via Reciprocal Rank Fusion for fair ranking
+- [x] **RETR-10**: Each search result is tagged with source strategy (ast/llm) for provenance
+- [x] **RETR-11**: Search works normally when only one collection exists (backward compatible)
 
 ### CLI
 
-- [ ] **CLIE-01**: Developer can select indexing strategy via `--strategy ast|llm` flag at index time
-- [ ] **CLIE-02**: CLI verifies configured Ollama model is available before starting LLM indexing
-- [ ] **CLIE-03**: CLI prompts interactive Ollama model selection when configured model is missing
+- [x] **CLIE-01**: Developer can select indexing strategy via `--strategy ast|llm` flag at index time
+- [x] **CLIE-02**: CLI verifies configured Ollama model is available before starting LLM indexing
+- [x] **CLIE-03**: CLI prompts interactive Ollama model selection when configured model is missing
 
 ### Dashboard
 
@@ -255,17 +255,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INDX-15     | Phase 13 | Complete |
 | INDX-16     | Phase 13 | Complete |
 | INDX-17     | Phase 13 | Complete |
-| INDX-10     | Phase 14 | Pending |
-| INDX-11     | Phase 14 | Pending |
-| INDX-12     | Phase 14 | Pending |
-| CLIE-01     | Phase 14 | Pending |
-| CLIE-02     | Phase 14 | Pending |
-| CLIE-03     | Phase 14 | Pending |
-| RETR-07     | Phase 14 | Pending |
-| RETR-08     | Phase 15 | Pending |
-| RETR-09     | Phase 15 | Pending |
-| RETR-10     | Phase 15 | Pending |
-| RETR-11     | Phase 15 | Pending |
+| INDX-10     | Phase 14 | Complete |
+| INDX-11     | Phase 14 | Complete |
+| INDX-12     | Phase 14 | Complete |
+| CLIE-01     | Phase 14 | Complete |
+| CLIE-02     | Phase 14 | Complete |
+| CLIE-03     | Phase 14 | Complete |
+| RETR-07     | Phase 14 | Complete |
+| RETR-08     | Phase 15 | Complete |
+| RETR-09     | Phase 15 | Complete |
+| RETR-10     | Phase 15 | Complete |
+| RETR-11     | Phase 15 | Complete |
 | DASH-07     | Phase 16 | Pending |
 | DASH-08     | Phase 16 | Pending |
 | DASH-09     | Phase 16 | Pending |

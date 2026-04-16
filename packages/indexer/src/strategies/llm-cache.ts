@@ -1,0 +1,75 @@
+/**
+ * Content-hash LLM chunk cache.
+ * Stores LLM chunking results keyed by content hash + model name to avoid
+ * re-processing unchanged files through Ollama.
+ *
+ * Cache key = sha256(fileContent) + ':' + modelName (per D-13).
+ * Cache path is .ia-framework/llm-chunk-cache.json (per D-11).
+ */
+
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
+export interface CachedChunkEntry {
+  startLine: number;
+  endLine: number;
+  summary: string;
+}
+
+export class LlmChunkCache {
+  private cache: Map<string, CachedChunkEntry[]>;
+  private readonly cachePath: string;
+
+  constructor(cachePath: string) {
+    this.cachePath = cachePath;
+    this.cache = new Map();
+  }
+
+  /**
+   * Build cache key from content hash and model name.
+   * Different models produce different chunk boundaries — cache must be per-model.
+   */
+  private makeKey(contentHash: string, model: string): string {
+    return `${contentHash}:${model}`;
+  }
+
+  /**
+   * Get cached chunks for a given content hash + model.
+   * Returns undefined on cache miss.
+   */
+  get(contentHash: string, model: string): CachedChunkEntry[] | undefined {
+    return this.cache.get(this.makeKey(contentHash, model));
+  }
+
+  /**
+   * Store chunks in cache for a given content hash + model.
+   */
+  set(contentHash: string, model: string, chunks: CachedChunkEntry[]): void {
+    this.cache.set(this.makeKey(contentHash, model), chunks);
+  }
+
+  /**
+   * Load cache from JSON file.
+   * Resilient to missing or corrupt files — returns empty cache on error.
+   */
+  async load(): Promise<void> {
+    try {
+      const content = await readFile(this.cachePath, 'utf-8');
+      const parsed = JSON.parse(content) as Record<string, CachedChunkEntry[]>;
+      this.cache = new Map(Object.entries(parsed));
+    } catch {
+      // Missing file or corrupt JSON — start with empty cache
+      this.cache = new Map();
+    }
+  }
+
+  /**
+   * Save cache to JSON file.
+   * Creates parent directories if needed.
+   */
+  async save(): Promise<void> {
+    const obj: Record<string, CachedChunkEntry[]> = Object.fromEntries(this.cache);
+    await mkdir(dirname(this.cachePath), { recursive: true });
+    await writeFile(this.cachePath, JSON.stringify(obj, null, 2), 'utf-8');
+  }
+}

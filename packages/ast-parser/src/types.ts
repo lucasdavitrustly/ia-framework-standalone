@@ -12,7 +12,7 @@ export interface CodeChunk {
   /** Programming language */
   language: string;
   /** Type of code construct */
-  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other';
+  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other' | 'semantic';
   /** Name of the construct (function/class/type name), if applicable */
   name?: string | undefined;
   /** Raw source code text of this chunk */
@@ -27,6 +27,8 @@ export interface CodeChunk {
   exports: string[];
   /** Parent construct name when this chunk is a sub-chunk (e.g., method split from a class, or fragment of an oversized function) */
   parentName?: string | undefined;
+  /** LLM-generated prose summary of this chunk, used for text embedding when available (per D-04) */
+  description?: string | undefined;
 }
 
 /**

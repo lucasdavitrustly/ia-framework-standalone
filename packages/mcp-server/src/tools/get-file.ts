@@ -35,9 +35,10 @@ export async function getFileHandler(engine: Engine, input: GetFileInput): Promi
   const sorted = [...results].sort((a, b) => a.startLine - b.startLine);
 
   const sections = sorted.map((r) => {
+    const sourceTag = r.source ? ` [${r.source}]` : '';
     const header = r.name
-      ? `### ${r.chunkType}: ${r.name} (lines ${r.startLine}-${r.endLine})`
-      : `### Lines ${r.startLine}-${r.endLine}`;
+      ? `### ${r.chunkType}: ${r.name} (lines ${r.startLine}-${r.endLine})${sourceTag}`
+      : `### Lines ${r.startLine}-${r.endLine}${sourceTag}`;
     return `${header}\n\`\`\`${r.language}\n${r.content}\n\`\`\``;
   });
 

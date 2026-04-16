@@ -37,9 +37,10 @@ export interface ObservabilityConfig {
  * Format a single RetrievalResult as a markdown section.
  */
 function formatResult(result: RetrievalResult, index: number): string {
+  const sourceTag = result.source ? ` [${result.source}]` : '';
   const header = result.name
-    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]`
-    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(2)} [${result.matchedVector}]`;
+    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}`
+    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}`;
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
 
