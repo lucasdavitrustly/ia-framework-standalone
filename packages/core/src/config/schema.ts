@@ -23,8 +23,8 @@ export const LlmConfigSchema = z.object({
 });
 
 export const IndexingConfigSchema = z.object({
-  includePatterns: z.array(z.string()),
-  excludePatterns: z.array(z.string()),
+  includePatterns: z.array(z.string()).default([]),
+  excludePatterns: z.array(z.string()).default([]),
   maxChunkLines: z.number().int().positive().optional(),
   respectGitignore: z.boolean().optional(),
   /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
