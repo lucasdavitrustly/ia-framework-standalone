@@ -200,6 +200,12 @@ describe('IndexingPipeline', () => {
     expect(callOrder).toContain('upsertBatch');
   });
 
+  it('Test 8a: walkFiles with empty includePatterns treats it as unset (matches all source files)', async () => {
+    const files = await walkFiles({ projectPath: tmpDir, includePatterns: [] });
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.some((f) => f.endsWith('.ts'))).toBe(true);
+  });
+
   it('Test 8: walkFiles returns only source files, not .json or .md', async () => {
     // Add non-source files to tmp dir
     await writeFile(join(tmpDir, 'config.json'), '{}');

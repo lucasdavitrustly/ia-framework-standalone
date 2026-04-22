@@ -7,33 +7,69 @@ const execFileAsync = promisify(execFile);
 
 interface IndexingState {
   lastIndexedCommit: string;
+  indexedAt: string;
+  embeddingModel?: string;
+}
+
+/** New format: map of collection name → state */
+type IndexingStateMap = Record<string, IndexingState>;
+
+/** Legacy format (single object with collectionName field) */
+interface LegacyIndexingState {
+  lastIndexedCommit: string;
   collectionName: string;
   indexedAt: string;
   embeddingModel?: string;
 }
 
+const DEFAULT_COLLECTION = 'codebase';
+
 function getStatePath(frameworkDir: string): string {
   return join(frameworkDir, 'indexing-state.json');
 }
 
-export async function getLastIndexedCommit(frameworkDir: string): Promise<string | null> {
+/**
+ * Read the state file, migrating from legacy format if needed.
+ */
+async function readStateMap(frameworkDir: string): Promise<IndexingStateMap> {
   try {
     const content = await readFile(getStatePath(frameworkDir), 'utf-8');
-    const state = JSON.parse(content) as IndexingState;
-    return state.lastIndexedCommit;
+    const parsed = JSON.parse(content) as IndexingStateMap | LegacyIndexingState;
+
+    // Detect legacy format: has `lastIndexedCommit` at top level
+    if ('lastIndexedCommit' in parsed && typeof parsed.lastIndexedCommit === 'string') {
+      const legacy = parsed as LegacyIndexingState;
+      const key = legacy.collectionName || DEFAULT_COLLECTION;
+      const entry: IndexingState = {
+        lastIndexedCommit: legacy.lastIndexedCommit,
+        indexedAt: legacy.indexedAt,
+      };
+      if (legacy.embeddingModel) {
+        entry.embeddingModel = legacy.embeddingModel;
+      }
+      return { [key]: entry };
+    }
+
+    return parsed as IndexingStateMap;
   } catch {
-    return null;
+    return {};
   }
 }
 
-export async function getLastEmbeddingModel(frameworkDir: string): Promise<string | null> {
-  try {
-    const content = await readFile(getStatePath(frameworkDir), 'utf-8');
-    const state = JSON.parse(content) as IndexingState;
-    return state.embeddingModel ?? null;
-  } catch {
-    return null;
-  }
+export async function getLastIndexedCommit(
+  frameworkDir: string,
+  collectionName: string,
+): Promise<string | null> {
+  const map = await readStateMap(frameworkDir);
+  return map[collectionName]?.lastIndexedCommit ?? null;
+}
+
+export async function getLastEmbeddingModel(
+  frameworkDir: string,
+  collectionName: string,
+): Promise<string | null> {
+  const map = await readStateMap(frameworkDir);
+  return map[collectionName]?.embeddingModel ?? null;
 }
 
 export async function saveLastIndexedCommit(
@@ -43,13 +79,13 @@ export async function saveLastIndexedCommit(
   embeddingModel?: string,
 ): Promise<void> {
   await mkdir(frameworkDir, { recursive: true });
-  const state: IndexingState = {
+  const map = await readStateMap(frameworkDir);
+  map[collectionName] = {
     lastIndexedCommit: commit,
-    collectionName,
     indexedAt: new Date().toISOString(),
     ...(embeddingModel ? { embeddingModel } : {}),
   };
-  await writeFile(getStatePath(frameworkDir), JSON.stringify(state, null, 2), 'utf-8');
+  await writeFile(getStatePath(frameworkDir), JSON.stringify(map, null, 2), 'utf-8');
 }
 
 export async function getCurrentCommit(projectPath: string): Promise<string | null> {
@@ -61,10 +97,7 @@ export async function getCurrentCommit(projectPath: string): Promise<string | nu
   }
 }
 
-export async function getChangedFiles(
-  projectPath: string,
-  sinceCommit: string,
-): Promise<string[]> {
+export async function getChangedFiles(projectPath: string, sinceCommit: string): Promise<string[]> {
   try {
     const { stdout } = await execFileAsync(
       'git',
