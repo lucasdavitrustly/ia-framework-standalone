@@ -383,7 +383,14 @@ Plans:
 3. Each LLM-chunked collection stores prompt version hash in metadata; developer can identify which prompt version produced any chunk
 4. Running chunk validation on an LLM-indexed collection reports any source lines that are missing or duplicated across chunks
 5. Score filtering applies different default thresholds per search mode: dense (~0.3 cosine), hybrid (~0.0 rank-based), multi-collection RRF (~0.0 rank-based)
-   **Plans**: TBD
+   **Plans**: 4 plans
+
+Plans:
+
+- [ ] 19-01-PLAN.md — Mode-aware score filtering fix (FILT-01, BASE-01)
+- [ ] 19-02-PLAN.md — Reproducible baseline benchmark with 3-run averaging (BASE-02)
+- [ ] 19-03-PLAN.md — Prompt versioning system (BASE-03)
+- [ ] 19-04-PLAN.md — Chunk overlap/gap validation (BASE-04)
 
 ### Phase 20: Prompt Engineering
 
