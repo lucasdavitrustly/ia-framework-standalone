@@ -365,9 +365,9 @@ Plans:
 
 **Milestone Goal:** Push MRR past 0.7 through LLM chunking prompt engineering, smarter score-based filtering, and dashboard tuning visibility — all benchmark-driven.
 
-- [x] **Phase 19: Baseline & Score Filtering** - Reproducible MRR baseline, RRF threshold bug fix, prompt versioning, chunk validation, mode-aware score filtering (completed 2026-04-22)
-- [x] **Phase 20: Prompt Engineering** - Better chunk boundaries and summaries via few-shot examples, class grouping, intent-focused summaries, quality scoring, A/B comparison (completed 2026-04-23)
-- [x] **Phase 21: Dashboard Tuning Views** - Chunk inspector, score distributions, filtering effectiveness, prompt version comparison (completed 2026-04-23)
+- [ ] **Phase 19: Baseline & Score Filtering** - Reproducible MRR baseline, RRF threshold bug fix, prompt versioning, chunk validation, mode-aware score filtering
+- [ ] **Phase 20: Prompt Engineering** - Better chunk boundaries and summaries via few-shot examples, class grouping, intent-focused summaries, quality scoring, A/B comparison
+- [ ] **Phase 21: Dashboard Tuning Views** - Chunk inspector, score distributions, filtering effectiveness, prompt version comparison
 
 ## Phase Details
 
@@ -383,14 +383,7 @@ Plans:
 3. Each LLM-chunked collection stores prompt version hash in metadata; developer can identify which prompt version produced any chunk
 4. Running chunk validation on an LLM-indexed collection reports any source lines that are missing or duplicated across chunks
 5. Score filtering applies different default thresholds per search mode: dense (~0.3 cosine), hybrid (~0.0 rank-based), multi-collection RRF (~0.0 rank-based)
-   **Plans**: 4 plans
-
-Plans:
-
-- [x] 19-01-PLAN.md — Mode-aware score filtering fix (FILT-01, BASE-01)
-- [x] 19-02-PLAN.md — Reproducible baseline benchmark with 3-run averaging (BASE-02)
-- [x] 19-03-PLAN.md — Prompt versioning system (BASE-03)
-- [x] 19-04-PLAN.md — Chunk overlap/gap validation (BASE-04)
+   **Plans**: TBD
 
 ### Phase 20: Prompt Engineering
 
@@ -404,13 +397,7 @@ Plans:
 3. Chunk summaries describe what code does using domain terminology (not "this function takes X and returns Y" syntax descriptions)
 4. Each chunk summary receives a heuristic quality score; developer can identify low-quality summaries for diagnosis
 5. Developer can run CLI comparison of two prompt versions on the same corpus and see per-query MRR deltas side-by-side
-   **Plans**: 3 plans
-
-Plans:
-
-- [x] 20-01-PLAN.md — Prompt enhancement: few-shot examples, class grouping rules, intent-focused summary guidance
-- [x] 20-02-PLAN.md — Heuristic quality scoring for chunk summaries with Qdrant metadata storage
-- [x] 20-03-PLAN.md — CLI A/B prompt comparison with per-query MRR deltas
+   **Plans**: TBD
 
 ### Phase 21: Dashboard Tuning Views
 
@@ -423,13 +410,7 @@ Plans:
 2. Dashboard shows histogram of top-50 candidate scores with threshold boundary line clearly marking returned vs filtered zones
 3. Dashboard shows returned results alongside near-miss filtered results (just below threshold) with score comparison for diagnosis
 4. Dashboard links benchmark MRR results to prompt versions so developer can see which prompt version produced which MRR score over time
-   **Plans**: 3 plans
-
-Plans:
-
-- [x] 21-01-PLAN.md — Backend APIs + data model: tuning routes (chunks, scores), analytics prompt version extension, BenchmarkRunner metadata capture (TDD)
-- [x] 21-02-PLAN.md — Frontend: TuningPage shell, Chunk Inspector (DTUN-01), Prompt Version chart with detail panel (DTUN-04)
-- [x] 21-03-PLAN.md — Frontend: Score Distribution histogram with draggable threshold (DTUN-02), Near-miss diagnosis panel (DTUN-03)
+   **Plans**: TBD
 
 ## Progress
 
@@ -456,6 +437,6 @@ Phases execute in numeric order: 19 → 20 → 21
 | 16. Dashboard Search                          | v1.1      | 3/3            | Complete    | 2026-04-14 |
 | 17. Dashboard Search History                  | v1.1      | 2/2            | Complete    | 2026-04-15 |
 | 18. Dashboard Analytics                       | v1.1      | 2/2            | Complete    | 2026-04-15 |
-| 19. Baseline & Score Filtering                | v1.2      | 4/4            | Complete    | 2026-04-23 |
-| 20. Prompt Engineering                        | v1.2      | 3/3            | Complete    | 2026-04-23 |
-| 21. Dashboard Tuning Views                    | v1.2      | 3/3 | Complete    | 2026-04-23 |
+| 19. Baseline & Score Filtering                | v1.2      | 0/?            | Not started | -          |
+| 20. Prompt Engineering                        | v1.2      | 0/?            | Not started | -          |
+| 21. Dashboard Tuning Views                    | v1.2      | 0/?            | Not started | -          |

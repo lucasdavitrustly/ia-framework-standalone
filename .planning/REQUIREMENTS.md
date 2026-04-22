@@ -325,7 +325,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 - v1.1 mapped to phases: 28/28 ✓
 - v1.1 unmapped: 0
 
+### v1.2 Traceability
+
+| Requirement | Phase    | Status  |
+| ----------- | -------- | ------- |
+| BASE-01     | Phase 19 | Pending |
+| BASE-02     | Phase 19 | Pending |
+| BASE-03     | Phase 19 | Pending |
+| BASE-04     | Phase 19 | Pending |
+| FILT-01     | Phase 19 | Pending |
+| PRMT-01     | Phase 20 | Pending |
+| PRMT-02     | Phase 20 | Pending |
+| PRMT-03     | Phase 20 | Pending |
+| PRMT-04     | Phase 20 | Pending |
+| PRMT-05     | Phase 20 | Pending |
+| DTUN-01     | Phase 21 | Pending |
+| DTUN-02     | Phase 21 | Pending |
+| DTUN-03     | Phase 21 | Pending |
+| DTUN-04     | Phase 21 | Pending |
+
+**Coverage:**
+
+- v1.2 requirements: 14 total
+- v1.2 mapped to phases: 14/14 ✓
+- v1.2 unmapped: 0
+
 ---
 
 _Requirements defined: 2026-03-31_
-_Last updated: 2026-04-09 — v1.1 roadmap created, all 28 requirements mapped to Phases 12-18_
+_Last updated: 2026-04-22 — v1.2 roadmap created, all 14 requirements mapped to Phases 19-21_
