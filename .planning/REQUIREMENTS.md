@@ -142,29 +142,29 @@ Requirements for milestone v1.2 — Chunking Tuning & Retrieval Quality.
 
 ### Baseline & Infrastructure
 
-- [x] **BASE-01**: RRF and hybrid search use mode-appropriate score thresholds instead of applying cosine threshold (0.3) to rank-based fusion scores
-- [x] **BASE-02**: Reproducible MRR baseline benchmark is established before any tuning changes (temperature=0, 3x averaged runs, frozen corpus)
-- [x] **BASE-03**: Prompt versioning system tracks which prompt version produced which chunks via hash-based version metadata stored with collection
-- [x] **BASE-04**: Chunk overlap/gap detection validates LLM chunks cover every source line exactly once and reports violations
+- [ ] **BASE-01**: RRF and hybrid search use mode-appropriate score thresholds instead of applying cosine threshold (0.3) to rank-based fusion scores
+- [ ] **BASE-02**: Reproducible MRR baseline benchmark is established before any tuning changes (temperature=0, 3x averaged runs, frozen corpus)
+- [ ] **BASE-03**: Prompt versioning system tracks which prompt version produced which chunks via hash-based version metadata stored with collection
+- [ ] **BASE-04**: Chunk overlap/gap detection validates LLM chunks cover every source line exactly once and reports violations
 
 ### Prompt Engineering
 
-- [x] **PRMT-01**: Chunking prompt includes few-shot examples of good and bad boundary detection for improved chunk accuracy
-- [x] **PRMT-02**: Chunking prompt enforces class grouping rules (keep methods with class) and minimum chunk size constraints (5+ lines)
-- [x] **PRMT-03**: Chunking prompt produces intent-focused summaries with domain terminology instead of syntax descriptions
-- [x] **PRMT-04**: Summary quality scoring provides heuristic quality score per chunk summary (length check, no raw code tokens, contains purpose verbs)
-- [x] **PRMT-05**: Developer can compare two prompt versions on the same benchmark corpus via CLI with side-by-side MRR deltas and per-query breakdown
+- [ ] **PRMT-01**: Chunking prompt includes few-shot examples of good and bad boundary detection for improved chunk accuracy
+- [ ] **PRMT-02**: Chunking prompt enforces class grouping rules (keep methods with class) and minimum chunk size constraints (5+ lines)
+- [ ] **PRMT-03**: Chunking prompt produces intent-focused summaries with domain terminology instead of syntax descriptions
+- [ ] **PRMT-04**: Summary quality scoring provides heuristic quality score per chunk summary (length check, no raw code tokens, contains purpose verbs)
+- [ ] **PRMT-05**: Developer can compare two prompt versions on the same benchmark corpus via CLI with side-by-side MRR deltas and per-query breakdown
 
 ### Score Filtering
 
-- [x] **FILT-01**: Score filtering uses mode-aware thresholds with appropriate defaults: dense (cosine ~0.3), hybrid (rank-based ~0.0), multi-collection RRF (~0.0)
+- [ ] **FILT-01**: Score filtering uses mode-aware thresholds with appropriate defaults: dense (cosine ~0.3), hybrid (rank-based ~0.0), multi-collection RRF (~0.0)
 
 ### Dashboard Tuning
 
-- [x] **DTUN-01**: Dashboard chunking inspector shows individual chunks with line boundaries, prose summaries, and quality scores alongside syntax-highlighted source code
-- [x] **DTUN-02**: Dashboard score distribution view shows histogram of all candidate scores (top-50) with threshold boundary line and returned/filtered zones
-- [x] **DTUN-03**: Dashboard filtering effectiveness view shows returned results vs filtered near-miss results (just below threshold) with score comparison
-- [x] **DTUN-04**: Dashboard prompt version comparison links benchmark MRR results to prompt versions for quality attribution over time
+- [ ] **DTUN-01**: Dashboard chunking inspector shows individual chunks with line boundaries, prose summaries, and quality scores alongside syntax-highlighted source code
+- [ ] **DTUN-02**: Dashboard score distribution view shows histogram of all candidate scores (top-50) with threshold boundary line and returned/filtered zones
+- [ ] **DTUN-03**: Dashboard filtering effectiveness view shows returned results vs filtered near-miss results (just below threshold) with score comparison
+- [ ] **DTUN-04**: Dashboard prompt version comparison links benchmark MRR results to prompt versions for quality attribution over time
 
 ### Future (Deferred from v1.2)
 
@@ -325,32 +325,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 - v1.1 mapped to phases: 28/28 ✓
 - v1.1 unmapped: 0
 
-### v1.2 Traceability
-
-| Requirement | Phase    | Status  |
-| ----------- | -------- | ------- |
-| BASE-01     | Phase 19 | Complete |
-| BASE-02     | Phase 19 | Complete |
-| BASE-03     | Phase 19 | Complete |
-| BASE-04     | Phase 19 | Complete |
-| FILT-01     | Phase 19 | Complete |
-| PRMT-01     | Phase 20 | Complete |
-| PRMT-02     | Phase 20 | Complete |
-| PRMT-03     | Phase 20 | Complete |
-| PRMT-04     | Phase 20 | Complete |
-| PRMT-05     | Phase 20 | Complete |
-| DTUN-01     | Phase 21 | Complete |
-| DTUN-02     | Phase 21 | Complete |
-| DTUN-03     | Phase 21 | Complete |
-| DTUN-04     | Phase 21 | Complete |
-
-**Coverage:**
-
-- v1.2 requirements: 14 total
-- v1.2 mapped to phases: 14/14 ✓
-- v1.2 unmapped: 0
-
 ---
 
 _Requirements defined: 2026-03-31_
-_Last updated: 2026-04-22 — v1.2 roadmap created, all 14 requirements mapped to Phases 19-21_
+_Last updated: 2026-04-09 — v1.1 roadmap created, all 28 requirements mapped to Phases 12-18_
