@@ -55,7 +55,10 @@ export function statusCommand(): Command {
         // Show last indexed commit vs current
         console.log('');
         try {
-          const lastCommit = await getLastIndexedCommit(frameworkDir);
+          const lastCommit = await getLastIndexedCommit(
+            frameworkDir,
+            config.vectorStore.collectionName,
+          );
           const currentCommit = await getCurrentCommit(config.targetProjectPath);
 
           if (lastCommit) {

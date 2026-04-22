@@ -243,7 +243,7 @@ Browse available models: https://ollama.com/search
             if (collectionInfo.pointCount > 0) {
               const existingDimensions = collectionInfo.vectorDimensions.text;
               const configuredDimensions = embeddingProvider.dimensions;
-              const lastModel = await getLastEmbeddingModel(frameworkDir);
+              const lastModel = await getLastEmbeddingModel(frameworkDir, collectionName);
               const currentModel = config.embedding.model;
 
               const dimensionMismatch = existingDimensions !== configuredDimensions;

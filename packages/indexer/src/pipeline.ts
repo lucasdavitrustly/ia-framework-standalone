@@ -189,7 +189,7 @@ export class IndexingPipeline {
     });
 
     if (incremental) {
-      const lastCommit = await getLastIndexedCommit(frameworkDir);
+      const lastCommit = await getLastIndexedCommit(frameworkDir, collectionName);
       if (lastCommit) {
         const changedFiles = await getChangedFiles(targetProjectPath, lastCommit);
         // Delete old chunks for changed files before re-indexing

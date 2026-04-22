@@ -9,17 +9,39 @@ void access; // imported for potential future use
 // CJS interop: ignore is a CommonJS module with a callable default export
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const createIgnore = require('ignore') as { default?: (() => Ignore); (): Ignore };
+const createIgnore = require('ignore') as { default?: () => Ignore; (): Ignore };
 
 const SKIP_DIRS = [
-  'node_modules', '.git', 'dist', 'build', '.next', 'out',
-  '__pycache__', '.venv', 'venv', 'target', '.turbo', 'coverage',
-  '.cache', '.parcel-cache', 'storybook-static',
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  'out',
+  '__pycache__',
+  '.venv',
+  'venv',
+  'target',
+  '.turbo',
+  'coverage',
+  '.cache',
+  '.parcel-cache',
+  'storybook-static',
 ];
 
 const SOURCE_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.go', '.rs', '.java', '.kt', '.rb',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.py',
+  '.go',
+  '.rs',
+  '.java',
+  '.kt',
+  '.rb',
 ]);
 
 const DEFAULT_EXCLUDE = [
@@ -51,12 +73,7 @@ async function loadGitignore(projectPath: string): Promise<Ignore | null> {
 }
 
 export async function walkFiles(options: WalkOptions): Promise<string[]> {
-  const {
-    projectPath,
-    includePatterns,
-    excludePatterns = [],
-    respectGitignore = true,
-  } = options;
+  const { projectPath, includePatterns, excludePatterns = [], respectGitignore = true } = options;
 
   // Build gitignore filter
   const gitignoreFilter = respectGitignore ? await loadGitignore(projectPath) : null;
@@ -68,8 +85,8 @@ export async function walkFiles(options: WalkOptions): Promise<string[]> {
     ...excludePatterns,
   ];
 
-  // Default include: all source files
-  const patterns = includePatterns ?? ['**/*'];
+  // Default include: all source files (treat empty array same as unset)
+  const patterns = includePatterns?.length ? includePatterns : ['**/*'];
 
   const files = await glob(patterns, {
     cwd: projectPath,
@@ -80,7 +97,7 @@ export async function walkFiles(options: WalkOptions): Promise<string[]> {
 
   return files.filter((file) => {
     // Must be a recognized source extension (unless explicit include patterns given)
-    if (!includePatterns) {
+    if (!includePatterns?.length) {
       const ext = extname(file).toLowerCase();
       if (!SOURCE_EXTENSIONS.has(ext)) return false;
     }
