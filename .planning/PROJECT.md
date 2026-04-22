@@ -57,12 +57,12 @@ AI that actually understands the codebase — better context means better code o
 
 <!-- v1.2 scope — building toward these. -->
 
-- [x] LLM chunking prompt engineering for better chunk boundary detection _(Validated in Phase 20: prompt-engineering)_
-- [x] LLM chunking prompt engineering for higher-quality prose summaries _(Validated in Phase 20: prompt-engineering)_
+- [ ] LLM chunking prompt engineering for better chunk boundary detection
+- [ ] LLM chunking prompt engineering for higher-quality prose summaries
 - [ ] Score-based result filtering improvements to reduce search noise
 - [ ] Benchmark-driven validation of every tuning change (before/after MRR)
-  - [x] Dashboard tuning views for chunking quality visibility _(Validated in Phase 21: dashboard-tuning-views)_
-  - [x] Dashboard tuning views for filtering effectiveness visibility _(Validated in Phase 21: dashboard-tuning-views)_
+- [ ] Dashboard tuning views for chunking quality visibility
+- [ ] Dashboard tuning views for filtering effectiveness visibility
 - [ ] RAG quality target: MRR > 0.7 through systematic optimization
 
 ### Out of Scope
@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-23 — Phase 21 complete: dashboard-tuning-views — Chunk Inspector (DTUN-01), Score Distribution histogram with draggable threshold (DTUN-02), Near-Miss panel (DTUN-03), and Prompt Version comparison chart (DTUN-04) all shipped_
+_Last updated: 2026-04-22 — Milestone v1.2 started: Chunking Tuning & Retrieval Quality_
