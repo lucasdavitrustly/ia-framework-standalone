@@ -106,8 +106,28 @@ export default function IndexingPanel() {
 
       {!loading && status && (
         <>
+          {/* Stopped state — aborted by user */}
+          {!isRunning && !isDone && status.stage === null && status.error && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" />
+                <span className="text-sm text-yellow-400">Stopped by user</span>
+              </div>
+              {(status.filesTotal > 0 || status.chunksTotal > 0) && (
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p>
+                    Files: {status.filesProcessed}/{status.filesTotal}
+                  </p>
+                  <p>
+                    Chunks: {status.chunksIndexed}/{status.chunksTotal}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Idle state — no stage set and not running */}
-          {!isRunning && !isDone && status.stage === null && (
+          {!isRunning && !isDone && status.stage === null && !status.error && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="inline-block w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />

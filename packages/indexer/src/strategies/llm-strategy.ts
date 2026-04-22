@@ -127,7 +127,7 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
 
     // Cache miss — call Ollama via chunkFile (handles windowing for large files)
     const fileName = filePath.split('/').pop() ?? filePath;
-    const result = await this.callWithRetry(filePath, content, fileName);
+    const result = await this.callWithRetry(filePath, content, fileName, config.signal);
 
     // Cache the result
     const cachedEntries = result.chunks.map((c) => ({
@@ -148,6 +148,7 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
     filePath: string,
     content: string,
     fileName: string,
+    signal?: AbortSignal | undefined,
   ): Promise<{ chunks: LLMChunk[] }> {
     const params = {
       filePath,
@@ -155,6 +156,7 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
       fileName,
       model: this.model,
       ...(this.ollamaUrl !== undefined && { baseUrl: this.ollamaUrl }),
+      signal,
     };
 
     try {

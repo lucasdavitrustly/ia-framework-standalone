@@ -28,6 +28,7 @@ export async function chunkFile(params: {
   model: string;
   baseUrl?: string;
   numCtx?: number;
+  signal?: AbortSignal | undefined;
 }): Promise<ChunkingResult> {
   const maxCtx = params.numCtx ?? 32768;
   const estimatedTokens = Math.ceil(params.content.length / 4);
@@ -45,6 +46,7 @@ export async function chunkFile(params: {
       prompt,
       model: params.model,
       numCtx,
+      signal: params.signal,
     };
     if (params.baseUrl !== undefined) generateParams.baseUrl = params.baseUrl;
     return generateChunks(generateParams);
@@ -56,6 +58,7 @@ export async function chunkFile(params: {
       fileName: params.fileName,
       model: params.model,
       numCtx: maxCtx,
+      signal: params.signal,
     };
     if (params.baseUrl !== undefined) windowingParams.baseUrl = params.baseUrl;
     return chunkFileWithWindowing(windowingParams);
@@ -75,6 +78,7 @@ export async function chunkFileWithWindowing(params: {
   baseUrl?: string;
   numCtx?: number;
   overlapLines?: number;
+  signal?: AbortSignal | undefined;
 }): Promise<ChunkingResult> {
   const maxCtx = params.numCtx ?? 32768;
   const overlapLines = params.overlapLines ?? 20; // per D-24 default
@@ -128,6 +132,11 @@ export async function chunkFileWithWindowing(params: {
     const win = windows[winIdx];
     if (!win) continue;
 
+    // Check for cancellation between windows
+    if (params.signal?.aborted) {
+      throw new Error('Indexing cancelled');
+    }
+
     const windowContent = win.lines.join('\n');
     const windowOffset = win.startLine - 1; // 0-indexed offset for line number adjustment
 
@@ -136,6 +145,7 @@ export async function chunkFileWithWindowing(params: {
       prompt,
       model: params.model,
       numCtx: windowNumCtx,
+      signal: params.signal,
     };
     if (params.baseUrl !== undefined) genParams.baseUrl = params.baseUrl;
     const result = await generateChunks(genParams);

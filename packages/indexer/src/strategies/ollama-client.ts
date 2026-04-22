@@ -85,6 +85,7 @@ export async function generateChunks(params: {
   model: string;
   baseUrl?: string;
   numCtx?: number;
+  signal?: AbortSignal | undefined;
 }): Promise<ChunkingResult> {
   const baseUrl = params.baseUrl ?? 'http://localhost:11434';
   const numCtx = params.numCtx ?? 32768;
@@ -103,6 +104,7 @@ export async function generateChunks(params: {
         num_ctx: numCtx,
       },
     }),
+    ...(params.signal && { signal: params.signal }),
   });
 
   if (!response.ok) {

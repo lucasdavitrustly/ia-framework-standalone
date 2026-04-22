@@ -412,61 +412,85 @@ Browse available models: https://ollama.com/search
             updatedAt: startedAt,
           });
 
+          // Set up AbortController with polling sentinel check for responsive stop
+          const abortController = new AbortController();
+          // Track last progress for clean abort messaging.
+          const lastProgress = {
+            filesTotal: 0,
+            filesProcessed: 0,
+            chunksTotal: 0,
+            chunksIndexed: 0,
+          };
+          const sentinelPollInterval = setInterval(async () => {
+            const shouldStop = await checkAndClearStopSentinel(frameworkDir);
+            if (shouldStop) {
+              abortController.abort();
+            }
+          }, 2000);
+
           const startTime = Date.now();
-          const result = await pipeline.run(
-            {
-              targetProjectPath: config.targetProjectPath,
-              frameworkDir,
-              collectionName,
-              embeddingProvider,
-              vectorStore,
-              includePatterns: config.indexing?.includePatterns,
-              excludePatterns: config.indexing?.excludePatterns,
-              maxChunkLines: config.indexing?.maxChunkLines,
-              incremental: !options.force,
-              dependencyGraph,
-              embeddingConcurrency: config.indexing?.embeddingConcurrency,
-              chunkingStrategy,
-            },
-            (progress: IndexingProgress) => {
-              renderProgress(progress);
-              // Write progress to shared file so the dashboard API can pick it up
-              void writeIndexingProgress(frameworkDir, {
-                running: true,
-                stage: progress.stage,
-                strategy: options.strategy,
-                filesTotal: progress.filesTotal,
-                filesProcessed: progress.filesProcessed,
-                chunksTotal: progress.chunksTotal,
-                chunksIndexed: progress.chunksIndexed,
-                currentFile: progress.currentFile ?? null,
-                batchesTotal: progress.batchesTotal ?? null,
-                batchesCompleted: progress.batchesCompleted ?? null,
+          let result: { filesIndexed: number; chunksIndexed: number; skippedChunks: number };
+          try {
+            result = await pipeline.run(
+              {
+                targetProjectPath: config.targetProjectPath,
+                frameworkDir,
+                collectionName,
+                embeddingProvider,
+                vectorStore,
+                includePatterns: config.indexing?.includePatterns,
+                excludePatterns: config.indexing?.excludePatterns,
+                maxChunkLines: config.indexing?.maxChunkLines,
+                incremental: !options.force,
+                dependencyGraph,
+                embeddingConcurrency: config.indexing?.embeddingConcurrency,
+                chunkingStrategy,
+              },
+              (progress: IndexingProgress) => {
+                Object.assign(lastProgress, progress);
+                renderProgress(progress);
+                // Write progress to shared file so the dashboard API can pick it up
+                void writeIndexingProgress(frameworkDir, {
+                  running: true,
+                  stage: progress.stage,
+                  strategy: options.strategy,
+                  filesTotal: progress.filesTotal,
+                  filesProcessed: progress.filesProcessed,
+                  chunksTotal: progress.chunksTotal,
+                  chunksIndexed: progress.chunksIndexed,
+                  currentFile: progress.currentFile ?? null,
+                  batchesTotal: progress.batchesTotal ?? null,
+                  batchesCompleted: progress.batchesCompleted ?? null,
+                  startedAt,
+                  updatedAt: new Date().toISOString(),
+                });
+              },
+              abortController.signal,
+            );
+          } catch (err) {
+            if (abortController.signal.aborted) {
+              // Stop requested — clean exit (clearInterval handled by finally block)
+              process.stdout.write('\n');
+              console.log('\n✗ Indexing stopped by user');
+              await writeIndexingProgress(frameworkDir, {
+                running: false,
+                stage: null,
+                filesTotal: lastProgress.filesTotal,
+                filesProcessed: lastProgress.filesProcessed,
+                chunksTotal: lastProgress.chunksTotal,
+                chunksIndexed: lastProgress.chunksIndexed,
+                currentFile: null,
                 startedAt,
                 updatedAt: new Date().toISOString(),
+                completedAt: new Date().toISOString(),
+                error: 'Stopped by user',
               });
-              // Check for stop sentinel — if found, exit cleanly
-              void checkAndClearStopSentinel(frameworkDir).then(async (shouldStop) => {
-                if (shouldStop) {
-                  process.stdout.write('\n');
-                  console.log('\n✗ Indexing stopped by user');
-                  await writeIndexingProgress(frameworkDir, {
-                    running: false,
-                    stage: null,
-                    filesTotal: progress.filesTotal,
-                    filesProcessed: progress.filesProcessed,
-                    chunksTotal: progress.chunksTotal,
-                    chunksIndexed: progress.chunksIndexed,
-                    currentFile: null,
-                    startedAt,
-                    completedAt: new Date().toISOString(),
-                    error: 'Stopped by user',
-                  });
-                  process.exit(0);
-                }
-              });
-            },
-          );
+              process.exit(0);
+            }
+            throw err; // Re-throw non-abort errors
+          } finally {
+            clearInterval(sentinelPollInterval);
+          }
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
           process.stdout.write('\n');

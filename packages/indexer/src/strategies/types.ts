@@ -8,6 +8,8 @@ export interface ChunkingConfig {
   maxChunkLines?: number;
   /** Project root for relative path calculation */
   projectRoot?: string;
+  /** Abort signal for cancellation support */
+  signal?: AbortSignal | undefined;
 }
 
 /**

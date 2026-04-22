@@ -124,6 +124,26 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
+## llm-index-no-files — `ia-framework index -s llm` reports 0 files found
+
+- **Date:** 2026-04-20
+- **Error patterns:** 0 files, llm strategy, index -s llm, includePatterns, empty array, nullish coalescing, file-walker, glob matches nothing
+- **Root cause:** `const patterns = includePatterns ?? ['**/*']` in file-walker.ts used nullish coalescing (`??`), which does not trigger for an empty array `[]`. A Zod schema default changed `includePatterns` from `undefined` to `[]`, so the fallback to `['**/*']` never activated, causing glob to match nothing.
+- **Fix:** Changed the guard to treat empty array the same as undefined: `const patterns = includePatterns?.length ? includePatterns : ['**/*']`.
+- **Files changed:** packages/indexer/src/file-walker.ts
+
+---
+
+## index-stop-llm — `index --stop` prints but doesn't actually stop LLM indexing
+
+- **Date:** 2026-04-22
+- **Error patterns:** index-stop, stop not working, LLM strategy, sentinel file, abort signal, hanging, progress bar, dashboard frozen, Stopped by user
+- **Root cause:** Three layers: (1) Stop sentinel was only checked in `onProgress` callback which fires once per completed file — LLM chunking blocks for minutes per file with no checks. (2) Pipeline accepted `AbortSignal` but CLI never passed one. (3) Dashboard had no "Stopped" rendering state — abort mapped to "Idle" view.
+- **Fix:** (1) CLI polls sentinel every 2s via `setInterval`, triggers `AbortController.abort()`, signal passed to `pipeline.run()`. (2) Signal propagated through strategy chain to `llm-chunker.ts` (checked between windows) and `ollama-client.ts` (passed to `fetch()`). (3) `IndexingPanel.tsx` added distinct "Stopped by user" branch with partial progress display.
+- **Files changed:** packages/cli/src/commands/index.command.ts, packages/indexer/src/pipeline.ts, packages/indexer/src/types.ts, packages/indexer/src/strategies/llm-strategy.ts, packages/indexer/src/strategies/llm-chunker.ts, packages/indexer/src/strategies/ollama-client.ts, apps/dashboard/src/components/IndexingPanel.tsx
+
+---
+
 - **Date:** 2026-04-06
 - **Error patterns:** global install, pnpm link, npm link, ia-framework command not found, indexing during install, install.sh, IndexingPanel, Start Indexing, dashboard trigger, Overview
 - **Root cause:** (1) install.sh Step 7 ran `node packages/cli/dist/bin.js index` directly, blocking until full indexing completed during install. (2) install.sh never ran `pnpm link --global` despite the CLI package having a `bin` field, so `ia-framework` was never available as a global command. (3) The IndexingPanel component (with a "Trigger Re-index" button backed by POST /api/indexing/trigger) existed but was not imported or rendered anywhere — Overview.tsx only showed a static status dot.

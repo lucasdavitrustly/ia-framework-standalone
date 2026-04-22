@@ -234,6 +234,7 @@ export class IndexingPipeline {
         const chunks = await strategy.chunk(filePath, {
           maxChunkLines,
           projectRoot: targetProjectPath,
+          signal,
         });
         allChunks.push(...chunks);
 
