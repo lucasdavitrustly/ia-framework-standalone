@@ -108,6 +108,35 @@ describe('searchRouter', () => {
     expect(llmEngine.engine.search as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
   });
 
+  // Test 3b: POST / with collections=['llm'] tags results with source='llm' even when engine omits source
+  it('T3b: single-collection LLM search tags results with source=llm', async () => {
+    // Simulate real engine that returns results WITHOUT source field
+    const noSourceResult = makeRetrievalResult({ chunkId: 'no-src' });
+    delete (noSourceResult as unknown as Record<string, unknown>).source;
+    const llmEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'llm')!;
+    (llmEngine.engine.search as ReturnType<typeof vi.fn>).mockResolvedValue([noSourceResult]);
+
+    const router = searchRouter(deps);
+    const res = await router.request('/', postBody({ query: 'auth', collections: ['llm'] }));
+    const body = (await res.json()) as { results: Array<{ source: string }> };
+    expect(body.results).toHaveLength(1);
+    expect(body.results[0]!.source).toBe('llm');
+  });
+
+  // Test 3c: POST / with collections=['ast'] tags results with source='ast' even when engine omits source
+  it('T3c: single-collection AST search tags results with source=ast', async () => {
+    const noSourceResult = makeRetrievalResult({ chunkId: 'no-src' });
+    delete (noSourceResult as unknown as Record<string, unknown>).source;
+    const astEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'ast')!;
+    (astEngine.engine.search as ReturnType<typeof vi.fn>).mockResolvedValue([noSourceResult]);
+
+    const router = searchRouter(deps);
+    const res = await router.request('/', postBody({ query: 'auth', collections: ['ast'] }));
+    const body = (await res.json()) as { results: Array<{ source: string }> };
+    expect(body.results).toHaveLength(1);
+    expect(body.results[0]!.source).toBe('ast');
+  });
+
   // Test 4: POST / with collections=['both'] uses multi-engine
   it('T4: POST / with collections=[both] uses multiSearchEngine', async () => {
     const router = searchRouter(deps);

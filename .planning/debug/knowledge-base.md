@@ -144,6 +144,16 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
+## search-badge-shows-ast — Badge shows AST when LLM search selected
+
+- **Date:** 2026-04-22
+- **Error patterns:** badge shows AST, LLM selected, source undefined, single-collection search, mapResult default, search badge wrong
+- **Root cause:** Single-collection search calls engine.search() directly which returns results without `source` field. mapResult() defaults undefined source to 'ast', mislabeling LLM results.
+- **Fix:** Tag results with correct source after single-collection search in both main search and replay paths. Added regression tests.
+- **Files changed:** packages/dashboard-api/src/routes/search.ts, packages/dashboard-api/src/routes/search.test.ts
+
+---
+
 - **Date:** 2026-04-06
 - **Error patterns:** global install, pnpm link, npm link, ia-framework command not found, indexing during install, install.sh, IndexingPanel, Start Indexing, dashboard trigger, Overview
 - **Root cause:** (1) install.sh Step 7 ran `node packages/cli/dist/bin.js index` directly, blocking until full indexing completed during install. (2) install.sh never ran `pnpm link --global` despite the CLI package having a `bin` field, so `ia-framework` was never available as a global command. (3) The IndexingPanel component (with a "Trigger Re-index" button backed by POST /api/indexing/trigger) existed but was not imported or rendered anywhere — Overview.tsx only showed a static status dot.

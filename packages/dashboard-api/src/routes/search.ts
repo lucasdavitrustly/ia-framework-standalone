@@ -94,13 +94,19 @@ export function searchRouter(deps: SearchDeps): Hono {
         if (!engineEntry) {
           return c.json({ error: 'AST collection not available' }, 404);
         }
-        rawResults = await engineEntry.engine.search(retrievalQuery);
+        rawResults = (await engineEntry.engine.search(retrievalQuery)).map((r) => ({
+          ...r,
+          source: 'ast' as const,
+        }));
       } else if (wantLlm) {
         const engineEntry = deps.collectionEngines.find((e) => e.name === 'llm');
         if (!engineEntry) {
           return c.json({ error: 'LLM collection not available' }, 404);
         }
-        rawResults = await engineEntry.engine.search(retrievalQuery);
+        rawResults = (await engineEntry.engine.search(retrievalQuery)).map((r) => ({
+          ...r,
+          source: 'llm' as const,
+        }));
       } else {
         rawResults = await deps.multiSearchEngine.search(retrievalQuery);
       }
@@ -230,7 +236,10 @@ export function searchRouter(deps: SearchDeps): Hono {
           collectionWarning = 'AST collection no longer available';
           rawResults = [];
         } else {
-          rawResults = await engineEntry.engine.search(retrievalQuery);
+          rawResults = (await engineEntry.engine.search(retrievalQuery)).map((r) => ({
+            ...r,
+            source: 'ast' as const,
+          }));
         }
       } else if (replayWantLlm) {
         const engineEntry = deps.collectionEngines.find((e) => e.name === 'llm');
@@ -238,7 +247,10 @@ export function searchRouter(deps: SearchDeps): Hono {
           collectionWarning = 'LLM collection no longer available';
           rawResults = [];
         } else {
-          rawResults = await engineEntry.engine.search(retrievalQuery);
+          rawResults = (await engineEntry.engine.search(retrievalQuery)).map((r) => ({
+            ...r,
+            source: 'llm' as const,
+          }));
         }
       } else {
         rawResults = await deps.multiSearchEngine.search(retrievalQuery);
