@@ -181,5 +181,23 @@ export function createApp(deps: AppDependencies): Hono {
     }
   }
 
+  // ── Fallback empty-data routes ──────────────────────────────────────────────
+  // When search infrastructure is unavailable (no Qdrant collections, no config),
+  // the routes above are never mounted. Register fallback handlers that return
+  // empty payloads so the frontend renders its "no data" states instead of 404.
+
+  if (!deps.search) {
+    // Search history — return empty list
+    app.get('/api/search/history', (c) => c.json({ entries: [], total: 0, page: 1, pageSize: 20 }));
+    // Search collections — return empty array
+    app.get('/api/search/collections', (c) => c.json([]));
+    // Tuning chunks — return empty response
+    app.get('/api/tuning/chunks', (c) => c.json({ chunks: [], total: 0 }));
+  } else if (!deps.search.searchHistoryStore) {
+    // Search exists but no history store — history and tuning routes not mounted
+    app.get('/api/search/history', (c) => c.json({ entries: [], total: 0, page: 1, pageSize: 20 }));
+    app.get('/api/tuning/chunks', (c) => c.json({ chunks: [], total: 0 }));
+  }
+
   return app;
 }
