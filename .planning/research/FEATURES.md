@@ -1,430 +1,301 @@
-# Feature Research: ia-framework v1.1 — RAG Quality & Observability
+# Feature Research: ia-framework v1.2 — Chunking Tuning & Retrieval Quality
 
-**Domain:** AI-Assisted Development Framework — RAG Pipeline Enhancement
-**Researched:** 2026-04-09
+**Domain:** AI-Assisted Development Framework — RAG Quality Optimization
+**Researched:** 2026-04-22
 **Confidence:** HIGH
 
 ## Scope
 
-This document covers the **six new capability areas for v1.1**, not the existing v1.0 features. The v1.0 core pipeline (AST indexing, semantic search, MCP server, benchmark system, dashboard shell) is assumed complete and operational.
+This document covers **v1.2 features only**: LLM chunking prompt engineering, score-based result filtering, benchmark-driven validation, and dashboard tuning views. All v1.0/v1.1 infrastructure (AST+LLM chunking, hybrid search, multi-collection search, dashboard search/analytics) is assumed operational.
 
-**v1.1 capability areas:**
-
-1. LLM-Based Chunking (alternative indexing strategy)
-2. Parallel Embedding Pipeline
-3. Dashboard Search UI
-4. A/B Collection Comparison
-5. Search History
-6. Analytics & RAG Quality Monitoring
+**Goal:** Push MRR past 0.7 through systematic tuning of existing components, not new infrastructure.
 
 ---
 
 ## Feature Landscape
 
-### Table Stakes (Users Expect These)
+### Table Stakes (Must Ship for v1.2 to Have Value)
 
-Features that are non-negotiable for v1.1. Without these, the release has no value.
+| Feature                                                 | Why Expected                                                                                                                                                   | Complexity | Dependencies                                                         | Notes                                                                                                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Prompt engineering: boundary detection improvements** | Current prompt produces chunks with imprecise boundaries (imports mixed with logic, classes split mid-method). Fixing boundaries is the #1 lever for MRR.      | MEDIUM     | Existing `prompt.ts`, `llm-chunker.ts`                               | Iterative: change prompt → re-index subset → benchmark → compare. Need A/B prompt testing workflow.                                           |
+| **Prompt engineering: summary quality improvements**    | Summaries are the `text` vector content for LLM chunks. Weak summaries = weak semantic matching = low MRR on intent queries.                                   | MEDIUM     | Existing `prompt.ts`, embedding pipeline                             | Summaries should capture PURPOSE ("authenticates JWT tokens and returns user context") not SYNTAX ("function that takes a string parameter"). |
+| **Score-based result filtering: adaptive thresholds**   | Current fixed `scoreThreshold: 0.3` is a blunt instrument. Hybrid/RRF scores are rank-based, not cosine — a single threshold doesn't work across search modes. | MEDIUM     | `search-engine.ts`, `multi-collection-search-engine.ts`, `qdrant.ts` | Different filtering strategies for dense-only vs. hybrid vs. cross-collection searches.                                                       |
+| **Benchmark-driven validation of every change**         | Without before/after MRR measurement, prompt changes are guesswork. Every tuning change must produce a measurable delta.                                       | LOW        | Existing benchmark system, CLI `ia-framework benchmark`              | Workflow: baseline benchmark → make change → re-index → benchmark → compare. Mostly process, minimal new code.                                |
 
-| Feature                                    | Why Expected                                                                                                                                                                           | Complexity | Dependencies                                                                                      | Notes                                                                                                                                                                                                                  |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **LLM chunking: Ollama integration**       | v1.1's headline feature. Users upgrade specifically for LLM-based semantic chunking. If it doesn't work with Ollama, the milestone fails.                                              | HIGH       | Ollama running locally, `ollama` npm package (v0.6.3), `/api/generate` or `/api/chat` endpoint    | Use structured JSON output (`format` param with JSON schema). Model: `qwen2.5-coder:7b` or similar code-aware model. Must handle timeouts, retries, and model-not-found errors gracefully.                             |
-| **LLM chunking: chunk boundary detection** | The core value — chunks aligned to semantic meaning, not AST syntax. Users expect chunks that group logically related code even across function boundaries.                            | HIGH       | LLM chunking Ollama integration                                                                   | Send code file + prompt asking LLM to identify semantic boundaries (start line, end line, purpose description). Single-pass approach: one LLM call per file returns structured array of chunk boundaries.              |
-| **LLM chunking: chunk summaries**          | Each chunk gets an LLM-generated natural language summary. This is what makes LLM chunking superior to AST — the summary becomes the embedding text, capturing intent not just syntax. | HIGH       | Chunk boundary detection                                                                          | Summary generated in same LLM call as boundaries (single-pass). Summary becomes the `text` vector; raw code becomes the `code` vector. Mirrors existing dual-vector approach.                                          |
-| **Multi-collection Qdrant storage**        | v1.1 creates separate collections per indexing strategy (e.g., `project-ast`, `project-llm`). Without this, A/B comparison is impossible.                                              | MEDIUM     | `@qdrant/js-client-rest` (v1.17.0), existing Qdrant Docker instance                               | Each collection has identical vector schema (text, code, code-bm25). Collection naming convention: `{project}-{strategy}`. Qdrant has no native cross-collection search — must query each and merge client-side.       |
-| **MCP tools query both collections**       | `search_codebase` and `search_codebase_hybrid` must search ALL active collections and merge results. Breaking existing MCP behavior is unacceptable.                                   | MEDIUM     | Multi-collection storage, existing MCP tools (`search-codebase.ts`, `search-codebase-hybrid.ts`)  | Query each collection independently, merge via RRF or score normalization. Tag each result with `source: 'ast' \| 'llm'` so the AI client knows provenance. Must not degrade latency significantly (parallel queries). |
-| **CLI strategy selection at index time**   | Developer runs `ia-framework index --strategy llm` or `--strategy ast`. Without this, there's no way to create LLM-indexed collections.                                                | LOW        | LLM chunking pipeline, existing CLI (`packages/cli/`)                                             | Default: `ast` (backward compatible). Options: `ast`, `llm`, `all`. `all` runs both strategies sequentially.                                                                                                           |
-| **Parallel embedding: batch processing**   | The existing pipeline already batches (`embeddingBatchSize = 50`), but processes batches sequentially. v1.1 must process multiple batches concurrently for speed.                      | MEDIUM     | Existing `IndexingPipeline` (`packages/indexer/src/pipeline.ts`), `p-queue` (concurrency control) | Use `p-queue` with configurable concurrency (default: 3 concurrent batches). Respect provider rate limits. Cloud providers (OpenAI) need lower concurrency than local (Ollama).                                        |
-| **Parallel embedding: progress reporting** | Long indexing jobs must show progress. Users expect to know how far along they are, especially with LLM chunking which is much slower than AST.                                        | LOW        | Parallel embedding pipeline                                                                       | Emit progress events: `{ phase: 'parsing' \| 'chunking' \| 'embedding' \| 'storing', completed: number, total: number, elapsed: number }`. CLI renders as progress bar. Dashboard receives via SSE/WebSocket.          |
+### Differentiators (What Makes v1.2 Genuinely Valuable)
 
-### Differentiators (Competitive Advantage)
+| Feature                                     | Value Proposition                                                                                                                                                                  | Complexity  | Dependencies                                        | Notes                                                                                                                                                                              |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Prompt versioning system**                | Track which prompt version produced which chunks. When MRR drops, identify which prompt change caused it. Enables systematic prompt engineering instead of ad-hoc edits.           | MEDIUM      | `prompt.ts`, MetricsStore, benchmark store          | Store prompt version hash with each indexed collection. Benchmark results tagged with prompt version.                                                                              |
+| **Score distribution analysis**             | Show HOW scores are distributed per query, not just top-K results. Reveals whether filtering is cutting relevant results (too aggressive) or letting noise through (too loose).    | LOW-MEDIUM  | Dashboard search page, MetricsStore                 | Histogram of all candidate scores (top-50), not just returned results. Shows the "filtering decision boundary."                                                                    |
+| **Dashboard: chunking quality inspector**   | View individual chunks with their boundaries, summaries, and scores side-by-side with source code. Developers see exactly what the LLM produced and whether boundaries make sense. | MEDIUM-HIGH | Dashboard, Qdrant payload data, syntax highlighting | Critical for prompt tuning: you need to SEE the chunks to know if the prompt is working. Without this, prompt engineering is blind.                                                |
+| **Dashboard: filtering effectiveness view** | Visualize what gets filtered out and why. Show "near-miss" results (just below threshold) alongside returned results. Developers understand noise vs. signal tradeoff.             | MEDIUM      | Dashboard search page, score distribution data      | Two-zone display: "returned" (above threshold) and "filtered" (below threshold, top N). Color-coded by relevance.                                                                  |
+| **Dynamic score threshold per search mode** | Hybrid/RRF scores use rank-based fusion (not cosine). Dense-only uses cosine. Apply mode-appropriate thresholds automatically.                                                     | LOW-MEDIUM  | `search-engine.ts`, config                          | Config: `{ dense: 0.3, hybrid: 0.01, rrf: 0.0 }`. RRF scores should never be threshold-filtered — rely on `limit` instead.                                                         |
+| **Prompt A/B testing workflow**             | Compare two prompt versions on the same benchmark corpus. Side-by-side MRR, per-query deltas, chunk quality diffs.                                                                 | MEDIUM      | Benchmark system, prompt versioning                 | Index with prompt A → benchmark → index with prompt B → benchmark → compare runs. Mostly orchestration, some new CLI UX.                                                           |
+| **Chunk overlap/gap detection**             | Validate that LLM chunks cover every line exactly once (no gaps, no overlaps). Current prompt requests this, but LLMs often violate it. Auto-detect and report violations.         | LOW         | `llm-chunker.ts`                                    | Post-processing validation. Report: "Lines 45-48 not covered by any chunk" or "Lines 30-35 covered by chunks 3 and 4." Fix by adjusting boundaries or re-prompting.                |
+| **Summary quality scoring**                 | Heuristic quality score for each chunk summary: length check, avoids code syntax in prose, mentions purpose not just identifiers, covers imports/exports context.                  | LOW         | `llm-chunker.ts` or new utility                     | Not ML-based — simple heuristics: summary length 20-200 chars, no raw code tokens, contains verbs ("handles", "validates", "configures"). Dashboard shows per-chunk quality score. |
 
-Features that make v1.1 genuinely valuable beyond "LLM chunking exists."
+### Anti-Features (Do NOT Build in v1.2)
 
-| Feature                                             | Value Proposition                                                                                                                                                                                                           | Complexity  | Dependencies                                                                                                       | Notes                                                                                                                                                                                                                                                        |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Dashboard: interactive search UI**                | No competitor offers a visual search testing interface. Developers can type queries, see results with scores, file paths, and chunk previews — then immediately understand what the AI "sees." Makes the invisible visible. | MEDIUM      | Dashboard app (`apps/dashboard/`), dashboard API (`packages/dashboard-api/`), SearchEngine (`packages/retrieval/`) | New dashboard page: `/search`. Components: query input, collection selector, results list with score badges and syntax-highlighted code previews. Each result shows: score, file path, chunk type (function/class/module), lines, source strategy (ast/llm). |
-| **Dashboard: per-query metrics panel**              | After running a search, show retrieval metrics: latency, chunks scanned, vector similarity distribution, BM25 vs dense score breakdown. Developers can diagnose why retrieval quality is poor.                              | MEDIUM      | Dashboard search UI, MetricsStore (`packages/observability/`)                                                      | Sidebar panel next to results. Shows: query latency (ms), chunks returned vs total, score histogram, strategy comparison if both collections queried. Uses existing `RagEvent` logging.                                                                      |
-| **A/B collection comparison: side-by-side results** | Run the same query against AST and LLM collections simultaneously. See results side-by-side. This is how developers empirically decide which chunking strategy works better for their codebase.                             | MEDIUM-HIGH | Multi-collection storage, Dashboard search UI                                                                      | Split-pane view: left = AST results, right = LLM results. Same query, same scoring display. Highlight differences: chunks that appear in one but not the other. Rank agreement/disagreement metric.                                                          |
-| **A/B comparison: scoring visualization**           | Beyond side-by-side results, visualize aggregate scoring differences. Bar charts comparing MRR, precision@k, recall@k across strategies. Makes the benchmark data actionable.                                               | MEDIUM      | A/B side-by-side results, Recharts (`recharts` v3.8.1), benchmark data                                             | Radar chart or grouped bar chart: MRR, P@5, P@10, nDCG for each strategy. Overlay on the same axes. Requires benchmark runs for both collections to have comparable data.                                                                                    |
-| **Search history: query persistence**               | Save every search query with its results, scores, and timestamp. Developers can replay past queries to see if re-indexing improved results.                                                                                 | LOW-MEDIUM  | MetricsStore (already logs `RagEvent`), Dashboard API                                                              | MetricsStore already captures: query text, chunksRetrieved, chunkIds, tokenCount, strategy, latencyMs via `logRagEvent()`. Extend to persist full result payloads (file paths, scores, snippet previews). New API endpoint: `GET /api/search-history`.       |
-| **Search history: replay & compare**                | Select two historical queries and compare their results. Shows how retrieval changed after re-indexing, config changes, or strategy switches.                                                                               | MEDIUM      | Search history persistence, Dashboard search UI                                                                    | Select query A (from 3 days ago) and query B (same text, today) → diff view showing which chunks were added/removed/reranked. Critical for iterative RAG tuning.                                                                                             |
-| **Search history: filtering & search**              | Filter history by date range, strategy, minimum score threshold, or query text substring. Makes history useful at scale.                                                                                                    | LOW         | Search history persistence                                                                                         | SQL queries against MetricsStore SQLite. Filters: `WHERE query LIKE '%auth%' AND strategy = 'llm' AND created_at > date('now', '-7 days')`. Paginated results.                                                                                               |
-| **Analytics: RAG quality trends over time**         | Track MRR, retrieval latency, and chunk relevance scores as time-series. Show trend lines on the dashboard. Developers see if their RAG is getting better or worse.                                                         | MEDIUM      | MetricsStore, Recharts, benchmark data                                                                             | New dashboard page or section: `/analytics`. Line charts: MRR over time, average latency over time, indexing coverage %. Data from `getEventsByDay()` and benchmark history.                                                                                 |
-| **Analytics: strategy comparison aggregates**       | Aggregate stats comparing AST vs LLM strategies: average score, average latency, average chunks returned. Persistent comparison, not per-query.                                                                             | MEDIUM      | Multi-collection storage, MetricsStore                                                                             | Cards or table: "AST: avg MRR 0.72, avg latency 45ms" vs "LLM: avg MRR 0.81, avg latency 52ms". Uses `getStrategyStats()` (already exists in MetricsStore).                                                                                                  |
-| **Analytics: token usage breakdown by strategy**    | Show how much token budget each strategy consumes — both for embedding (indexing) and retrieval (query). LLM chunking uses tokens for chunk generation + embedding; AST uses tokens only for embedding.                     | LOW-MEDIUM  | MetricsStore token tracking, Dashboard                                                                             | Stacked bar chart: tokens by category (indexing-ast, indexing-llm, query-ast, query-llm). Helps developers understand the cost tradeoff of LLM chunking.                                                                                                     |
-
-### Anti-Features (Commonly Requested, Often Problematic)
-
-Features to explicitly NOT build in v1.1.
-
-| Feature                                      | Why Requested                                       | Why Problematic                                                                                                                                                                                              | Alternative                                                                                                                                                                                          |
-| -------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Cloud LLM chunking (OpenAI/Anthropic)**    | "Ollama is slow, let me use GPT-4 for chunking"     | Adds API key management, cost tracking, rate limiting, error handling for cloud providers. Doubles the integration surface for chunking. Ollama-only keeps v1.1 scope contained.                             | Defer to v3 per PROJECT.md milestone plan. Ollama with qwen2.5-coder:7b is fast enough on modern hardware.                                                                                           |
-| **Real-time re-chunking on file save**       | "Re-chunk my file every time I save"                | LLM chunking is slow (seconds per file). Triggering on every save wastes resources and creates indexing queue congestion. AST chunking is fast enough for real-time; LLM is not.                             | Use existing incremental indexing (git-diff based). Re-chunk only on explicit `ia-framework index` or on significant changes (new files, renamed files). Debounce file watching.                     |
-| **Custom prompt templates for LLM chunking** | "Let me write my own chunking prompts"              | Prompt engineering for chunking is a research problem. Exposing raw prompts creates a support burden ("my chunks are bad" → "what's your prompt?"). The framework should own the chunking prompt.            | Ship an optimized, tested chunking prompt. Allow minor config (e.g., max chunk size, language hints) but not full prompt override. Consider prompt versioning internally.                            |
-| **Embedding model fine-tuning UI**           | "Fine-tune embeddings for my codebase"              | Fine-tuning requires ML infrastructure, training data curation, evaluation pipelines. Massive scope for marginal gain when off-the-shelf code embeddings (nomic-embed-text, voyage-code-3) are already good. | Support swapping embedding models via config. Benchmark different models. Don't build fine-tuning infrastructure.                                                                                    |
-| **Graph database for code relationships**    | "Use Neo4j for the dependency graph"                | Adds another Docker service, another query language (Cypher), another data model to maintain. The dependency graph is small enough to hold in memory or store as Qdrant payloads.                            | Store dependency edges as payload metadata in Qdrant points. Expand graph in-memory during retrieval. Current `searchWithExpansion()` approach is sufficient.                                        |
-| **Dashboard: real-time streaming search**    | "Show results as they come in from each collection" | WebSocket streaming for search adds complexity with minimal UX benefit — searches complete in <200ms. Streaming makes sense for LLM generation, not vector search.                                           | Show a simple loading spinner, then render all results at once. Parallel collection queries finish nearly simultaneously.                                                                            |
-| **Automatic strategy recommendation**        | "Tell me which strategy is best for my codebase"    | Requires statistically significant benchmark data (many queries, labeled relevance). Most users won't have enough data for meaningful recommendations. Premature automation.                                 | Show the data (A/B comparison, analytics) and let the developer decide. Provide documentation on when LLM chunking tends to outperform AST (e.g., cross-cutting concerns, documentation-heavy code). |
+| Feature                                    | Why Requested                                       | Why Problematic                                                                                                                                                                        | Alternative                                                                                                               |
+| ------------------------------------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **User-editable prompt templates**         | "Let me write my own chunking prompts"              | Creates support burden. Prompt engineering for code chunking is nuanced — users will write bad prompts, get bad chunks, blame the tool. The framework should own prompt quality.       | Ship optimized prompts with version tracking. Expose config knobs (max chunk size, language hints) not raw prompt text.   |
+| **Auto-tuning score thresholds**           | "Automatically find the best threshold"             | Requires labeled relevance data at scale. The benchmark corpus (30 queries) isn't large enough for statistically meaningful threshold optimization. Premature automation.              | Show score distributions in dashboard. Let developer pick threshold informed by data. Provide sensible per-mode defaults. |
+| **Cross-encoder reranking**                | "Rerank results with a neural model for better MRR" | Adds Python sidecar dependency, 500ms+ latency, model management complexity. The MRR target (>0.7) is achievable through prompt + filtering tuning alone. Reranking is v1.3+ material. | Focus on first-stage retrieval quality. Better chunks + better filtering = better results without reranking overhead.     |
+| **Multi-model prompt testing**             | "Try different Ollama models for chunking"          | Model switching changes two variables at once (model capability + prompt interaction). Isolate variables: fix the model (llama3.2), tune the prompt.                                   | Stick with llama3.2 (validated in Phase 12). Change models only after prompt is optimized and MRR plateau is reached.     |
+| **Automatic re-indexing on prompt change** | "Re-index everything when I change the prompt"      | Full LLM re-indexing takes 200+ minutes for 500 files. Automatic triggering wastes compute. Prompt iteration should use a subset (10-50 representative files).                         | CLI command: `ia-framework index --strategy llm --files subset.txt` for targeted re-indexing during prompt tuning.        |
 
 ---
 
 ## Feature Dependencies
 
 ```
-LLM Chunking Pipeline
-    ├── Ollama Integration (generate/chat API)
-    │     └── Structured JSON Output (chunk boundaries + summaries)
-    ├── Multi-Collection Qdrant Storage
-    │     ├── Collection Naming Convention ({project}-{strategy})
-    │     └── Identical Vector Schema per Collection
-    └── CLI Strategy Selection (--strategy ast|llm|all)
+Prompt Engineering (Core Loop)
+    ├── Prompt Versioning (track which prompt produced which chunks)
+    │     └── Benchmark tagging (link benchmark results to prompt version)
+    ├── Chunk Overlap/Gap Detection (validate prompt output quality)
+    ├── Summary Quality Scoring (heuristic quality checks)
+    └── Prompt A/B Testing Workflow (compare versions systematically)
+          ├── Benchmark system (existing — runs MRR comparison)
+          └── Dashboard benchmark comparison (existing — v1.1)
 
-Multi-Collection Qdrant Storage
-    └── MCP Tools Multi-Collection Query
-          ├── Parallel Collection Queries
-          ├── Result Merging (RRF / score normalization)
-          └── Source Strategy Tagging (ast|llm per result)
+Score-Based Filtering
+    ├── Dynamic Threshold Per Search Mode (dense vs hybrid vs RRF)
+    │     └── Search engine config extension
+    ├── Score Distribution Analysis (understand what filtering does)
+    │     └── Dashboard visualization
+    └── Near-Miss Result Display (see what got filtered)
 
-Parallel Embedding Pipeline
-    ├── p-queue Concurrency Control
-    ├── Provider Rate Limit Awareness
-    └── Progress Event Emission
-          └── Dashboard Progress Display (via SSE/WebSocket)
+Dashboard Tuning Views
+    ├── Chunking Quality Inspector (view chunks + source + summaries)
+    │     ├── Qdrant payload retrieval (get chunk metadata)
+    │     └── Syntax highlighting (existing — from v1.1 search UI)
+    ├── Filtering Effectiveness View (returned vs filtered results)
+    │     └── Score distribution data
+    └── Prompt Version Comparison (which version → which MRR)
+          └── Prompt versioning + benchmark tagging
 
-Dashboard Search UI
-    ├── Query Input + Collection Selector
-    ├── Results Display (scores, paths, previews)
-    └── Per-Query Metrics Panel
-          └── MetricsStore RagEvent Data
-
-A/B Collection Comparison
-    ├── Multi-Collection Storage (prerequisite)
-    ├── Dashboard Search UI (prerequisite)
-    ├── Side-by-Side Results View
-    └── Scoring Visualization (Recharts)
-          └── Benchmark Data for Both Collections
-
-Search History
-    ├── MetricsStore Extension (full result persistence)
-    ├── Dashboard History Page
-    ├── Replay & Compare View
-    └── Filtering (date, strategy, query text)
-
-Analytics & Monitoring
-    ├── MetricsStore Aggregation Queries
-    ├── RAG Quality Trend Charts (Recharts)
-    ├── Strategy Comparison Aggregates
-    └── Token Usage Breakdown by Strategy
+Benchmark-Driven Validation (Process, Not Feature)
+    └── Existing benchmark system + CLI — no new code needed
 ```
 
 ### Dependency Notes
 
-- **A/B Comparison requires Multi-Collection Storage:** You can't compare strategies without separate collections to compare. Multi-collection must ship before or alongside A/B comparison.
-- **A/B Comparison requires Dashboard Search UI:** The side-by-side view is built on top of the search results component. Search UI must exist first.
-- **Search History extends MetricsStore:** The existing `RagEvent` logging captures most of what's needed. Extension is additive (persist result payloads), not a rewrite.
-- **Analytics depends on MetricsStore + Benchmarks:** Trend charts need time-series data. Without benchmark runs generating data points, analytics pages are empty.
-- **LLM Chunking is independent of Parallel Embedding:** These are orthogonal improvements. LLM chunking changes _how_ chunks are created; parallel embedding changes _how fast_ they're embedded. Both can ship independently.
-- **MCP multi-collection query depends on Multi-Collection Storage:** MCP tools must be updated after collections exist, but this is a thin adapter layer.
-- **Progress Reporting is independent of Parallel Embedding:** Even sequential pipelines benefit from progress events. But parallel pipelines make progress reporting more important (longer jobs, more complex state).
+- **Prompt versioning is foundational.** Without tracking which prompt produced which results, A/B testing and dashboard views can't attribute quality changes to prompt changes. Build first.
+- **Score distribution analysis enables filtering tuning.** You can't tune thresholds without seeing score distributions. Build distribution view before dynamic thresholds.
+- **Chunking quality inspector is the highest-value dashboard feature.** Prompt engineering without seeing the chunks is blind iteration. This view turns a 10-iteration cycle into 2-3 iterations.
+- **Chunk validation (overlap/gap detection) is cheap and high-value.** Simple post-processing in `llm-chunker.ts`. Catches the most common LLM failure mode.
 
 ---
 
 ## Detailed Feature Analysis
 
-### 1. LLM-Based Chunking
+### 1. Prompt Engineering: Boundary Detection
 
-**How it works:**
+**Current prompt problems (inferred from architecture):**
 
-1. **File reading:** Read source file content (same as AST pipeline).
-2. **LLM call:** Send file content to Ollama with a structured prompt:
-   - "Analyze this code file. Identify semantically coherent chunks. For each chunk, provide: start line, end line, type (function/class/module/config/test), and a natural language summary describing what the code does and why."
-   - Use Ollama's `format` parameter with a JSON schema to get structured output.
-3. **Chunk extraction:** Parse LLM response into chunk objects with boundaries and summaries.
-4. **Embedding:** Generate embeddings for each chunk — summary text → `text` vector, raw code → `code` vector, raw code → `code-bm25` sparse vector.
-5. **Storage:** Store in a separate Qdrant collection (`{project}-llm`).
+The current prompt in `prompt.ts` is reasonable but has known LLM failure modes:
 
-**Single-pass vs two-pass:**
+1. **Imports lumped with first function** — The prompt says "Import/export blocks should be their own chunk" but small models (llama3.2) often merge imports with the first declaration.
+2. **Class methods split from class** — LLM may create separate chunks for each method instead of keeping a class as one semantic unit (or intelligently splitting large classes).
+3. **Configuration blocks fragmented** — Object literals, enums, and config maps get split arbitrarily.
+4. **Comment blocks orphaned** — JSDoc/docstrings separated from the code they document.
 
-| Approach                      | How                                                            | Pros                                          | Cons                                                             |
-| ----------------------------- | -------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
-| **Single-pass (recommended)** | One LLM call returns boundaries + summaries                    | Faster, fewer tokens, simpler pipeline        | Summary quality may be slightly lower without dedicated focus    |
-| **Two-pass**                  | First call: boundaries only. Second call: summarize each chunk | Better summaries, can parallelize second pass | 2x LLM calls, 2x tokens, 2x latency, more complex error handling |
+**Prompt improvements to test:**
 
-**Recommendation:** Single-pass. The marginal summary quality improvement from two-pass doesn't justify doubling the LLM token cost and pipeline complexity. The summary only needs to be good enough for embedding — it's not user-facing text.
+| Change                                                                          | Rationale                                                                  | Expected Impact |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------- |
+| Add explicit examples of good/bad chunking                                      | Few-shot learning improves boundary accuracy dramatically for small models | HIGH            |
+| Add "keep class methods with their class unless the class exceeds N lines" rule | Prevents method-level fragmentation                                        | MEDIUM          |
+| Add "attach leading comments/docstrings to the code they document" rule         | Prevents orphaned documentation chunks                                     | MEDIUM          |
+| Add "minimum chunk size: 5 lines" constraint                                    | Prevents trivially small chunks (single-line exports as their own chunk)   | LOW-MEDIUM      |
+| Restructure prompt: rules first, then code (not interleaved)                    | LLMs attend to prompt structure; rules at top are followed more reliably   | LOW             |
 
-**Error handling considerations:**
+**Testing methodology:**
 
-- Model not found → clear error message with install instructions (`ollama pull qwen2.5-coder:7b`)
-- Timeout → configurable per-file timeout (default: 30s), skip file on timeout, log warning
-- Malformed JSON → retry once with simpler prompt, fall back to AST chunking for that file
-- File too large for context window → split into sections (e.g., by top-level declarations), chunk each section independently
+1. Select 10-20 representative files (mix of sizes, patterns: small util, large class, config, test, mixed)
+2. Index with current prompt → benchmark
+3. Change one prompt aspect → re-index same files → benchmark
+4. Compare MRR delta + manually inspect chunk quality
+5. Iterate until MRR improvement plateaus
 
-**Token budget:**
+### 2. Prompt Engineering: Summary Quality
 
-- qwen2.5-coder:7b context: 32K tokens (~24K words)
-- Typical source file: 100-500 lines → 1K-5K tokens
-- LLM response (boundaries + summaries): ~500-2K tokens per file
-- Estimated cost: 2K-7K tokens per file (input + output)
-- For a 1000-file project: ~2M-7M tokens total (all local via Ollama, no $ cost)
+**What makes a good chunk summary for embedding:**
 
-### 2. Parallel Embedding Pipeline
+- **Captures intent:** "Validates JWT tokens and extracts user claims for authentication middleware" (GOOD)
+- **Avoids syntax:** "Function validateJwt that takes token parameter and returns Promise<UserClaims>" (BAD — this is what the code vector is for)
+- **Mentions domain concepts:** "authentication", "middleware", "user session" (GOOD — matches natural language queries)
+- **Appropriate length:** 1-3 sentences, 30-150 words (too short = underspecified embedding, too long = diluted embedding)
 
-**Current state:** `IndexingPipeline.indexFiles()` processes embedding batches sequentially. Each batch of 50 chunks calls the embedding provider, waits for response, then proceeds to next batch.
-
-**Target state:** Process N batches concurrently using `p-queue`.
-
-**Batching strategy:**
+**Prompt additions for summary quality:**
 
 ```
-Total chunks: 500
-Batch size: 50 → 10 batches
-Concurrency: 3 → ~3.3x speedup (minus overhead)
-
-Queue: [B1, B2, B3, B4, B5, B6, B7, B8, B9, B10]
-        ↓    ↓    ↓
-     Processing 3 at a time
+Summary guidelines:
+- Describe WHAT the code accomplishes and WHY, not HOW it's implemented
+- Use domain terminology that a developer would search for
+- Do NOT repeat function/class names verbatim — describe their purpose
+- Include the broader context: "part of the authentication flow" or "used during build process"
+- Each summary should be 1-3 sentences (30-150 words)
 ```
 
-**Concurrency limits by provider:**
+### 3. Score-Based Result Filtering
 
-| Provider       | Recommended Concurrency | Rate Limit                        | Notes                                                                 |
-| -------------- | ----------------------- | --------------------------------- | --------------------------------------------------------------------- |
-| Ollama (local) | 3-5                     | No rate limit                     | Bounded by GPU/CPU. Higher concurrency may cause OOM on smaller GPUs. |
-| OpenAI         | 2-3                     | 3000 RPM (text-embedding-3-small) | Use `p-queue` interval option for rate limiting.                      |
-| Azure OpenAI   | 2-3                     | Varies by deployment              | Check deployment-specific limits.                                     |
-| Custom/vLLM    | 3-5                     | Deployment-dependent              | Similar to Ollama — bounded by hardware.                              |
+**The core problem:**
 
-**Progress reporting events:**
+| Search Mode             | Score Type        | Score Range             | Current Threshold | Problem                                                             |
+| ----------------------- | ----------------- | ----------------------- | ----------------- | ------------------------------------------------------------------- |
+| Dense-only (cosine)     | Cosine similarity | 0.0 – 1.0               | 0.3               | Reasonable but may be too aggressive for short queries              |
+| Hybrid (prefetch + RRF) | RRF fusion score  | ~0.0 – 0.1 (rank-based) | 0.3               | **Filters out ALL results** — RRF scores are rank-based, not cosine |
+| Multi-collection RRF    | RRF of RRF scores | Even lower range        | 0.3               | Same problem compounded                                             |
+
+**Fix: mode-aware thresholds**
 
 ```typescript
-interface IndexingProgress {
-  phase: 'scanning' | 'parsing' | 'chunking' | 'embedding' | 'storing';
-  strategy: 'ast' | 'llm';
-  completed: number; // chunks/files completed
-  total: number; // total chunks/files
-  failed: number; // chunks/files that errored
-  elapsedMs: number; // time since phase started
-  estimatedRemainingMs?: number; // based on rate so far
+interface ScoreThresholdConfig {
+  dense: number; // Default: 0.3 (cosine similarity)
+  hybrid: number; // Default: 0.0 (RRF scores are not cosine — rely on limit)
+  multiCollection: number; // Default: 0.0 (double-RRF scores)
 }
 ```
 
-Emit via EventEmitter pattern. CLI subscribes for progress bar. Dashboard API subscribes for SSE/WebSocket push.
+**Key insight from Qdrant docs:** When using `query: { fusion: 'rrf' }`, the returned scores are NOT cosine similarities. They're reciprocal rank values. Applying a cosine-style threshold to RRF scores is a bug, not a feature. For hybrid/RRF queries, control result count via `limit` only.
 
-### 3. Dashboard Search UI
+**Additional filtering strategies to consider:**
 
-**Query input patterns:**
+| Strategy                      | How It Works                                                            | When to Use                                                          |
+| ----------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **Score gap detection**       | If there's a large drop between result N and N+1 scores, cut at the gap | When results have a natural "relevance cliff"                        |
+| **Relative threshold**        | Filter results scoring < X% of top result                               | Adapts to query difficulty — hard queries have lower absolute scores |
+| **Top-K only (no threshold)** | Return exactly K results regardless of score                            | Simplest. Works well when K is small (5-10)                          |
+| **Score normalization**       | Normalize scores to [0,1] before thresholding                           | Makes thresholds meaningful across search modes                      |
 
-- Single text input with placeholder: "Search your codebase..."
-- Collection selector dropdown: "All collections" (default), specific collection names
-- Search mode toggle: "Semantic" (default), "Hybrid (BM25 + Semantic)", "Expansion (+ dependencies)"
-- Optional: top-K slider (default 10, range 1-50)
+**Recommendation:** Start with mode-aware thresholds (fix the RRF bug). Then add score gap detection as a differentiator — it's the most principled approach for variable-quality queries.
 
-**Result display per item:**
+### 4. Dashboard Tuning Views
 
-- **Score badge:** Colored by relevance (green ≥0.8, yellow ≥0.5, red <0.5)
-- **File path:** Clickable (copies to clipboard — can't open files from Docker dashboard)
-- **Line range:** e.g., "lines 45-78"
-- **Chunk type:** Badge: `function` | `class` | `module` | `interface` | `type` | `test`
-- **Source strategy:** Badge: `AST` | `LLM`
-- **Code preview:** Syntax-highlighted snippet (first 10-15 lines of chunk), expandable to full
-- **Summary:** If LLM-chunked, show the natural language summary above the code
-
-**Per-query metrics panel (sidebar):**
-
-- Query latency: "45ms"
-- Collections searched: "project-ast, project-llm"
-- Total chunks scanned: "1,247"
-- Results returned: "10 of 1,247"
-- Score distribution: Mini histogram of top-50 scores
-- Strategy breakdown: "AST: 6 results, LLM: 4 results" (when searching all collections)
-
-### 4. A/B Collection Comparison
-
-**Side-by-side UX:**
+**Chunking Quality Inspector:**
 
 ```
-┌─────────────────────────────────┐
-│  Query: [authentication middleware]  [Compare] │
-├────────────────┬────────────────┤
-│  AST Strategy  │  LLM Strategy  │
-├────────────────┼────────────────┤
-│ 1. auth.ts:45  │ 1. auth.ts:42  │  ← Same file, different boundaries
-│    Score: 0.89 │    Score: 0.92 │
-│    [preview]   │    [preview]   │
-│                │                │
-│ 2. jwt.ts:12   │ 2. middleware/ │  ← LLM grouped cross-file concern
-│    Score: 0.81 │    Score: 0.87 │
-│    [preview]   │    [preview]   │
-│ ...            │ ...            │
-├────────────────┴────────────────┤
-│  Agreement: 7/10 chunks overlap │
-│  AST unique: 3  │  LLM unique: 3 │
-│  Avg score: 0.74 vs 0.79       │
-└─────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│ Chunking Inspector                               │
+│ File: src/auth/middleware.ts                      │
+│ Strategy: LLM (prompt v3)    Chunks: 5           │
+├──────────────────┬──────────────────────────────┤
+│ Source Code       │ Chunk Details                │
+│                  │                              │
+│ 1: import {...}  │ ┌─ Chunk 1 (lines 1-8) ──┐  │
+│ 2: import {...}  │ │ Summary: "Import block   │  │
+│ ...              │ │ for auth dependencies"   │  │
+│ 8: import {...}  │ │ Quality: ★★★☆ (3/4)     │  │
+│                  │ └─────────────────────────┘  │
+│ 9:               │                              │
+│ 10: export async │ ┌─ Chunk 2 (lines 10-45) ─┐ │
+│ 11:   function   │ │ Summary: "JWT validation │  │
+│ ...              │ │ middleware that verifies  │  │
+│ 45: }            │ │ tokens and attaches user" │  │
+│                  │ │ Quality: ★★★★ (4/4)     │  │
+│                  │ └─────────────────────────┘  │
+│ ⚠ Gap: line 9   │                              │
+│   not covered    │                              │
+└──────────────────┴──────────────────────────────┘
 ```
 
-**Scoring visualization:**
-
-- **Grouped bar chart:** MRR, P@5, P@10 per strategy (from benchmark data)
-- **Radar chart:** Multi-dimensional comparison (precision, recall, latency, coverage, token cost)
-- **Score distribution overlay:** Two histograms on same axes — shows how score distributions differ
-
-**Rank agreement metric:** Kendall's tau or simple overlap percentage at K. "8 of top-10 results appear in both strategies" is immediately understandable.
-
-### 5. Search History
-
-**What to persist (extending existing RagEvent):**
-
-| Field           | Already Exists | New | Purpose                                           |
-| --------------- | -------------- | --- | ------------------------------------------------- |
-| query           | Yes            | —   | The search text                                   |
-| timestamp       | Yes            | —   | When search happened                              |
-| strategy        | Yes            | —   | Which search mode used                            |
-| latencyMs       | Yes            | —   | Query performance                                 |
-| chunksRetrieved | Yes            | —   | Result count                                      |
-| chunkIds        | Yes            | —   | Which chunks returned                             |
-| tokenCount      | Yes            | —   | Token budget consumed                             |
-| resultPayloads  | —              | Yes | Full result objects (path, score, preview, lines) |
-| collectionName  | —              | Yes | Which collection(s) queried                       |
-| searchMode      | —              | Yes | semantic \| hybrid \| expansion                   |
-| userSource      | —              | Yes | mcp \| dashboard \| benchmark                     |
-
-**How to make history useful:**
-
-1. **Replay:** Click any historical query → re-run it now → see current results side-by-side with historical results. Shows impact of re-indexing.
-2. **Compare:** Select two entries (same query, different dates) → diff view highlighting added/removed/moved results.
-3. **Filter:** By date range, strategy, query text, source (MCP vs dashboard), minimum score.
-4. **Export:** Download as JSON for external analysis or benchmark dataset creation.
-
-**Storage:** Extend MetricsStore SQLite schema. Add `search_results` table linked to `rag_events` by event ID. Index on query text and timestamp for fast filtering.
-
-### 6. Analytics & RAG Quality Monitoring
-
-**Aggregate metrics that matter:**
-
-| Metric                       | What It Measures                         | How to Compute                                                             | Visualization                                        |
-| ---------------------------- | ---------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------- |
-| **MRR trend**                | Is retrieval getting better over time?   | From benchmark runs, plot MRR per run date                                 | Line chart with trend line                           |
-| **Avg retrieval latency**    | Is search getting slower as index grows? | From RagEvents, avg latencyMs per day                                      | Line chart with threshold line (e.g., 200ms warning) |
-| **Indexing coverage**        | What % of codebase is indexed?           | Indexed files / total files (from project scan)                            | Gauge or percentage bar                              |
-| **Token consumption rate**   | How fast are we burning tokens?          | From RagEvents, sum tokenCount per day                                     | Stacked area chart (by strategy)                     |
-| **Query volume**             | How much is RAG being used?              | Count RagEvents per day                                                    | Bar chart                                            |
-| **Score distribution shift** | Are average relevance scores improving?  | From RagEvents, avg top-1 score per week                                   | Box plot or line chart with confidence band          |
-| **Strategy win rate**        | Which strategy returns better results?   | When both collections are queried, which has higher top-1 score more often | Pie chart or percentage bar                          |
-| **Chunk size distribution**  | Are chunks appropriately sized?          | From Qdrant payload, histogram of chunk token counts                       | Histogram per strategy                               |
-
-**Dashboard layout for analytics:**
+**Filtering Effectiveness View:**
 
 ```
-┌─────────────────────────────────────────┐
-│  Analytics Dashboard                     │
-├──────────────────┬──────────────────────┤
-│  MRR Trend       │  Retrieval Latency   │
-│  [line chart]    │  [line chart]        │
-├──────────────────┼──────────────────────┤
-│  Token Usage     │  Query Volume        │
-│  [stacked area]  │  [bar chart]         │
-├──────────────────┼──────────────────────┤
-│  Strategy        │  Indexing Coverage   │
-│  Comparison      │  AST: 100%           │
-│  [grouped bars]  │  LLM: 87%            │
-└──────────────────┴──────────────────────┘
+┌─────────────────────────────────────────────────┐
+│ Query: "JWT authentication middleware"           │
+│ Mode: Hybrid  Threshold: 0.3                     │
+├─────────────────────────────────────────────────┤
+│ ✅ RETURNED (5 results)                          │
+│ ┌─ 0.92  auth/middleware.ts:10-45  [LLM] ─────┐│
+│ ┌─ 0.85  auth/jwt-validator.ts:1-30 [AST] ────┐│
+│ ┌─ 0.71  auth/session.ts:22-58 [LLM] ─────────┐│
+│ ┌─ 0.55  auth/types.ts:1-20 [AST] ────────────┐│
+│ ┌─ 0.41  middleware/index.ts:5-15 [AST] ───────┐│
+├─────────────────────────────────────────────────┤
+│ ❌ FILTERED (3 near-misses, scores 0.20-0.29)   │
+│ ┌─ 0.29  routes/protected.ts:10-25 ───────────┐│
+│ ┌─ 0.24  config/auth-config.ts:1-15 ──────────┐│
+│ ┌─ 0.21  tests/auth.test.ts:5-30 ─────────────┐│
+├─────────────────────────────────────────────────┤
+│ 📊 Score Distribution                           │
+│ [histogram showing score spread of top 50]       │
+│ ───── threshold line at 0.3 ─────               │
+└─────────────────────────────────────────────────┘
 ```
 
 ---
 
-## MVP Definition
+## MVP Recommendation
 
-### Launch With (v1.1 Core)
+### Phase 1: Foundation (enables everything else)
 
-Minimum viable v1.1 — what's needed to validate LLM chunking and multi-collection search.
+1. **Prompt versioning** — hash-based version tracking, stored with collection metadata
+2. **Chunk overlap/gap detection** — post-processing validation in `llm-chunker.ts`
+3. **Fix RRF score threshold bug** — mode-aware thresholds (dense: 0.3, hybrid: 0.0)
+4. **Baseline benchmark** — establish current MRR before any changes
 
-- [ ] **LLM chunking pipeline (Ollama, single-pass, structured output)** — The headline feature. Without this, v1.1 has no reason to exist.
-- [ ] **Multi-collection Qdrant storage** — Required for LLM chunks to coexist with AST chunks.
-- [ ] **MCP tools query both collections** — Required for the AI client to benefit from LLM chunks.
-- [ ] **CLI `--strategy` flag** — Required for developers to trigger LLM indexing.
-- [ ] **Parallel embedding with progress** — Quality-of-life for the slow LLM chunking pipeline.
-- [ ] **Dashboard search UI (basic)** — Validates that LLM chunks produce good results. Query input + results list + scores.
+### Phase 2: Prompt Tuning (the main MRR lever)
 
-### Add After Validation (v1.1.x)
+5. **Prompt boundary improvements** — few-shot examples, min chunk size, class grouping rules
+6. **Prompt summary improvements** — intent-focused guidelines, domain terminology emphasis
+7. **Summary quality scoring** — heuristic checks for each chunk summary
+8. **Prompt A/B testing workflow** — CLI + benchmark comparison
 
-Features to add once LLM chunking is proven to work.
+### Phase 3: Dashboard Visibility
 
-- [ ] **A/B comparison side-by-side view** — Add when developers need to empirically compare strategies. Trigger: "both AST and LLM collections exist and have benchmark data."
-- [ ] **Search history persistence + replay** — Add when developers are iterating on RAG config and need to track improvement. Trigger: "developers are re-indexing frequently."
-- [ ] **Per-query metrics panel** — Add alongside or after search UI. Low incremental cost.
-- [ ] **A/B scoring visualization** — Add when benchmark data exists for both strategies.
+9. **Chunking quality inspector** — view chunks alongside source code
+10. **Score distribution analysis** — histogram of candidate scores
+11. **Filtering effectiveness view** — returned vs filtered results
+12. **Prompt version comparison** — link benchmark results to prompt versions
 
-### Future Consideration (v1.2+)
+**Defer:**
 
-Features to defer until v1.1 core is solid.
-
-- [ ] **Analytics trend charts** — Needs accumulated time-series data. Not useful until v1.1 has been running for weeks.
-- [ ] **Search history compare/diff view** — Complex UI for a power-user feature. Build after basic history proves useful.
-- [ ] **Strategy win rate tracking** — Needs significant query volume to be statistically meaningful.
-- [ ] **Token usage breakdown by strategy** — Nice-to-have, low urgency. MetricsStore already tracks tokens.
-- [ ] **Cloud LLM chunking (v3)** — Explicitly deferred per PROJECT.md. Ollama-only for v1.1.
+- **Score gap detection** — Interesting but premature. Fix the threshold bug first, measure impact.
+- **Cross-encoder reranking** — v1.3+. Focus on first-stage quality.
+- **Dynamic auto-tuning** — Need more data before automation makes sense.
 
 ---
 
 ## Feature Prioritization Matrix
 
-| Feature                                        | User Value | Implementation Cost | Priority |
-| ---------------------------------------------- | ---------- | ------------------- | -------- |
-| LLM chunking (Ollama + boundaries + summaries) | HIGH       | HIGH                | **P1**   |
-| Multi-collection Qdrant storage                | HIGH       | MEDIUM              | **P1**   |
-| MCP tools multi-collection query               | HIGH       | MEDIUM              | **P1**   |
-| CLI strategy selection                         | HIGH       | LOW                 | **P1**   |
-| Parallel embedding + progress                  | MEDIUM     | MEDIUM              | **P1**   |
-| Dashboard search UI (basic)                    | HIGH       | MEDIUM              | **P1**   |
-| Per-query metrics panel                        | MEDIUM     | LOW                 | **P2**   |
-| A/B side-by-side comparison                    | HIGH       | MEDIUM-HIGH         | **P2**   |
-| A/B scoring visualization                      | MEDIUM     | MEDIUM              | **P2**   |
-| Search history persistence                     | MEDIUM     | LOW-MEDIUM          | **P2**   |
-| Search history replay & compare                | MEDIUM     | MEDIUM              | **P2**   |
-| Search history filtering                       | LOW        | LOW                 | **P3**   |
-| Analytics: MRR trend chart                     | MEDIUM     | MEDIUM              | **P3**   |
-| Analytics: strategy comparison aggregates      | MEDIUM     | LOW-MEDIUM          | **P3**   |
-| Analytics: latency trend                       | LOW        | LOW                 | **P3**   |
-| Analytics: token breakdown by strategy         | LOW        | LOW                 | **P3**   |
+| Feature                          | MRR Impact                               | Implementation Cost | Priority |
+| -------------------------------- | ---------------------------------------- | ------------------- | -------- |
+| Fix RRF score threshold bug      | HIGH (currently filtering valid results) | LOW                 | **P0**   |
+| Prompt boundary improvements     | HIGH (better chunks = better embeddings) | MEDIUM              | **P1**   |
+| Prompt summary improvements      | HIGH (summary = text vector content)     | LOW-MEDIUM          | **P1**   |
+| Prompt versioning                | MEDIUM (enables systematic iteration)    | LOW-MEDIUM          | **P1**   |
+| Chunk overlap/gap detection      | MEDIUM (catches LLM failures)            | LOW                 | **P1**   |
+| Baseline + validation benchmarks | Foundational                             | LOW                 | **P1**   |
+| Chunking quality inspector       | HIGH (makes prompt tuning 3x faster)     | MEDIUM-HIGH         | **P2**   |
+| Summary quality scoring          | LOW-MEDIUM (heuristic feedback)          | LOW                 | **P2**   |
+| Prompt A/B testing workflow      | MEDIUM (systematic comparison)           | MEDIUM              | **P2**   |
+| Score distribution analysis      | MEDIUM (informs threshold tuning)        | LOW-MEDIUM          | **P2**   |
+| Filtering effectiveness view     | MEDIUM (noise/signal visibility)         | MEDIUM              | **P2**   |
+| Dynamic threshold per mode       | LOW-MEDIUM (refinement after bug fix)    | LOW                 | **P3**   |
+| Score gap detection              | LOW (advanced filtering)                 | MEDIUM              | **P3**   |
 
 **Priority key:**
 
-- **P1:** Must ship in v1.1 core. Without these, the milestone is incomplete.
-- **P2:** Should ship in v1.1.x patches. High value, moderate cost.
-- **P3:** Nice to have. Ship if time permits or defer to v1.2.
-
----
-
-## Competitor Feature Analysis
-
-| Feature Area            | Cursor              | Continue                           | Aider                  | Cody                            | ia-framework v1.1                                  |
-| ----------------------- | ------------------- | ---------------------------------- | ---------------------- | ------------------------------- | -------------------------------------------------- |
-| LLM-based chunking      | Unknown (black box) | Recommends AST in custom RAG guide | AST only (tree-sitter) | Sourcegraph-based (not chunked) | **Ollama-powered, single-pass, structured output** |
-| Multi-strategy indexing | No                  | No                                 | No                     | No                              | **AST + LLM collections, user-selectable**         |
-| A/B strategy comparison | No                  | No                                 | No                     | No                              | **Side-by-side results, scoring viz**              |
-| Search testing UI       | No                  | No                                 | No                     | No                              | **Dashboard search with metrics**                  |
-| Search history          | No                  | No                                 | No                     | No                              | **Persist, replay, compare**                       |
-| RAG quality analytics   | No                  | Basic telemetry                    | Token costs only       | No                              | **Trend charts, strategy comparison**              |
-| Parallel embedding      | Unknown             | Unknown                            | No                     | N/A                             | **p-queue concurrent batching**                    |
-| Progress reporting      | No                  | No                                 | No                     | No                              | **Real-time progress events**                      |
-
-**Key insight:** None of these features exist in any competitor. v1.1 is entirely in differentiator territory. The risk is not "someone else already does this" but "are developers willing to use a dashboard to tune RAG quality?" The bet is yes — developers who choose ia-framework over Cursor are already the type who want control and visibility.
+- **P0:** Fix immediately — active bug hurting results
+- **P1:** Core v1.2 — directly drives MRR improvement
+- **P2:** Visibility — makes tuning faster and more informed
+- **P3:** Refinement — after core improvements plateau
 
 ---
 
 ## Sources
 
-- **Ollama API:** Context7 `/ollama/ollama-js` — structured output via `format` parameter with JSON schema (HIGH confidence)
-- **Qdrant multi-collection:** Context7 `/qdrant/qdrant-js` — `lookupFrom`, `queryBatch`, collection CRUD (HIGH confidence)
-- **Existing codebase:** `IndexingPipeline`, `SearchEngine`, `MetricsStore`, MCP tools, Dashboard app (HIGH confidence — direct code inspection)
-- **MRR-IMPROVEMENT-RESEARCH.md:** Retrieval quality patterns and chunking strategy analysis (HIGH confidence — ia-framework internal research)
-- **Continue custom RAG guide:** AST chunking recommendation, embedding model selection (HIGH confidence — official docs)
-- **p-queue:** npm package for promise-based concurrency control (HIGH confidence — widely used, 1M+ weekly downloads)
-- **Recharts:** React charting library for dashboard visualizations (HIGH confidence — already in stack)
+- **Qdrant docs (HIGH):** RRF fusion returns rank-based scores, not cosine — threshold behavior differs. Context7 `/llmstxt/qdrant_tech_llms-full_txt`
+- **Existing codebase (HIGH):** `prompt.ts`, `llm-chunker.ts`, `search-engine.ts`, `multi-collection-search-engine.ts` — direct code inspection
+- **MRR-IMPROVEMENT-RESEARCH.md (HIGH):** Prior research on retrieval quality improvements, score threshold tuning, textify pattern
+- **v1.1 FEATURES.md (HIGH):** Prior feature research establishing existing capabilities
+- **PROJECT.md (HIGH):** v1.2 scope definition, MRR > 0.7 target, feature list
 
 ---
 
-_Feature research for: ia-framework v1.1 — RAG Quality & Observability_
-_Researched: 2026-04-09_
+_Feature research for: ia-framework v1.2 — Chunking Tuning & Retrieval Quality_
+_Researched: 2026-04-22_

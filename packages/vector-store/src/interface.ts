@@ -18,6 +18,8 @@ export interface ChunkPayload {
   /** Parent construct name when this is a sub-chunk */
   parentName?: string | undefined;
   indexedAt: string;
+  /** Heuristic quality score for chunk summary (0-100). Present only for LLM-chunked points. */
+  qualityScore?: number | undefined;
 }
 
 /**
@@ -144,6 +146,24 @@ export interface VectorStore {
    * Delete specific points by their chunk IDs.
    */
   deleteByIds(ids: string[]): Promise<void>;
+
+  /**
+   * Scroll (paginate) through all points in the collection without a query vector.
+   * Returns points ordered by ID, with offset-based pagination.
+   */
+  scroll(options: {
+    limit: number;
+    offset?: string | number | undefined;
+    filter?: Record<string, unknown> | undefined;
+  }): Promise<{
+    points: Array<{ id: string; payload: ChunkPayload }>;
+    nextOffset?: string | number | undefined;
+  }>;
+
+  /**
+   * Get the total number of points in the collection, optionally filtered.
+   */
+  countPoints(filter?: Record<string, unknown>): Promise<number>;
 
   /**
    * Delete the entire collection. Used when re-indexing with a different embedding model.

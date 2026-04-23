@@ -29,6 +29,7 @@ export async function chunkFile(params: {
   baseUrl?: string;
   numCtx?: number;
   signal?: AbortSignal | undefined;
+  examples?: { good: string; bad: string };
 }): Promise<ChunkingResult> {
   const maxCtx = params.numCtx ?? 32768;
   const estimatedTokens = Math.ceil(params.content.length / 4);
@@ -41,7 +42,11 @@ export async function chunkFile(params: {
     const promptEstimate = Math.ceil(params.content.length / 4) + 400; // +400 for prompt template
     const numCtx = clampedPow2(promptEstimate * 2, 2048, maxCtx);
 
-    const prompt = buildPrompt(params.content, params.fileName);
+    const prompt = buildPrompt(
+      params.content,
+      params.fileName,
+      params.examples ? { examples: params.examples } : undefined,
+    );
     const generateParams: Parameters<typeof generateChunks>[0] = {
       prompt,
       model: params.model,
@@ -61,6 +66,7 @@ export async function chunkFile(params: {
       signal: params.signal,
     };
     if (params.baseUrl !== undefined) windowingParams.baseUrl = params.baseUrl;
+    if (params.examples !== undefined) windowingParams.examples = params.examples;
     return chunkFileWithWindowing(windowingParams);
   }
 }
@@ -79,6 +85,7 @@ export async function chunkFileWithWindowing(params: {
   numCtx?: number;
   overlapLines?: number;
   signal?: AbortSignal | undefined;
+  examples?: { good: string; bad: string };
 }): Promise<ChunkingResult> {
   const maxCtx = params.numCtx ?? 32768;
   const overlapLines = params.overlapLines ?? 20; // per D-24 default
@@ -140,7 +147,11 @@ export async function chunkFileWithWindowing(params: {
     const windowContent = win.lines.join('\n');
     const windowOffset = win.startLine - 1; // 0-indexed offset for line number adjustment
 
-    const prompt = buildPrompt(windowContent, params.fileName);
+    const prompt = buildPrompt(
+      windowContent,
+      params.fileName,
+      params.examples ? { examples: params.examples } : undefined,
+    );
     const genParams: Parameters<typeof generateChunks>[0] = {
       prompt,
       model: params.model,

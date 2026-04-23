@@ -119,6 +119,37 @@ describe('GET /benchmark-trends', () => {
     expect(point).toHaveProperty('isBaseline', false);
   });
 
+  it('includes promptVersion and promptContentHash when present in configSnapshot', async () => {
+    const run = makeBenchmarkRun({
+      runId: 'run-pv',
+      configSnapshot: {
+        embeddingProvider: 'ollama',
+        embeddingModel: 'nomic-embed-text',
+        collectionName: 'ia-framework',
+        topK: 10,
+        scoreThreshold: 0.3,
+        promptVersion: 3,
+        promptContentHash: 'abc123def456',
+      },
+    });
+    const router = makeAnalyticsDeps({ runs: [run] });
+    const res = await router.request('/benchmark-trends');
+    const body = (await res.json()) as { trends: Array<Record<string, unknown>> };
+    const point = body.trends[0]!;
+    expect(point).toHaveProperty('promptVersion', 3);
+    expect(point).toHaveProperty('promptContentHash', 'abc123def456');
+  });
+
+  it('omits promptVersion and promptContentHash for runs without them (retroactive runs)', async () => {
+    const run = makeBenchmarkRun({ runId: 'run-old' });
+    const router = makeAnalyticsDeps({ runs: [run] });
+    const res = await router.request('/benchmark-trends');
+    const body = (await res.json()) as { trends: Array<Record<string, unknown>> };
+    const point = body.trends[0]!;
+    expect(point).not.toHaveProperty('promptVersion');
+    expect(point).not.toHaveProperty('promptContentHash');
+  });
+
   it('respects ?limit query param', async () => {
     const runs = Array.from({ length: 10 }, (_, i) =>
       makeBenchmarkRun({ runId: `run-${i}`, timestamp: `2026-04-0${i + 1}T10:00:00.000Z` }),

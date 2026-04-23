@@ -14,6 +14,16 @@ import type { CodeChunk } from '@ia-framework/ast-parser';
 import type { ChunkingStrategy, ChunkingConfig } from './types.js';
 import { chunkFile, type LLMChunk } from './llm-chunker.js';
 import { LlmChunkCache } from './llm-cache.js';
+import { PROMPT_CONTENT_HASH } from './prompt.js';
+import { loadPromptExamples, type PromptExamples } from './prompt-examples.js';
+import {
+  validateChunks,
+  generateReport,
+  printReport,
+  type FileValidation,
+  type ChunkValidationReport,
+} from './chunk-validator.js';
+import { scoreChunkSummary, type SummaryQualityScore } from './quality-scorer.js';
 
 export interface LlmChunkingOptions {
   /** Ollama model name, e.g. 'llama3.2:latest' */
@@ -22,6 +32,10 @@ export interface LlmChunkingOptions {
   ollamaUrl?: string;
   /** Path to the LLM chunk cache JSON file */
   cachePath: string;
+  /** Prompt version from project config — used as part of the cache key (default: 1) */
+  promptVersion?: number;
+  /** Path to directory containing custom prompt example .md files (optional) */
+  examplesDir?: string;
 }
 
 /** Extension → language mapping for CodeChunk.language field */
@@ -101,11 +115,20 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
   private readonly model: string;
   private readonly ollamaUrl: string | undefined;
   private readonly cache: LlmChunkCache;
+  private readonly promptVersion: number;
+  private readonly examplesDir: string | undefined;
+  private cachedExamples: PromptExamples | undefined;
+  /** Accumulated validations per file — populated after each chunk() call. */
+  private validations: FileValidation[] = [];
+  /** Accumulated quality scores: { filePath, score }[] */
+  private qualityEntries: Array<{ filePath: string; score: number }> = [];
 
   constructor(options: LlmChunkingOptions) {
     this.model = options.model;
     this.ollamaUrl = options.ollamaUrl;
     this.cache = new LlmChunkCache(options.cachePath);
+    this.promptVersion = options.promptVersion ?? 1;
+    this.examplesDir = options.examplesDir;
   }
 
   /**
@@ -120,14 +143,30 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
     const contentHash = createHash('sha256').update(content).digest('hex');
 
     // Check cache
-    const cached = this.cache.get(contentHash, this.model);
+    const cached = this.cache.get(contentHash, this.model, this.promptVersion);
     if (cached) {
+      // Run validation on cache-hit path
+      const totalLines = content.split('\n').length;
+      const validation = validateChunks(filePath, cached, totalLines);
+      this.validations.push(validation);
       return this.mapToCodeChunks(cached, filePath, content, config);
     }
 
     // Cache miss — call Ollama via chunkFile (handles windowing for large files)
     const fileName = filePath.split('/').pop() ?? filePath;
-    const result = await this.callWithRetry(filePath, content, fileName, config.signal);
+
+    // Load examples (cached after first load)
+    if (!this.cachedExamples) {
+      this.cachedExamples = await loadPromptExamples(this.examplesDir);
+    }
+
+    const result = await this.callWithRetry(
+      filePath,
+      content,
+      fileName,
+      this.cachedExamples,
+      config.signal,
+    );
 
     // Cache the result
     const cachedEntries = result.chunks.map((c) => ({
@@ -135,7 +174,12 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
       endLine: c.endLine,
       summary: c.summary,
     }));
-    this.cache.set(contentHash, this.model, cachedEntries);
+    this.cache.set(contentHash, this.model, this.promptVersion, cachedEntries);
+
+    // Run validation on cache-miss path
+    const totalLines = content.split('\n').length;
+    const validation = validateChunks(filePath, cachedEntries, totalLines);
+    this.validations.push(validation);
 
     return this.mapToCodeChunks(cachedEntries, filePath, content, config);
   }
@@ -148,6 +192,7 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
     filePath: string,
     content: string,
     fileName: string,
+    examples?: PromptExamples,
     signal?: AbortSignal | undefined,
   ): Promise<{ chunks: LLMChunk[] }> {
     const params = {
@@ -156,6 +201,7 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
       fileName,
       model: this.model,
       ...(this.ollamaUrl !== undefined && { baseUrl: this.ollamaUrl }),
+      ...(examples !== undefined && { examples }),
       signal,
     };
 
@@ -179,20 +225,26 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
     const language = detectLanguage(filePath);
     const relativePath = config.projectRoot ? relative(config.projectRoot, filePath) : filePath;
 
-    return entries.map((entry) => ({
-      id: makeChunkId(filePath, entry.startLine, entry.endLine),
-      filePath,
-      relativePath,
-      language,
-      chunkType: 'semantic' as const,
-      name: slugifyName(entry.summary),
-      content: extractLines(content, entry.startLine, entry.endLine),
-      startLine: entry.startLine,
-      endLine: entry.endLine,
-      imports: [],
-      exports: [],
-      description: entry.summary,
-    }));
+    return entries.map((entry) => {
+      const qualityResult: SummaryQualityScore = scoreChunkSummary(entry.summary);
+      this.qualityEntries.push({ filePath, score: qualityResult.score });
+
+      return {
+        id: makeChunkId(filePath, entry.startLine, entry.endLine),
+        filePath,
+        relativePath,
+        language,
+        chunkType: 'semantic' as const,
+        name: slugifyName(entry.summary),
+        content: extractLines(content, entry.startLine, entry.endLine),
+        startLine: entry.startLine,
+        endLine: entry.endLine,
+        imports: [],
+        exports: [],
+        description: entry.summary,
+        qualityScore: qualityResult.score,
+      } as CodeChunk & { qualityScore: number };
+    });
   }
 
   /**
@@ -207,5 +259,119 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
    */
   async saveCache(): Promise<void> {
     await this.cache.save();
+  }
+
+  /**
+   * Return metadata about the current prompt version and content hash.
+   * Used by the indexer to store collection-level metadata in Qdrant.
+   */
+  getMetadata(): { promptVersion: number; promptContentHash: string } {
+    return { promptVersion: this.promptVersion, promptContentHash: PROMPT_CONTENT_HASH };
+  }
+
+  /**
+   * Get aggregated validation report for all chunked files.
+   * Call after all files have been processed.
+   */
+  getValidationReport(): ChunkValidationReport {
+    return generateReport(this.validations);
+  }
+
+  /**
+   * Print the validation report to console.
+   * // TODO: Call printValidationReport() after indexing completes
+   */
+  printValidationReport(): void {
+    printReport(this.getValidationReport());
+  }
+
+  /**
+   * Get quality report for all scored chunks.
+   * Returns totals, low-quality count, average score, worst files, and score distribution.
+   * Low quality threshold: score < 40.
+   */
+  getQualityReport(): {
+    totalChunks: number;
+    lowQualityCount: number;
+    avgScore: number;
+    worstFiles: Array<{ file: string; avgScore: number; lowCount: number }>;
+    distribution: Record<string, number>;
+  } {
+    const LOW_QUALITY_THRESHOLD = 40;
+    const totalChunks = this.qualityEntries.length;
+
+    if (totalChunks === 0) {
+      return {
+        totalChunks: 0,
+        lowQualityCount: 0,
+        avgScore: 0,
+        worstFiles: [],
+        distribution: { '0-19': 0, '20-39': 0, '40-59': 0, '60-79': 0, '80-100': 0 },
+      };
+    }
+
+    const lowQualityCount = this.qualityEntries.filter(
+      (e) => e.score < LOW_QUALITY_THRESHOLD,
+    ).length;
+    const avgScore = Math.round(
+      this.qualityEntries.reduce((sum, e) => sum + e.score, 0) / totalChunks,
+    );
+
+    // Distribution buckets
+    const distribution: Record<string, number> = {
+      '0-19': 0,
+      '20-39': 0,
+      '40-59': 0,
+      '60-79': 0,
+      '80-100': 0,
+    };
+    for (const { score } of this.qualityEntries) {
+      if (score <= 19) distribution['0-19']!++;
+      else if (score <= 39) distribution['20-39']!++;
+      else if (score <= 59) distribution['40-59']!++;
+      else if (score <= 79) distribution['60-79']!++;
+      else distribution['80-100']!++;
+    }
+
+    // Group by file
+    const byFile = new Map<string, number[]>();
+    for (const { filePath, score } of this.qualityEntries) {
+      const arr = byFile.get(filePath) ?? [];
+      arr.push(score);
+      byFile.set(filePath, arr);
+    }
+
+    const worstFiles = Array.from(byFile.entries())
+      .map(([file, scores]) => ({
+        file,
+        avgScore: Math.round(scores.reduce((s, v) => s + v, 0) / scores.length),
+        lowCount: scores.filter((s) => s < LOW_QUALITY_THRESHOLD).length,
+      }))
+      .filter((f) => f.lowCount > 0)
+      .sort((a, b) => a.avgScore - b.avgScore)
+      .slice(0, 10);
+
+    return { totalChunks, lowQualityCount, avgScore, worstFiles, distribution };
+  }
+
+  /**
+   * Print the quality report to console.
+   */
+  printQualityReport(): void {
+    const report = this.getQualityReport();
+    console.log(`\nChunk Summary Quality Report`);
+    console.log(`  Total chunks:       ${report.totalChunks}`);
+    console.log(`  Low quality (<40):  ${report.lowQualityCount}`);
+    console.log(`  Average score:      ${report.avgScore}`);
+    console.log(`  Distribution:`);
+    for (const [bucket, count] of Object.entries(report.distribution)) {
+      console.log(`    ${bucket}: ${count}`);
+    }
+    if (report.worstFiles.length > 0) {
+      console.log(`\n  Worst files (by avg score):`);
+      for (const f of report.worstFiles) {
+        console.log(`    ${f.file}: avg=${f.avgScore}, lowCount=${f.lowCount}`);
+      }
+    }
   }
 }

@@ -62,6 +62,12 @@ export function analyticsRouter(deps: AnalyticsDeps): Hono {
       if (run.label !== undefined) {
         point.label = run.label;
       }
+      if (run.configSnapshot.promptVersion !== undefined) {
+        point.promptVersion = run.configSnapshot.promptVersion;
+      }
+      if (run.configSnapshot.promptContentHash !== undefined) {
+        point.promptContentHash = run.configSnapshot.promptContentHash;
+      }
       return point;
     });
 

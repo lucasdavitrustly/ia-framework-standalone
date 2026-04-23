@@ -8,10 +8,10 @@ type Engine = {
   search(query: {
     text: string;
     limit?: number;
-    scoreThreshold?: number;
+    scoreThreshold?: number | undefined;
   }): Promise<RetrievalResult[]>;
   searchWithExpansion(
-    query: { text: string; limit?: number; scoreThreshold?: number },
+    query: { text: string; limit?: number; scoreThreshold?: number | undefined },
     options?: { hops?: 0 | 1 | 2 },
   ): Promise<RetrievalResult[]>;
 };
@@ -66,7 +66,7 @@ export async function searchCodebaseHandler(
     {
       text: input.query,
       limit: input.limit ?? 10,
-      scoreThreshold: input.score_threshold ?? 0.3,
+      scoreThreshold: input.score_threshold,
     },
     { hops: clampedHops },
   );

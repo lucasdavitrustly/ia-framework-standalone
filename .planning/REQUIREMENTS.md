@@ -134,6 +134,45 @@ Requirements for milestone v1.1 — RAG Quality & Dashboard Evolution.
 - [ ] **DASH-17**: Dashboard shows token usage breakdown by strategy (indexing vs query, per strategy)
 - [ ] **DASH-18**: Dashboard shows score distribution visualizations (histograms across queries and strategies)
 
+## v1.2 Requirements
+
+Requirements for milestone v1.2 — Chunking Tuning & Retrieval Quality.
+
+**Goal:** Push MRR past 0.7 through LLM chunking prompt engineering, smarter score-based filtering, and dashboard tuning visibility — all benchmark-driven.
+
+### Baseline & Infrastructure
+
+- [x] **BASE-01**: RRF and hybrid search use mode-appropriate score thresholds instead of applying cosine threshold (0.3) to rank-based fusion scores
+- [x] **BASE-02**: Reproducible MRR baseline benchmark is established before any tuning changes (temperature=0, 3x averaged runs, frozen corpus)
+- [x] **BASE-03**: Prompt versioning system tracks which prompt version produced which chunks via hash-based version metadata stored with collection
+- [x] **BASE-04**: Chunk overlap/gap detection validates LLM chunks cover every source line exactly once and reports violations
+
+### Prompt Engineering
+
+- [x] **PRMT-01**: Chunking prompt includes few-shot examples of good and bad boundary detection for improved chunk accuracy
+- [x] **PRMT-02**: Chunking prompt enforces class grouping rules (keep methods with class) and minimum chunk size constraints (5+ lines)
+- [x] **PRMT-03**: Chunking prompt produces intent-focused summaries with domain terminology instead of syntax descriptions
+- [x] **PRMT-04**: Summary quality scoring provides heuristic quality score per chunk summary (length check, no raw code tokens, contains purpose verbs)
+- [x] **PRMT-05**: Developer can compare two prompt versions on the same benchmark corpus via CLI with side-by-side MRR deltas and per-query breakdown
+
+### Score Filtering
+
+- [x] **FILT-01**: Score filtering uses mode-aware thresholds with appropriate defaults: dense (cosine ~0.3), hybrid (rank-based ~0.0), multi-collection RRF (~0.0)
+
+### Dashboard Tuning
+
+- [x] **DTUN-01**: Dashboard chunking inspector shows individual chunks with line boundaries, prose summaries, and quality scores alongside syntax-highlighted source code
+- [x] **DTUN-02**: Dashboard score distribution view shows histogram of all candidate scores (top-50) with threshold boundary line and returned/filtered zones
+- [x] **DTUN-03**: Dashboard filtering effectiveness view shows returned results vs filtered near-miss results (just below threshold) with score comparison
+- [x] **DTUN-04**: Dashboard prompt version comparison links benchmark MRR results to prompt versions for quality attribution over time
+
+### Future (Deferred from v1.2)
+
+- **FILT-02**: Score gap detection — cut results at natural relevance cliff between result N and N+1
+- **FILT-03**: Dynamic threshold auto-tuning based on labeled relevance data
+- **RANK-01**: Cross-encoder reranking model for post-retrieval re-ranking (v1.3+)
+- **PRMT-06**: User-editable prompt templates (framework owns prompt quality)
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -248,9 +287,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ### v1.1 Traceability
 
-| Requirement | Phase    | Status  |
-| ----------- | -------- | ------- |
-| INDX-13     | Phase 12 | Pending |
+| Requirement | Phase    | Status   |
+| ----------- | -------- | -------- |
+| INDX-13     | Phase 12 | Pending  |
 | INDX-14     | Phase 13 | Complete |
 | INDX-15     | Phase 13 | Complete |
 | INDX-16     | Phase 13 | Complete |
@@ -266,18 +305,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RETR-09     | Phase 15 | Complete |
 | RETR-10     | Phase 15 | Complete |
 | RETR-11     | Phase 15 | Complete |
-| DASH-07     | Phase 16 | Pending |
-| DASH-08     | Phase 16 | Pending |
-| DASH-09     | Phase 16 | Pending |
-| DASH-10     | Phase 16 | Pending |
-| DASH-12     | Phase 17 | Pending |
-| DASH-13     | Phase 17 | Pending |
-| DASH-14     | Phase 17 | Pending |
-| DASH-11     | Phase 18 | Pending |
-| DASH-15     | Phase 18 | Pending |
-| DASH-16     | Phase 18 | Pending |
-| DASH-17     | Phase 18 | Pending |
-| DASH-18     | Phase 18 | Pending |
+| DASH-07     | Phase 16 | Pending  |
+| DASH-08     | Phase 16 | Pending  |
+| DASH-09     | Phase 16 | Pending  |
+| DASH-10     | Phase 16 | Pending  |
+| DASH-12     | Phase 17 | Pending  |
+| DASH-13     | Phase 17 | Pending  |
+| DASH-14     | Phase 17 | Pending  |
+| DASH-11     | Phase 18 | Pending  |
+| DASH-15     | Phase 18 | Pending  |
+| DASH-16     | Phase 18 | Pending  |
+| DASH-17     | Phase 18 | Pending  |
+| DASH-18     | Phase 18 | Pending  |
 
 **Coverage:**
 
@@ -286,7 +325,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 - v1.1 mapped to phases: 28/28 ✓
 - v1.1 unmapped: 0
 
+### v1.2 Traceability
+
+| Requirement | Phase    | Status  |
+| ----------- | -------- | ------- |
+| BASE-01     | Phase 19 | Complete |
+| BASE-02     | Phase 19 | Complete |
+| BASE-03     | Phase 19 | Complete |
+| BASE-04     | Phase 19 | Complete |
+| FILT-01     | Phase 19 | Complete |
+| PRMT-01     | Phase 20 | Complete |
+| PRMT-02     | Phase 20 | Complete |
+| PRMT-03     | Phase 20 | Complete |
+| PRMT-04     | Phase 20 | Complete |
+| PRMT-05     | Phase 20 | Complete |
+| DTUN-01     | Phase 21 | Complete |
+| DTUN-02     | Phase 21 | Complete |
+| DTUN-03     | Phase 21 | Complete |
+| DTUN-04     | Phase 21 | Complete |
+
+**Coverage:**
+
+- v1.2 requirements: 14 total
+- v1.2 mapped to phases: 14/14 ✓
+- v1.2 unmapped: 0
+
 ---
 
 _Requirements defined: 2026-03-31_
-_Last updated: 2026-04-09 — v1.1 roadmap created, all 28 requirements mapped to Phases 12-18_
+_Last updated: 2026-04-22 — v1.2 roadmap created, all 14 requirements mapped to Phases 19-21_

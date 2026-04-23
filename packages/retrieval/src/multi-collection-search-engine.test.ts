@@ -98,7 +98,7 @@ describe('MultiCollectionSearchEngine', () => {
       expect(llmEngine.search).toHaveBeenCalledWith(expect.objectContaining({ limit: 10 }));
     });
 
-    it('Test 4: scoreThreshold passed through to each engine, not applied after RRF', async () => {
+    it('Test 4: scoreThreshold is stripped from overFetchQuery (RRF merge produces rank-based scores, cosine threshold would filter wrongly)', async () => {
       const astEngine = createMockEngine([]);
       const llmEngine = createMockEngine([]);
 
@@ -112,10 +112,10 @@ describe('MultiCollectionSearchEngine', () => {
       await engine.search({ text: 'test', limit: 5, scoreThreshold: 0.7 });
 
       expect(astEngine.search).toHaveBeenCalledWith(
-        expect.objectContaining({ scoreThreshold: 0.7 }),
+        expect.objectContaining({ scoreThreshold: undefined }),
       );
       expect(llmEngine.search).toHaveBeenCalledWith(
-        expect.objectContaining({ scoreThreshold: 0.7 }),
+        expect.objectContaining({ scoreThreshold: undefined }),
       );
     });
 

@@ -227,4 +227,41 @@ export class QdrantVectorStore implements VectorStore {
   async deleteCollection(): Promise<void> {
     await this.client.deleteCollection(this.collectionName);
   }
+
+  async scroll(options: {
+    limit: number;
+    offset?: string | number | undefined;
+    filter?: Record<string, unknown> | undefined;
+  }): Promise<{
+    points: Array<{ id: string; payload: ChunkPayload }>;
+    nextOffset?: string | number | undefined;
+  }> {
+    const result = await this.client.scroll(this.collectionName, {
+      limit: options.limit,
+      ...(options.offset !== undefined ? { offset: options.offset } : {}),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(options.filter !== undefined ? { filter: options.filter as any } : {}),
+      with_payload: true,
+    });
+
+    return {
+      points: result.points.map((p) => ({
+        id: String(p.id),
+        payload: p.payload as unknown as ChunkPayload,
+      })),
+      nextOffset:
+        typeof result.next_page_offset === 'string' || typeof result.next_page_offset === 'number'
+          ? result.next_page_offset
+          : undefined,
+    };
+  }
+
+  async countPoints(filter?: Record<string, unknown>): Promise<number> {
+    const result = await this.client.count(this.collectionName, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(filter !== undefined ? { filter: filter as any } : {}),
+      exact: true,
+    });
+    return result.count;
+  }
 }

@@ -8,19 +8,16 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current Milestone: v1.1 — RAG Quality & Dashboard Evolution
+## Current Milestone: v1.2 — Chunking Tuning & Retrieval Quality
 
-**Goal:** Improve RAG retrieval quality (MRR > 0.7) through LLM-based chunking, parallel embedding, systematic strategy optimization, and dashboard analytics with interactive search.
+**Goal:** Push MRR past 0.7 through LLM chunking prompt engineering (better boundaries + summaries), smarter score-based result filtering (noise reduction), and dashboard tuning visibility — all benchmark-driven.
 
 **Target features:**
 
-- LLM-based chunking as alternative indexing strategy (model-agnostic, local Ollama, spike first)
-- Parallel/multi-threaded embedding for indexing speed
-- Dashboard search area with per-search metrics, A/B comparison, and search history
-- Full analytics suite in dashboard (chunk, embedding, retrieval stats)
-- Systematic RAG tuning targeting MRR > 0.7
-- All improvements flow through existing MCP tools — agents get better context automatically
-- MCP search tools query both AST and LLM collections, results tagged by source
+- LLM chunking prompt engineering — improve chunk boundary detection and prose summary quality
+- Score-based result filtering — smarter filtering to reduce irrelevant results in search output
+- Benchmark-driven validation — before/after MRR measurement on every tuning change
+- Dashboard tuning views — new visualizations for chunking quality and filtering effectiveness
 
 ## Requirements
 
@@ -46,26 +43,27 @@ AI that actually understands the codebase — better context means better code o
 - [x] Project config file (`.ia-framework/project.json`) synced to dashboard — v1.0
 - [x] Hybrid BM25+dense search with RRF fusion — v1.0
 - [x] 30-query benchmark corpus with balanced coverage — v1.0
+- [x] LLM-based chunking as alternative indexing strategy via Ollama — v1.1
+- [x] LLM generates prose summary per chunk before embedding — v1.1
+- [x] Parallel/multi-threaded embedding for indexing speed — v1.1
+- [x] Separate Qdrant collections per indexing strategy (AST vs LLM) — v1.1
+- [x] CLI strategy selection and interactive Ollama model management — v1.1
+- [x] MCP search tools query both AST and LLM collections with RRF merging — v1.1
+- [x] Dashboard search page with A/B comparison, per-query metrics — v1.1
+- [x] Dashboard search history with replay, filtering, comparison — v1.1
+- [x] Dashboard analytics suite: strategy comparison, quality trends, token breakdowns — v1.1
 
 ### Active
 
-<!-- v1.1 scope — building toward these. -->
+<!-- v1.2 scope — building toward these. -->
 
-- [ ] LLM-based chunking as alternative indexing strategy (model-agnostic, local Ollama)
-- [ ] LLM generates prose summary per chunk before embedding (stored + prepended)
-- [ ] Parallel/multi-threaded embedding for indexing speed
-- [ ] Separate Qdrant collections per indexing strategy (AST vs LLM)
-- [ ] CLI strategy selection: AST (tree-sitter) or LLM (Ollama) at index time
-- [ ] CLI interactive Ollama model selection when configured model is missing
-- [x] MCP search tools (`search_codebase`, `search_codebase_hybrid`) query both collections — Validated in Phase 15: multi-collection-search-mcp-integration
-- [x] MCP search results tagged with source strategy (ast/llm) and unified ranking — Validated in Phase 15: multi-collection-search-mcp-integration
-- [x] Dashboard search area: query input, ranked results with inline scores and match type — Validated in Phase 16: dashboard-search
-- [x] Dashboard per-search metrics panel: tokens, latency, chunk count, score distribution — Validated in Phase 16: dashboard-search
-- [x] Dashboard A/B strategy comparison: same query against AST vs LLM collections — Validated in Phase 16: dashboard-search
-- [ ] Dashboard search history: persistent log with metrics, filterable, comparable
-- [ ] Dashboard analytics suite: chunk stats, embedding stats, retrieval stats (aggregate)
-- [ ] Better dashboard visualization: improved charts, filters, time ranges
-- [ ] RAG quality target: MRR > 0.7 through systematic strategy optimization
+- [x] LLM chunking prompt engineering for better chunk boundary detection _(Validated in Phase 20: prompt-engineering)_
+- [x] LLM chunking prompt engineering for higher-quality prose summaries _(Validated in Phase 20: prompt-engineering)_
+- [ ] Score-based result filtering improvements to reduce search noise
+- [ ] Benchmark-driven validation of every tuning change (before/after MRR)
+  - [x] Dashboard tuning views for chunking quality visibility _(Validated in Phase 21: dashboard-tuning-views)_
+  - [x] Dashboard tuning views for filtering effectiveness visibility _(Validated in Phase 21: dashboard-tuning-views)_
+- [ ] RAG quality target: MRR > 0.7 through systematic optimization
 
 ### Out of Scope
 
@@ -150,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-14 — Phase 16 (dashboard-search) complete. Dashboard now has a full search page at /rag/search: SearchBar with collection selector (AST/LLM/both), ranked results with file paths, scores, and inline code previews, per-query MetricsPanel (latency, chunks scanned, score distribution chart), and A/B comparison layout for side-by-side AST vs LLM ranking. Backend adds POST /api/search and GET /api/search/collections routes wired into DI. Requirements DASH-07, DASH-08, DASH-09, DASH-10 validated. Next: Phase 17 (dashboard-search-history)._
+_Last updated: 2026-04-23 — Phase 21 complete: dashboard-tuning-views — Chunk Inspector (DTUN-01), Score Distribution histogram with draggable threshold (DTUN-02), Near-Miss panel (DTUN-03), and Prompt Version comparison chart (DTUN-04) all shipped_

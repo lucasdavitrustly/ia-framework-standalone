@@ -38,6 +38,10 @@ export interface ConfigSnapshot {
   collectionName: string;
   topK: number;
   scoreThreshold: number;
+  /** Prompt template version number — from LlmStrategy.getMetadata() (D-02, DTUN-04) */
+  promptVersion?: number;
+  /** SHA-256 hash of prompt content — from LlmStrategy.getMetadata() (D-02, DTUN-04) */
+  promptContentHash?: string;
 }
 
 /** Aggregated results of a full benchmark run across all queries. */
@@ -57,6 +61,27 @@ export interface BenchmarkRun {
   avgLatencyMs: number;
   /** ISO 8601 timestamp */
   timestamp: string;
+}
+
+/** Result of a 3-run baseline benchmark with averaged metrics and stddev. */
+export interface BaselineResult {
+  /** UUID identifier for this baseline */
+  baselineId: string;
+  /** The 3 individual BenchmarkRun objects */
+  runs: BenchmarkRun[];
+  /** Average MRR across 3 runs */
+  avgMrr: number;
+  /** Average Hit@K across 3 runs */
+  avgHitAtK: number;
+  /** Average latency across 3 runs */
+  avgLatencyMs: number;
+  /** Standard deviation of MRR across 3 runs */
+  mrrStddev: number;
+  configSnapshot: ConfigSnapshot;
+  /** ISO 8601 timestamp */
+  timestamp: string;
+  /** Optional human-readable label */
+  label?: string;
 }
 
 /** Configuration for running a benchmark. */

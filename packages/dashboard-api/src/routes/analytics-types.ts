@@ -13,6 +13,10 @@ export interface BenchmarkTrendPoint {
   avgLatencyMs: number;
   collectionName: string;
   isBaseline: boolean;
+  /** Prompt template version number — captured from LlmStrategy.getMetadata() (D-02) */
+  promptVersion?: number;
+  /** SHA-256 hash of prompt content — for precise change tracking (D-02) */
+  promptContentHash?: string;
 }
 
 /** One row in the strategy comparison table / chart */

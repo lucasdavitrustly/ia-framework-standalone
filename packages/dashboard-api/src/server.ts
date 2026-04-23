@@ -138,6 +138,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
           },
           baseCollectionName,
           searchHistoryStore,
+          vectorStores,
         };
       }
     } catch (err) {

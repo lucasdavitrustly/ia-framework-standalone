@@ -4,6 +4,7 @@ export type {
   BenchmarkRun,
   BenchmarkConfig,
   ConfigSnapshot,
+  BaselineResult,
 } from './types.js';
 export { BenchmarkStore } from './benchmark-store.js';
 export { BenchmarkRunner } from './benchmark-runner.js';

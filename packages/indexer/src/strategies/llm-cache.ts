@@ -26,26 +26,28 @@ export class LlmChunkCache {
   }
 
   /**
-   * Build cache key from content hash and model name.
+   * Build cache key from content hash, model name, and prompt version.
    * Different models produce different chunk boundaries — cache must be per-model.
+   * Different prompt versions produce different chunks — cache must be per-prompt-version.
+   * Key format: `{contentHash}:{model}:{promptVersion}`
    */
-  private makeKey(contentHash: string, model: string): string {
-    return `${contentHash}:${model}`;
+  private makeKey(contentHash: string, model: string, promptVersion: number): string {
+    return `${contentHash}:${model}:${promptVersion}`;
   }
 
   /**
-   * Get cached chunks for a given content hash + model.
-   * Returns undefined on cache miss.
+   * Get cached chunks for a given content hash + model + prompt version.
+   * Returns undefined on cache miss (including when prompt version changes).
    */
-  get(contentHash: string, model: string): CachedChunkEntry[] | undefined {
-    return this.cache.get(this.makeKey(contentHash, model));
+  get(contentHash: string, model: string, promptVersion: number): CachedChunkEntry[] | undefined {
+    return this.cache.get(this.makeKey(contentHash, model, promptVersion));
   }
 
   /**
-   * Store chunks in cache for a given content hash + model.
+   * Store chunks in cache for a given content hash + model + prompt version.
    */
-  set(contentHash: string, model: string, chunks: CachedChunkEntry[]): void {
-    this.cache.set(this.makeKey(contentHash, model), chunks);
+  set(contentHash: string, model: string, promptVersion: number, chunks: CachedChunkEntry[]): void {
+    this.cache.set(this.makeKey(contentHash, model, promptVersion), chunks);
   }
 
   /**

@@ -5,6 +5,26 @@
  * Ported from spike/llm-chunking/src/prompt.ts — validated in Phase 12 spike.
  */
 
+import { createHash } from 'node:crypto';
+
+/**
+ * A short hash of the prompt template content for version tracking.
+ * Changes automatically whenever the prompt text changes.
+ * Used to detect prompt changes and invalidate caches.
+ */
+export const PROMPT_CONTENT_HASH: string = createHash('sha256')
+  .update(buildPromptTemplate())
+  .digest('hex')
+  .slice(0, 8);
+
+/**
+ * Build the static prompt template (without dynamic content) for hashing.
+ * Used only for computing PROMPT_CONTENT_HASH.
+ */
+function buildPromptTemplate(): string {
+  return buildPrompt('', '', {}).trim();
+}
+
 /** JSON schema for the chunking output — exported for reference/testing */
 export const CHUNK_JSON_SCHEMA = {
   type: 'object',
@@ -31,11 +51,28 @@ export const CHUNK_JSON_SCHEMA = {
  *
  * @param sourceCode - Raw file content
  * @param fileName - File name (relative path) for context
+ * @param options - Optional parameters including few-shot examples
  * @returns Formatted prompt string
  */
-export function buildPrompt(sourceCode: string, fileName: string): string {
+export function buildPrompt(
+  sourceCode: string,
+  fileName: string,
+  options?: { examples?: { good: string; bad: string } },
+): string {
   const lines = sourceCode.split('\n');
   const numberedLines = lines.map((line, idx) => `${idx + 1}: ${line}`).join('\n');
+
+  const examplesSection = options?.examples
+    ? `## Examples
+
+GOOD boundary detection:
+${options.examples.good}
+
+BAD boundary detection (avoid this):
+${options.examples.bad}
+
+`
+    : '';
 
   return `You are a code analysis tool. Analyze the following source code and identify semantic boundaries — groups of lines that form a cohesive unit of functionality.
 
@@ -50,8 +87,13 @@ Rules:
 - Import/export blocks should be their own chunk
 - Summaries should describe the PURPOSE and BEHAVIOR, not just list identifiers
 - Do NOT include import/export analysis — only semantic boundaries and prose summaries
+- A class and all its methods MUST be a single chunk. Never split a class across chunks.
+- If a class exceeds 100 lines, split into logical method groups but always prefix each sub-chunk summary with the class name.
+- Minimum chunk size: 5 lines. Do not create chunks smaller than 5 lines — merge them with adjacent context.
+- Summaries MUST describe what the code DOES using domain terminology (handles, validates, orchestrates, manages, transforms, routes, etc.)
+- Do NOT describe syntax structure ("this function takes X and returns Y"). Describe PURPOSE and BEHAVIOR.
 
-File: ${fileName}
+${examplesSection}File: ${fileName}
 
 Source code:
 ${numberedLines}`;

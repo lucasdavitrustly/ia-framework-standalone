@@ -221,6 +221,50 @@ export interface BenchmarkTrendPoint {
   avgLatencyMs: number;
   collectionName: string;
   isBaseline: boolean;
+  promptVersion?: number;
+  promptContentHash?: string;
+}
+
+// Tuning DTOs (mirror packages/dashboard-api/src/routes/tuning-types.ts)
+export interface ChunkBrowseEntry {
+  chunkId: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  chunkType: string;
+  source: 'ast' | 'llm';
+  qualityScore?: number;
+  name?: string;
+  content: string;
+}
+
+export interface ChunkBrowseResponse {
+  chunks: ChunkBrowseEntry[];
+  total: number;
+}
+
+/** A single search candidate in the unfiltered score analysis (mirrors tuning-types.ts) */
+export interface ScoreCandidate {
+  id: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+  source: 'ast' | 'llm';
+  chunkType: string;
+  content: string;
+  aboveThreshold: boolean;
+  isNearMiss: boolean;
+}
+
+/** Full score analysis response for a search history entry (mirrors tuning-types.ts) */
+export interface ScoreAnalysisResponse {
+  query: string;
+  threshold: number;
+  candidates: ScoreCandidate[];
+  returnedCount: number;
+  filteredCount: number;
+  nearMissCount: number;
 }
 
 export interface StrategyComparisonRow {
@@ -339,4 +383,20 @@ export const DashboardClient = {
     get<{ breakdown: TokenBreakdownEntry[] }>('/api/analytics/token-breakdown').then(
       (r) => r.breakdown,
     ),
+  getTuningChunks: (params?: {
+    collection?: string;
+    minQuality?: number;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.collection) qs.set('collection', params.collection);
+    if (params?.minQuality !== undefined) qs.set('minQuality', String(params.minQuality));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+    const q = qs.toString();
+    return get<ChunkBrowseResponse>(`/api/tuning/chunks${q ? `?${q}` : ''}`);
+  },
+  getTuningScores: (historyId: string) =>
+    get<ScoreAnalysisResponse>(`/api/tuning/scores/${historyId}`),
 };

@@ -60,7 +60,7 @@ export class SearchEngine {
   async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
     const { embeddingProvider, vectorStore } = this.config;
     const limit = query.limit ?? this.config.defaultLimit ?? 10;
-    const scoreThreshold = query.scoreThreshold ?? this.config.defaultScoreThreshold ?? 0.5;
+    const scoreThreshold = query.scoreThreshold ?? this.config.defaultScoreThreshold ?? 0.3;
     const searchLimit = limit * 2; // fetch extra to allow dedup
 
     // Embed the query once (same vector for both searches)

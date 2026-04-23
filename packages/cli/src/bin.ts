@@ -9,6 +9,7 @@ import { benchmarkCommand } from './commands/benchmark.command.js';
 import { dbCommand } from './commands/db.command.js';
 import { agentsCommand } from './commands/agents.command.js';
 import { helloCommand } from './commands/hello.command.js';
+import { promptCommand } from './commands/prompt.command.js';
 
 const program = new Command('ia-framework')
   .version('0.1.0')
@@ -23,6 +24,7 @@ program.addCommand(statusCommand());
 program.addCommand(benchmarkCommand());
 program.addCommand(dbCommand());
 program.addCommand(agentsCommand());
+program.addCommand(promptCommand());
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   process.stderr.write(`CLI error: ${String(err)}\n`);

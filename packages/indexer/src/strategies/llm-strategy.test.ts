@@ -81,7 +81,7 @@ describe('LlmChunkingStrategy', () => {
     const strategy = new LlmChunkingStrategy(options);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private cache for test setup
     const cache = (strategy as any)['cache'];
-    cache.set(contentHash, 'llama3.2:latest', [
+    cache.set(contentHash, 'llama3.2:latest', 1, [
       { startLine: 1, endLine: 1, summary: 'Variable declaration' },
     ]);
 

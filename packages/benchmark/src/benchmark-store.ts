@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { BenchmarkRun, QueryResult } from './types.js';
+import type { BaselineResult, BenchmarkRun, QueryResult } from './types.js';
 
 /**
  * SQLite-backed store for benchmark runs and query results.
@@ -44,6 +44,19 @@ export class BenchmarkStore {
 
       CREATE INDEX IF NOT EXISTS idx_bqr_run_id ON benchmark_query_results(run_id);
       CREATE INDEX IF NOT EXISTS idx_br_timestamp ON benchmark_runs(timestamp);
+
+      CREATE TABLE IF NOT EXISTS baseline_runs (
+        baseline_id    TEXT PRIMARY KEY,
+        label          TEXT,
+        avg_mrr        REAL NOT NULL,
+        avg_hit_at_k   REAL NOT NULL,
+        avg_latency_ms REAL NOT NULL,
+        mrr_stddev     REAL NOT NULL,
+        config_snapshot TEXT NOT NULL,
+        run_ids        TEXT NOT NULL,
+        timestamp      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_baseline_timestamp ON baseline_runs(timestamp);
     `);
   }
 
@@ -152,6 +165,83 @@ export class BenchmarkStore {
   close(): void {
     this.db.close();
   }
+
+  /** Save a BaselineResult (3-run average) and all individual runs in a single transaction. */
+  saveBaseline(baseline: BaselineResult): void {
+    const insertBaseline = this.db.prepare(`
+      INSERT INTO baseline_runs
+        (baseline_id, label, avg_mrr, avg_hit_at_k, avg_latency_ms, mrr_stddev, config_snapshot, run_ids, timestamp)
+      VALUES
+        (@baselineId, @label, @avgMrr, @avgHitAtK, @avgLatencyMs, @mrrStddev, @configSnapshot, @runIds, @timestamp)
+    `);
+
+    const transaction = this.db.transaction(() => {
+      // Save individual runs first (FK refs from baseline)
+      for (const run of baseline.runs) {
+        this.saveRun(run);
+      }
+      insertBaseline.run({
+        baselineId: baseline.baselineId,
+        label: baseline.label ?? null,
+        avgMrr: baseline.avgMrr,
+        avgHitAtK: baseline.avgHitAtK,
+        avgLatencyMs: baseline.avgLatencyMs,
+        mrrStddev: baseline.mrrStddev,
+        configSnapshot: JSON.stringify(baseline.configSnapshot),
+        runIds: JSON.stringify(baseline.runs.map((r) => r.runId)),
+        timestamp: baseline.timestamp,
+      });
+    });
+
+    transaction();
+  }
+
+  /** Return the most recently created BaselineResult, or null if none exist. */
+  getLatestBaseline(): BaselineResult | null {
+    const row = this.db
+      .prepare(
+        `SELECT baseline_id, label, avg_mrr, avg_hit_at_k, avg_latency_ms, mrr_stddev,
+                config_snapshot, run_ids, timestamp
+         FROM baseline_runs ORDER BY timestamp DESC LIMIT 1`,
+      )
+      .get() as BaselineRow | undefined;
+
+    if (!row) return null;
+
+    const runIds: string[] = JSON.parse(row.run_ids) as string[];
+    const runs: BenchmarkRun[] = runIds
+      .map((id) => this.getRunById(id))
+      .filter((r): r is BenchmarkRun => r !== null);
+
+    const result: BaselineResult = {
+      baselineId: row.baseline_id,
+      runs,
+      avgMrr: row.avg_mrr,
+      avgHitAtK: row.avg_hit_at_k,
+      avgLatencyMs: row.avg_latency_ms,
+      mrrStddev: row.mrr_stddev,
+      configSnapshot: JSON.parse(row.config_snapshot) as BaselineResult['configSnapshot'],
+      timestamp: row.timestamp,
+    };
+
+    if (row.label !== null) {
+      result.label = row.label;
+    }
+
+    return result;
+  }
+}
+
+interface BaselineRow {
+  baseline_id: string;
+  label: string | null;
+  avg_mrr: number;
+  avg_hit_at_k: number;
+  avg_latency_ms: number;
+  mrr_stddev: number;
+  config_snapshot: string;
+  run_ids: string;
+  timestamp: string;
 }
 
 // ── Row shapes ────────────────────────────────────────────────────────────────

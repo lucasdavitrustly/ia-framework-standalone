@@ -21,6 +21,7 @@ import type {
   ConfigSnapshot,
   CorpusGeneratorOptions,
   BenchmarkQuery,
+  BaselineResult,
 } from '@ia-framework/benchmark';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -746,6 +747,125 @@ function initCorpusSubcommand(): Command {
     );
 }
 
+// ── baseline subcommand ───────────────────────────────────────────────────────
+
+function baselineSubcommand(): Command {
+  return new Command('baseline')
+    .description('Run 3x benchmark and establish reproducible MRR baseline')
+    .option('-c, --config <path>', 'Path to project.json config')
+    .option('-k, --top-k <n>', 'Number of results per query', '10')
+    .option('-t, --threshold <n>', 'Score threshold', '0.5')
+    .option('-l, --label <text>', 'Label for this baseline')
+    .option('--corpus <path>', 'Path to benchmark-queries.json')
+    .action(
+      async (options: {
+        config?: string;
+        topK: string;
+        threshold: string;
+        label?: string;
+        corpus?: string;
+      }) => {
+        const logger = createLogger('cli:benchmark:baseline');
+        const configPath = getConfigPath(options);
+        const frameworkDir = dirname(configPath);
+
+        try {
+          const config = await loadConfig(configPath);
+          const corpusPath = options.corpus ?? join(frameworkDir, 'benchmark-queries.json');
+
+          // Load corpus
+          let queries: BenchmarkQuery[];
+          try {
+            queries = await loadCorpus(corpusPath);
+          } catch (err) {
+            if (err instanceof CorpusNotFoundError) {
+              await scaffoldExampleCorpus(corpusPath);
+              console.log(`✓ Created example corpus: ${corpusPath}`);
+              console.log(
+                'Edit the file to match your codebase, then re-run: ia-framework benchmark baseline',
+              );
+              process.exit(0);
+            }
+            throw err;
+          }
+
+          // Validate corpus
+          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          if (validationErrors.length > 0) {
+            for (const err of validationErrors) {
+              console.error(`  [corpus] [${err.queryId}] ${err.error}`);
+            }
+            process.exit(1);
+          }
+
+          // Build SearchEngine
+          const embeddingProvider = createEmbeddingProvider(config.embedding);
+          const vectorStore = new QdrantVectorStore({
+            host: config.vectorStore.host,
+            port: config.vectorStore.port,
+            collectionName: config.vectorStore.collectionName,
+            apiKey: config.vectorStore.apiKey,
+          });
+          const searchEngine = new SearchEngine({ embeddingProvider, vectorStore });
+
+          const topK = parseInt(options.topK, 10);
+          const scoreThreshold = parseFloat(options.threshold);
+          const benchmarkConfig: BenchmarkConfig = {
+            topK: Number.isNaN(topK) ? 10 : topK,
+            scoreThreshold: Number.isNaN(scoreThreshold) ? 0.5 : scoreThreshold,
+          };
+
+          const configSnapshot: ConfigSnapshot = {
+            embeddingProvider: config.embedding.provider,
+            embeddingModel: config.embedding.model,
+            collectionName: config.vectorStore.collectionName,
+            topK: benchmarkConfig.topK,
+            scoreThreshold: benchmarkConfig.scoreThreshold,
+          };
+
+          console.log('Running 3x baseline benchmark (frozen corpus assumed)...');
+          console.log('⚠ Do not re-index between runs for reproducible results.\n');
+
+          const runner = new BenchmarkRunner(searchEngine, benchmarkConfig);
+          const baseline = await runner.runBaseline(queries, configSnapshot);
+          if (options.label !== undefined) {
+            baseline.label = options.label;
+          }
+
+          // Save to store
+          const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
+          mkdirSync(frameworkDir, { recursive: true });
+          const store = new BenchmarkStore(benchmarksDbPath);
+          store.saveBaseline(baseline);
+          store.close();
+
+          // Print results
+          printBaselineResults(baseline);
+        } catch (error) {
+          process.stderr.write(`✗ benchmark baseline failed: ${String(error)}\n`);
+          logger.error({ error }, 'Benchmark baseline failed');
+          process.exit(1);
+        }
+      },
+    );
+}
+
+function printBaselineResults(baseline: BaselineResult): void {
+  const label = baseline.label ? ` — ${baseline.label}` : '';
+  const idShort = baseline.baselineId.slice(0, 8);
+
+  console.log(`\nBaseline: ${idShort}${label}`);
+  console.log(`Runs: 3`);
+  console.log(`Avg MRR:     ${baseline.avgMrr.toFixed(4)}`);
+  console.log(`MRR Stddev:  ${baseline.mrrStddev.toFixed(4)}`);
+  console.log(`Avg Hit@K:   ${baseline.avgHitAtK.toFixed(2)}`);
+  console.log(`Avg Latency: ${Math.round(baseline.avgLatencyMs)}ms`);
+  console.log('\nIndividual runs:');
+  baseline.runs.forEach((run, i) => {
+    console.log(`  Run ${i + 1}: MRR=${run.mrr.toFixed(4)} Hit@K=${run.hitAtK.toFixed(2)}`);
+  });
+}
+
 // ── clean subcommand ──────────────────────────────────────────────────────────
 
 function cleanSubcommand(): Command {
@@ -785,14 +905,16 @@ export function benchmarkCommand(): Command {
     `
 Corpus workflow:
   1. ia-framework benchmark init-corpus   # generate queries with local Ollama
-  2. ia-framework benchmark run           # measure Hit@K and MRR
-  3. ia-framework benchmark list          # review results
-  4. ia-framework benchmark compare       # compare runs after tuning
+  2. ia-framework benchmark baseline      # run 3x and establish reproducible MRR baseline
+  3. ia-framework benchmark run           # measure Hit@K and MRR after tuning
+  4. ia-framework benchmark list          # review results
+  5. ia-framework benchmark compare       # compare runs after tuning
 
 See docs/benchmark.md for full reference.`,
   );
 
   benchmark.addCommand(runSubcommand());
+  benchmark.addCommand(baselineSubcommand());
   benchmark.addCommand(listSubcommand());
   benchmark.addCommand(historySubcommand());
   benchmark.addCommand(compareSubcommand());

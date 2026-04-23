@@ -3,7 +3,10 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** - Phases 1-11 (shipped 2026-04-07)
-- ✅ **v1.1 RAG Quality & Dashboard Evolution** - Phases 12-18 (shipped 2026-04-15)## Phases
+- ✅ **v1.1 RAG Quality & Dashboard Evolution** - Phases 12-18 (shipped 2026-04-15)
+- 🚧 **v1.2 Chunking Tuning & Retrieval Quality** - Phases 19-21 (in progress)
+
+## Phases
 
 **Phase Numbering:**
 
@@ -260,7 +263,8 @@ Plans:
 - [x] **Phase 17: Dashboard Search History** - Persistent search log with replay, filtering, and comparison (completed 2026-04-15)
 - [x] **Phase 18: Dashboard Analytics** - Strategy comparison charts, RAG quality trends, token breakdowns, score distributions (completed 2026-04-15)
 
-## Phase Details
+<details>
+<summary>v1.1 Phase Details (Phases 12-18)</summary>
 
 ### Phase 12: LLM Chunking Spike
 
@@ -277,20 +281,14 @@ Plans:
 
 Plans:
 
-- [ ] 12-01-PLAN.md — Build and run LLM chunking spike (scaffold, Ollama integration, measurement harnesses, GO/NO-GO report)
+- [x] 12-01-PLAN.md — Build and run LLM chunking spike
 
 ### Phase 13: Pipeline Refactoring & Parallel Embedding
 
 **Goal**: Indexing pipeline is faster and extensible — parallel embedding with provider-aware concurrency and real-time progress visibility
 **Depends on**: Nothing (independent refactoring of existing pipeline)
 **Requirements**: INDX-14, INDX-15, INDX-16, INDX-17
-**Success Criteria** (what must be TRUE):
-
-1. Embedding pipeline processes multiple chunks concurrently via p-queue, completing indexing measurably faster than sequential baseline
-2. Concurrency automatically adapts to provider type (Ollama: 2-3 concurrent, OpenAI: 5-10 concurrent) without manual configuration
-3. CLI and dashboard receive real-time progress events during indexing showing phase, completed count, and total count
-4. Developer can override default embedding concurrency via `embeddingConcurrency` in project.json
-   **Plans**: 3 plans
+**Plans**: 3 plans
 
 Plans:
 
@@ -303,19 +301,12 @@ Plans:
 **Goal**: Developer can index codebase using LLM-based semantic chunking via Ollama, with chunks stored in a dedicated collection
 **Depends on**: Phase 12 (GO decision), Phase 13 (ChunkingStrategy interface)
 **Requirements**: INDX-10, INDX-11, INDX-12, CLIE-01, CLIE-02, CLIE-03, RETR-07
-**Success Criteria** (what must be TRUE):
-
-1. Running `ia-framework index --strategy llm` produces semantically chunked code with prose summaries via Ollama in a single pass per file
-2. LLM chunks are stored in a separate `{project}-llm` Qdrant collection alongside the existing `{project}` AST collection
-3. CLI verifies the configured Ollama model is available before LLM indexing starts; prompts interactive model selection when the configured model is missing
-4. Re-running LLM indexing on unchanged files skips LLM processing (cached by file content hash)
-5. Running `ia-framework index` without `--strategy` flag defaults to AST chunking (backward compatible)
-   **Plans**: 4 plans
+**Plans**: 4 plans
 
 Plans:
 
 - [x] 14-01-PLAN.md — Types, config, and pipeline description-aware embedding
-- [x] 14-02-PLAN.md — LlmChunkingStrategy with content-hash cache (port spike code)
+- [x] 14-02-PLAN.md — LlmChunkingStrategy with content-hash cache
 - [x] 14-03-PLAN.md — CLI --strategy flag, Ollama model management, collection routing
 - [x] 14-04-PLAN.md — Gap closure: fix collection routing bug + remove dead onFileProgress code
 
@@ -324,13 +315,7 @@ Plans:
 **Goal**: MCP search tools seamlessly query both AST and LLM collections with fair cross-collection ranking
 **Depends on**: Phase 14 (collections must exist)
 **Requirements**: RETR-08, RETR-09, RETR-10, RETR-11
-**Success Criteria** (what must be TRUE):
-
-1. MCP `search_codebase` and `search_codebase_hybrid` tools automatically query all active Qdrant collections for the project
-2. Cross-collection results are merged via Reciprocal Rank Fusion (RRF) — rank-based merging, never raw score comparison
-3. Each search result includes a `source` tag (`ast` or `llm`) indicating which collection produced it
-4. Search works normally when only one collection exists — no LLM collection means AST-only results with no errors or degradation
-   **Plans**: 2 plans
+**Plans**: 2 plans
 
 Plans:
 
@@ -342,78 +327,135 @@ Plans:
 **Goal**: Developer can search the indexed codebase directly from the dashboard with per-query metrics and strategy comparison
 **Depends on**: Phase 15 (multi-collection search engine)
 **Requirements**: DASH-07, DASH-08, DASH-09, DASH-10
-**Success Criteria** (what must be TRUE):
-
-1. Dashboard has a search page with query input field, ranked results showing relevance scores, file paths, and inline code previews
-2. Developer can select which collection(s) to search: AST only, LLM only, or both (merged)
-3. Each search displays per-query metrics panel: latency, chunks scanned, and score distribution visualization
-4. Developer can run the same query against AST and LLM collections side-by-side for A/B comparison with visual diff of rankings
-   **Plans**: 3 plans
+**Plans**: 3 plans
 
 Plans:
 
-- [x] 16-01-PLAN.md — Backend search API (POST /api/search + GET /api/search/collections, DI wiring)
-- [x] 16-02-PLAN.md — Frontend search page (navigation, SearchBar, SearchResultList, state components)
-- [x] 16-03-PLAN.md — Metrics panel + A/B comparison (MetricsPanel, ScoreDistributionChart, ABComparisonLayout)
+- [x] 16-01-PLAN.md — Backend search API
+- [x] 16-02-PLAN.md — Frontend search page
+- [x] 16-03-PLAN.md — Metrics panel + A/B comparison
 
 ### Phase 17: Dashboard Search History
 
 **Goal**: Developer can review, replay, and compare past searches with a persistent searchable log
 **Depends on**: Phase 16 (search functionality must exist)
 **Requirements**: DASH-12, DASH-13, DASH-14
-**Success Criteria** (what must be TRUE):
-
-1. Every dashboard search is automatically persisted with query text, results, scores, strategy, and timestamp
-2. Developer can replay any past query to compare results before and after re-indexing
-3. Search history is filterable by date range, strategy used, query text substring, and minimum relevance score
-   **Plans**: 2 plans
+**Plans**: 2 plans
 
 Plans:
 
-- [x] 17-01-PLAN.md — Backend: SearchHistoryStore (SQLite), API endpoints (auto-save, list, filter, replay, delete), DI wiring
-- [x] 17-02-PLAN.md — Frontend: History page, HistoryTable, HistoryFilterBar, ReplayDiffLayout, navigation + checkpoint
+- [x] 17-01-PLAN.md — Backend: SearchHistoryStore (SQLite), API endpoints
+- [x] 17-02-PLAN.md — Frontend: History page, HistoryTable, HistoryFilterBar, ReplayDiffLayout
 
 ### Phase 18: Dashboard Analytics
 
 **Goal**: Developer has full analytics visibility into RAG quality trends, strategy performance, token costs, and score distributions
 **Depends on**: Phase 15 (multi-collection data), Phase 16 (search infrastructure)
 **Requirements**: DASH-11, DASH-15, DASH-16, DASH-17, DASH-18
-**Success Criteria** (what must be TRUE):
-
-1. Dashboard shows strategy comparison scores (MRR, P@K) via radar or bar charts from benchmark data
-2. Dashboard shows RAG quality trend charts tracking MRR, average latency, and chunk relevance over time
-3. Dashboard shows aggregate strategy comparison table with average MRR, average latency, and average chunks per strategy
-4. Dashboard shows token usage breakdown by strategy (indexing tokens vs query tokens, broken down per AST/LLM)
-5. Dashboard shows score distribution histograms across queries and strategies for distribution shape analysis
-   **Plans**: 2 plans
+**Plans**: 2 plans
 
 Plans:
 
-- [x] 18-01-PLAN.md — Backend: /api/analytics router (benchmark-trends, strategy-comparison, score-distribution, token-breakdown)
-- [x] 18-02-PLAN.md — Frontend: AnalyticsPage with BenchmarkTrendChart, StrategyComparisonChart/Table, ScoreDistributionChart, TokenBreakdownChart
+- [x] 18-01-PLAN.md — Backend: /api/analytics router
+- [x] 18-02-PLAN.md — Frontend: AnalyticsPage with charts
+
+</details>
+
+### 🚧 v1.2 Chunking Tuning & Retrieval Quality (In Progress)
+
+**Milestone Goal:** Push MRR past 0.7 through LLM chunking prompt engineering, smarter score-based filtering, and dashboard tuning visibility — all benchmark-driven.
+
+- [x] **Phase 19: Baseline & Score Filtering** - Reproducible MRR baseline, RRF threshold bug fix, prompt versioning, chunk validation, mode-aware score filtering (completed 2026-04-22)
+- [x] **Phase 20: Prompt Engineering** - Better chunk boundaries and summaries via few-shot examples, class grouping, intent-focused summaries, quality scoring, A/B comparison (completed 2026-04-23)
+- [x] **Phase 21: Dashboard Tuning Views** - Chunk inspector, score distributions, filtering effectiveness, prompt version comparison (completed 2026-04-23)
+
+## Phase Details
+
+### Phase 19: Baseline & Score Filtering
+
+**Goal**: All measurement infrastructure is in place — reproducible baseline established, RRF score bug fixed, prompt versioning tracks changes, and mode-aware filtering stops dropping valid results
+**Depends on**: Phase 18 (v1.1 complete)
+**Requirements**: BASE-01, BASE-02, BASE-03, BASE-04, FILT-01
+**Success Criteria** (what must be TRUE):
+
+1. Running benchmark with temperature=0 produces consistent MRR within ±0.01 across 3 consecutive runs on frozen corpus
+2. Hybrid and RRF search modes return results instead of silently filtering everything (mode-appropriate thresholds applied)
+3. Each LLM-chunked collection stores prompt version hash in metadata; developer can identify which prompt version produced any chunk
+4. Running chunk validation on an LLM-indexed collection reports any source lines that are missing or duplicated across chunks
+5. Score filtering applies different default thresholds per search mode: dense (~0.3 cosine), hybrid (~0.0 rank-based), multi-collection RRF (~0.0 rank-based)
+   **Plans**: 4 plans
+
+Plans:
+
+- [x] 19-01-PLAN.md — Mode-aware score filtering fix (FILT-01, BASE-01)
+- [x] 19-02-PLAN.md — Reproducible baseline benchmark with 3-run averaging (BASE-02)
+- [x] 19-03-PLAN.md — Prompt versioning system (BASE-03)
+- [x] 19-04-PLAN.md — Chunk overlap/gap validation (BASE-04)
+
+### Phase 20: Prompt Engineering
+
+**Goal**: LLM chunking produces higher-quality chunks with better boundaries and intent-focused summaries, measurably improving MRR toward 0.7
+**Depends on**: Phase 19 (baseline + versioning required)
+**Requirements**: PRMT-01, PRMT-02, PRMT-03, PRMT-04, PRMT-05
+**Success Criteria** (what must be TRUE):
+
+1. Chunking prompt includes few-shot examples showing good and bad boundary detection; classes are never split from their methods
+2. LLM chunks enforce minimum size (5+ lines) and keep class methods grouped with their class definition
+3. Chunk summaries describe what code does using domain terminology (not "this function takes X and returns Y" syntax descriptions)
+4. Each chunk summary receives a heuristic quality score; developer can identify low-quality summaries for diagnosis
+5. Developer can run CLI comparison of two prompt versions on the same corpus and see per-query MRR deltas side-by-side
+   **Plans**: 3 plans
+
+Plans:
+
+- [x] 20-01-PLAN.md — Prompt enhancement: few-shot examples, class grouping rules, intent-focused summary guidance
+- [x] 20-02-PLAN.md — Heuristic quality scoring for chunk summaries with Qdrant metadata storage
+- [x] 20-03-PLAN.md — CLI A/B prompt comparison with per-query MRR deltas
+
+### Phase 21: Dashboard Tuning Views
+
+**Goal**: Developer has visual tools to inspect chunking quality, analyze score distributions, and attribute MRR improvements to specific prompt versions
+**Depends on**: Phase 19 (score data), Phase 20 (prompt versions + chunk quality data)
+**Requirements**: DTUN-01, DTUN-02, DTUN-03, DTUN-04
+**Success Criteria** (what must be TRUE):
+
+1. Dashboard shows individual chunks with line boundaries, prose summaries, and quality scores alongside syntax-highlighted source code
+2. Dashboard shows histogram of top-50 candidate scores with threshold boundary line clearly marking returned vs filtered zones
+3. Dashboard shows returned results alongside near-miss filtered results (just below threshold) with score comparison for diagnosis
+4. Dashboard links benchmark MRR results to prompt versions so developer can see which prompt version produced which MRR score over time
+   **Plans**: 3 plans
+
+Plans:
+
+- [x] 21-01-PLAN.md — Backend APIs + data model: tuning routes (chunks, scores), analytics prompt version extension, BenchmarkRunner metadata capture (TDD)
+- [x] 21-02-PLAN.md — Frontend: TuningPage shell, Chunk Inspector (DTUN-01), Prompt Version chart with detail panel (DTUN-04)
+- [x] 21-03-PLAN.md — Frontend: Score Distribution histogram with draggable threshold (DTUN-02), Near-miss diagnosis panel (DTUN-03)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 12 → 13 → 14 → 15 → 16 → 17 → 18
+Phases execute in numeric order: 19 → 20 → 21
 
-| Phase                                         | Milestone | Plans Complete | Status   | Completed  |
-| --------------------------------------------- | --------- | -------------- | -------- | ---------- |
-| 1. Foundation & Infrastructure                | v1.0      | 3/3            | Complete | 2026-04-01 |
-| 2. Project Detection & Configuration          | v1.0      | 2/2            | Complete | 2026-04-01 |
-| 3. Indexing Pipeline                          | v1.0      | 4/4            | Complete | 2026-04-01 |
-| 4. Retrieval & MCP Server                     | v1.0      | 3/3            | Complete | 2026-04-01 |
-| 5. Installation & CLI                         | v1.0      | 3/3            | Complete | 2026-04-01 |
-| 6. Observability & Metrics                    | v1.0      | 2/2            | Complete | 2026-04-01 |
-| 7. Benchmarking System                        | v1.0      | 3/3            | Complete | 2026-04-01 |
-| 8. Monitoring Dashboard                       | v1.0      | 4/4            | Complete | 2026-04-01 |
-| 9. Database Context                           | v1.0      | 2/2            | Complete | 2026-04-01 |
-| 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete | 2026-04-02 |
-| 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete | 2026-04-07 |
-| 12. LLM Chunking Spike                        | v1.1      | 0/?            | Complete | 2026-04-10 |
-| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete | 2026-04-10 |
-| 14. LLM Chunking Implementation & CLI         | v1.1      | 4/4            | Complete | 2026-04-14 |
-| 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2            | Complete | 2026-04-14 |
-| 16. Dashboard Search                          | v1.1      | 3/3            | Complete | 2026-04-14 |
-| 17. Dashboard Search History                  | v1.1      | 2/2            | Complete | 2026-04-15 |
-| 18. Dashboard Analytics                       | v1.1      | 2/2            | Complete | 2026-04-15 |
+| Phase                                         | Milestone | Plans Complete | Status      | Completed  |
+| --------------------------------------------- | --------- | -------------- | ----------- | ---------- |
+| 1. Foundation & Infrastructure                | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 2. Project Detection & Configuration          | v1.0      | 2/2            | Complete    | 2026-04-01 |
+| 3. Indexing Pipeline                          | v1.0      | 4/4            | Complete    | 2026-04-01 |
+| 4. Retrieval & MCP Server                     | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 5. Installation & CLI                         | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 6. Observability & Metrics                    | v1.0      | 2/2            | Complete    | 2026-04-01 |
+| 7. Benchmarking System                        | v1.0      | 3/3            | Complete    | 2026-04-01 |
+| 8. Monitoring Dashboard                       | v1.0      | 4/4            | Complete    | 2026-04-01 |
+| 9. Database Context                           | v1.0      | 2/2            | Complete    | 2026-04-01 |
+| 10. Advanced Retrieval & Workflow Integration | v1.0      | 4/4            | Complete    | 2026-04-02 |
+| 11. MRR Quick Wins & Corpus Building          | v1.0      | 4/4            | Complete    | 2026-04-07 |
+| 12. LLM Chunking Spike                        | v1.1      | 1/1            | Complete    | 2026-04-10 |
+| 13. Pipeline Refactoring & Parallel Embedding | v1.1      | 3/3            | Complete    | 2026-04-10 |
+| 14. LLM Chunking Implementation & CLI         | v1.1      | 4/4            | Complete    | 2026-04-14 |
+| 15. Multi-Collection Search & MCP Integration | v1.1      | 2/2            | Complete    | 2026-04-14 |
+| 16. Dashboard Search                          | v1.1      | 3/3            | Complete    | 2026-04-14 |
+| 17. Dashboard Search History                  | v1.1      | 2/2            | Complete    | 2026-04-15 |
+| 18. Dashboard Analytics                       | v1.1      | 2/2            | Complete    | 2026-04-15 |
+| 19. Baseline & Score Filtering                | v1.2      | 4/4            | Complete    | 2026-04-23 |
+| 20. Prompt Engineering                        | v1.2      | 3/3            | Complete    | 2026-04-23 |
+| 21. Dashboard Tuning Views                    | v1.2      | 3/3 | Complete    | 2026-04-23 |

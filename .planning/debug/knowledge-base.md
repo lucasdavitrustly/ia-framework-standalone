@@ -161,3 +161,13 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Files changed:** install.sh, apps/dashboard/src/pages/Overview.tsx, apps/dashboard/src/components/IndexingPanel.tsx
 
 ---
+
+## tuning-chunks-500 — GET /api/tuning/chunks returns 500 due to missing scrollChunks implementation
+
+- **Date:** 2026-04-23
+- **Error patterns:** 500, tuning chunks, scrollChunks, as unknown as, force cast, TypeError, undefined function, MultiCollectionSearchEngine
+- **Root cause:** MultiCollectionSearchEngine does not implement scrollChunks(). app.ts force-casts it to TuningVectorStoreDep with `as unknown as`, so TypeScript doesn't catch the error. At runtime, calling undefined function throws TypeError → 500.
+- **Fix:** Added scroll() and countPoints() to VectorStore interface + QdrantVectorStore. Built scrollChunks adapter in app.ts using real Qdrant scroll+count APIs instead of force-casting MultiCollectionSearchEngine. Passed vectorStores map from server.ts through app deps.
+- **Files changed:** packages/vector-store/src/interface.ts, packages/vector-store/src/qdrant.ts, packages/dashboard-api/src/app.ts, packages/dashboard-api/src/server.ts
+
+---
