@@ -171,3 +171,13 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Files changed:** packages/vector-store/src/interface.ts, packages/vector-store/src/qdrant.ts, packages/dashboard-api/src/app.ts, packages/dashboard-api/src/server.ts
 
 ---
+
+## dashboard-404-empty-state — Dashboard history/tuning pages show 404 instead of empty state
+
+- **Date:** 2026-04-23
+- **Error patterns:** 404, empty state, search history, tuning chunks, no data, routes not mounted, search deps undefined, Qdrant unavailable
+- **Root cause:** /api/search/_ and /api/tuning/_ routes only mounted when deps.search is defined. When Qdrant has no collections, searchDeps stays undefined, routes are never registered, frontend gets 404 instead of empty data.
+- **Fix:** Added fallback route handlers in app.ts returning empty payloads ({entries:[], total:0}, [], {chunks:[], total:0}) when search infrastructure is unavailable. Frontend already had empty state rendering.
+- **Files changed:** packages/dashboard-api/src/app.ts, packages/dashboard-api/src/app.test.ts
+
+---
