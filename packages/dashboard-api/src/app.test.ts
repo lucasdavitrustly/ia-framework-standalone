@@ -238,6 +238,33 @@ describe('createApp', () => {
     expect(state.stage).toBeNull();
   });
 
+  // Test: Fallback routes return empty data when search deps are undefined
+  it('GET /api/search/history returns empty list when no search deps', async () => {
+    const app = createApp(deps); // deps has no search property
+    const res = await app.request('/api/search/history');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: unknown[]; total: number };
+    expect(body.entries).toEqual([]);
+    expect(body.total).toBe(0);
+  });
+
+  it('GET /api/search/collections returns empty array when no search deps', async () => {
+    const app = createApp(deps);
+    const res = await app.request('/api/search/collections');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown[];
+    expect(body).toEqual([]);
+  });
+
+  it('GET /api/tuning/chunks returns empty response when no search deps', async () => {
+    const app = createApp(deps);
+    const res = await app.request('/api/tuning/chunks');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { chunks: unknown[]; total: number };
+    expect(body.chunks).toEqual([]);
+    expect(body.total).toBe(0);
+  });
+
   // Test 15: IndexingStateManager.start() sets running=true; fail() clears running
   it('IndexingStateManager.start() sets running=true; fail() clears running', () => {
     const stateManager = new IndexingStateManager();
