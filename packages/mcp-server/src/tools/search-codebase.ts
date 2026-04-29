@@ -20,6 +20,8 @@ type Engine = {
     query: { text: string; limit?: number; scoreThreshold?: number | undefined },
     options?: { enableFallback?: boolean; maxSuggestions?: number },
   ): Promise<FallbackSearchResult>;
+  /** Scroll for chunks that match a class/interface name for hierarchy traversal */
+  scrollForHierarchy?(name: string, chunkType: string): Promise<RetrievalResult[]>;
 };
 
 export interface SearchCodebaseInput {
@@ -139,14 +141,58 @@ function buildSearchResponse(
  */
 function formatResult(result: RetrievalResult, index: number): string {
   const sourceTag = result.source ? ` [${result.source}]` : '';
+  const hierarchyTag = result.expansionSource === 'hierarchy' ? ' [hierarchy]' : '';
   const header = result.name
-    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}`
-    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}`;
+    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`
+    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`;
   const contextLine = formatRetrievalContext(result);
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
 
   return `${header}\n${contextLine}\n${codeBlock}`;
+}
+
+/**
+ * Expand hierarchy by walking superclass chains up to maxHops levels.
+ * Returns additional results tagged with expansionSource: 'hierarchy'.
+ */
+async function expandHierarchy(
+  engine: Engine,
+  results: RetrievalResult[],
+  maxHops: number,
+): Promise<RetrievalResult[]> {
+  if (!engine.scrollForHierarchy || maxHops === 0) return [];
+
+  const seenIds = new Set(results.map((r) => r.chunkId));
+  const expanded: RetrievalResult[] = [];
+
+  // Collect seeds: results that have a superclass
+  let frontier: Array<{ name: string; chunkType: string }> = [];
+  for (const r of results) {
+    if (r.superclass) {
+      frontier.push({ name: r.superclass, chunkType: r.chunkType });
+    }
+  }
+
+  for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
+    const nextFrontier: Array<{ name: string; chunkType: string }> = [];
+    for (const { name, chunkType } of frontier) {
+      const hits = await engine.scrollForHierarchy(name, chunkType);
+      for (const hit of hits) {
+        if (!seenIds.has(hit.chunkId)) {
+          seenIds.add(hit.chunkId);
+          const tagged: RetrievalResult = { ...hit, expansionSource: 'hierarchy' };
+          expanded.push(tagged);
+          if (tagged.superclass) {
+            nextFrontier.push({ name: tagged.superclass, chunkType: tagged.chunkType });
+          }
+        }
+      }
+    }
+    frontier = nextFrontier;
+  }
+
+  return expanded;
 }
 
 /**
@@ -176,6 +222,11 @@ export async function searchCodebaseHandler(
       },
       { hops: clampedHops },
     );
+    // Hierarchy expansion: walk superclass chains up to clampedHops levels
+    if (clampedHops > 0) {
+      const hierarchyResults = await expandHierarchy(engine, results, clampedHops);
+      results = [...results, ...hierarchyResults];
+    }
   } catch (error) {
     results = await engine.search({
       text: input.query,
