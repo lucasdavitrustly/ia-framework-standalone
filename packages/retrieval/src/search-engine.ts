@@ -27,6 +27,9 @@ type VectorSearchResult = {
     packageName?: string | undefined;
     layerHints?: string[] | undefined;
     indexedAt: string;
+    superclass?: string | undefined;
+    interfaces?: string[] | undefined;
+    isInnerClass?: boolean | undefined;
   };
 };
 
@@ -49,6 +52,9 @@ function toRetrievalResult(
     modulePath: raw.payload.modulePath,
     packageName: raw.payload.packageName,
     layerHints: raw.payload.layerHints,
+    superclass: raw.payload.superclass,
+    interfaces: raw.payload.interfaces,
+    isInnerClass: raw.payload.isInnerClass,
     score: raw.score,
     matchedVector,
   };

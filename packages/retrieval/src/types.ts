@@ -53,6 +53,14 @@ export interface RetrievalResult {
   packageName?: string | undefined;
   /** Heuristic architectural role hints */
   layerHints?: string[] | undefined;
+  /** Direct superclass name from extends clause (class chunks only) */
+  superclass?: string | undefined;
+  /** Interfaces/traits implemented (class chunks only) */
+  interfaces?: string[] | undefined;
+  /** True if this is an inner/nested class */
+  isInnerClass?: boolean | undefined;
+  /** Expansion source tag (e.g., 'hierarchy') for expanded results */
+  expansionSource?: string | undefined;
 }
 
 /**
