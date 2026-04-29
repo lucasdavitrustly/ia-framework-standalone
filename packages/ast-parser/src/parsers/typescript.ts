@@ -60,6 +60,57 @@ function getNodeName(node: Parser.SyntaxNode): string | undefined {
   return nameNode?.text;
 }
 
+/**
+ * Extract heritage info (superclass + interfaces) from a class or interface declaration.
+ * For class_declaration / abstract_class_declaration:
+ *   - extends_clause child of class_heritage → superclass (first identifier, generics stripped)
+ *   - implements_clause child of class_heritage → interfaces (all type_identifier children)
+ * For interface_declaration:
+ *   - extends_type_clause child → interfaces (all type_identifier children)
+ */
+function extractHeritage(node: Parser.SyntaxNode): { superclass?: string; interfaces?: string[] } {
+  // --- Classes ---
+  const heritage = node.children.find((c) => c.type === 'class_heritage');
+  if (heritage) {
+    let superclass: string | undefined;
+    const interfaces: string[] = [];
+
+    for (const clause of heritage.children) {
+      if (clause.type === 'extends_clause') {
+        // First identifier or type_identifier after 'extends' keyword
+        for (const child of clause.children) {
+          if (child.type === 'identifier' || child.type === 'type_identifier') {
+            superclass = child.text;
+            break;
+          }
+        }
+      } else if (clause.type === 'implements_clause') {
+        for (const child of clause.children) {
+          if (child.type === 'type_identifier') {
+            interfaces.push(child.text);
+          }
+        }
+      }
+    }
+
+    const result: { superclass?: string; interfaces?: string[] } = {};
+    if (superclass) result.superclass = superclass;
+    if (interfaces.length > 0) result.interfaces = interfaces;
+    return result;
+  }
+
+  // --- Interfaces ---
+  const extendsTypeClause = node.children.find((c) => c.type === 'extends_type_clause');
+  if (extendsTypeClause) {
+    const interfaces = extendsTypeClause.children
+      .filter((c) => c.type === 'type_identifier')
+      .map((c) => c.text);
+    return interfaces.length > 0 ? { interfaces } : {};
+  }
+
+  return {};
+}
+
 function extractImports(rootNode: Parser.SyntaxNode): string[] {
   const imports: string[] = [];
   for (const child of rootNode.children) {
@@ -169,6 +220,13 @@ export function parseTypeScript(
     const name = getNodeName(targetNode);
     const chunkExports = isExported && name ? [name] : [];
 
+    // Extract hierarchy metadata for class and interface declarations
+    const isClassOrInterface =
+      targetNode.type === 'class_declaration' ||
+      targetNode.type === 'abstract_class_declaration' ||
+      targetNode.type === 'interface_declaration';
+    const heritage = isClassOrInterface ? extractHeritage(targetNode) : {};
+
     chunks.push({
       id: makeChunkId(filePath, startLine, endLine),
       filePath,
@@ -181,6 +239,7 @@ export function parseTypeScript(
       endLine,
       imports: allImports,
       exports: chunkExports,
+      ...heritage,
     });
 
     // For class declarations, also extract individual members as sub-chunks
