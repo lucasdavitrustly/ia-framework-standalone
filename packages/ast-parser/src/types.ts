@@ -27,6 +27,12 @@ export interface CodeChunk {
   exports: string[];
   /** Parent construct name when this chunk is a sub-chunk (e.g., method split from a class, or fragment of an oversized function) */
   parentName?: string | undefined;
+  /** Direct superclass name (e.g., "BaseService"). Extracted from extends clause. */
+  superclass?: string | undefined;
+  /** Interfaces/traits this class implements. Extracted from implements clause. */
+  interfaces?: string[] | undefined;
+  /** True when this class is defined inside another class (inner/nested class) */
+  isInnerClass?: boolean | undefined;
   /** LLM-generated prose summary of this chunk, used for text embedding when available (per D-04) */
   description?: string | undefined;
 }
