@@ -9,7 +9,7 @@ import {
   DependencyGraph,
   MultiCollectionSearchEngine,
 } from '@ia-framework/retrieval';
-import type { CollectionEngine, RetrievalResult } from '@ia-framework/retrieval';
+import type { CollectionEngine } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 
 export function searchCommand(): Command {
@@ -47,8 +47,8 @@ export function searchCommand(): Command {
             const graph = new DependencyGraph({ dbPath: graphDbPath });
             graph.initialize();
             dependencyGraph = {
-              getNeighborFiles: async (filePaths: string[], hops: 1 | 2) =>
-                graph.getNeighborFiles(filePaths, hops),
+              getNeighborFiles: (filePaths: string[], hops: 1 | 2) =>
+                Promise.resolve(graph.getNeighborFiles(filePaths, hops)),
             };
           } catch {
             // Graph not available — search will work without expansion
@@ -151,7 +151,7 @@ export function searchCommand(): Command {
 
           console.log(`Found ${results.length} result(s)\n`);
 
-          for (const result of results as RetrievalResult[]) {
+          for (const result of results) {
             const name = result.name
               ? ` (${result.chunkType}: ${result.name})`
               : ` (${result.chunkType})`;

@@ -41,9 +41,6 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const searchHistoryStore = new SearchHistoryStore(join(frameworkDir, 'search-history.sqlite'));
   const indexingState = new IndexingStateManager();
 
-  // Initialize embedding provider and vector store only when config is available
-  const _config = config; // retained for future use
-
   // Set up dependency graph for building import adjacency during indexing.
   // SearchEngine expects an async interface { getNeighborFiles(...): Promise<string[]> }
   // but DependencyGraph.getNeighborFiles is synchronous — wrap it in an adapter.

@@ -1,0 +1,40 @@
+{
+  "prompts": [
+    {
+      "id": "arch-semantic",
+      "category": "semantic",
+      "prompt": "What is the overall architecture of this project? Describe the main modules and how they interact.",
+      "context": "Tests if RAG provides architectural overview from actual code structure"
+    },
+    {
+      "id": "function-keyword",
+      "category": "keyword",
+      "prompt": "Where is the main entry point of the application defined? Show me the exact file and function.",
+      "context": "Tests exact file/function lookup capability"
+    },
+    {
+      "id": "deps-cross-file",
+      "category": "cross-file",
+      "prompt": "How do the database models relate to the API routes? Trace the data flow from request to database.",
+      "context": "Tests understanding of cross-module relationships"
+    },
+    {
+      "id": "impact-complex",
+      "category": "complex",
+      "prompt": "If I wanted to add a new API endpoint that requires authentication, what files would I need to modify and what patterns should I follow based on existing code?",
+      "context": "Tests multi-step reasoning about codebase patterns"
+    },
+    {
+      "id": "nonexistent-negative",
+      "category": "negative",
+      "prompt": "Does this project use WebSocket connections? If so, where is the WebSocket server configured?",
+      "context": "Tests hallucination resistance - should say no if project doesn't use WebSockets"
+    },
+    {
+      "id": "error-edge-case",
+      "category": "edge-case",
+      "prompt": "What error handling patterns are used in this project? Are there any inconsistencies?",
+      "context": "Tests nuanced analysis of cross-cutting concerns"
+    }
+  ]
+}

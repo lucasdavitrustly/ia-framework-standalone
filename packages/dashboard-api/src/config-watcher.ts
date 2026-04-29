@@ -21,8 +21,7 @@ export class ConfigWatcher extends EventEmitter {
     try {
       this.config = await loadConfig(this.configPath);
     } catch (err: unknown) {
-      const isNotFound =
-        err instanceof Error && err.constructor.name === 'ConfigNotFoundError';
+      const isNotFound = err instanceof Error && err.constructor.name === 'ConfigNotFoundError';
       if (isNotFound) {
         logger.warn(
           { path: this.configPath },
@@ -36,22 +35,26 @@ export class ConfigWatcher extends EventEmitter {
 
     // Watch for changes (and for the file to be created)
     this.watcher = watch(this.configPath, { ...WATCH_OPTIONS, ignoreInitial: true });
-    this.watcher.on('add', async () => {
-      try {
-        this.config = await loadConfig(this.configPath);
-        this.emit('updated', this.config);
-        logger.info({ path: this.configPath }, 'project.json created — config loaded');
-      } catch (err) {
-        logger.warn({ err }, 'Failed to load config on add');
-      }
+    this.watcher.on('add', () => {
+      void (async () => {
+        try {
+          this.config = await loadConfig(this.configPath);
+          this.emit('updated', this.config);
+          logger.info({ path: this.configPath }, 'project.json created — config loaded');
+        } catch (err) {
+          logger.warn({ err }, 'Failed to load config on add');
+        }
+      })();
     });
-    this.watcher.on('change', async () => {
-      try {
-        this.config = await loadConfig(this.configPath);
-        this.emit('updated', this.config);
-      } catch (err) {
-        logger.warn({ err }, 'Failed to reload config on change');
-      }
+    this.watcher.on('change', () => {
+      void (async () => {
+        try {
+          this.config = await loadConfig(this.configPath);
+          this.emit('updated', this.config);
+        } catch (err) {
+          logger.warn({ err }, 'Failed to reload config on change');
+        }
+      })();
     });
   }
 
@@ -60,6 +63,6 @@ export class ConfigWatcher extends EventEmitter {
   }
 
   stop(): void {
-    this.watcher?.close();
+    void this.watcher?.close();
   }
 }

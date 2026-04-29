@@ -18,17 +18,6 @@ function makeChunkId(filePath: string, startLine: number, endLine: number): stri
 }
 
 // Java top-level declaration types we want to chunk
-const DECLARATION_TYPES = new Set([
-  'class_declaration',
-  'interface_declaration',
-  'enum_declaration',
-  'record_declaration',
-  'annotation_type_declaration',
-  'method_declaration',
-  'constructor_declaration',
-  'field_declaration',
-]);
-
 const CHUNK_TYPE_MAP: Partial<Record<string, CodeChunk['chunkType']>> = {
   class_declaration: 'class',
   interface_declaration: 'interface',
@@ -63,6 +52,73 @@ function extractImports(rootNode: Parser.SyntaxNode): string[] {
 }
 
 /**
+ * Extract package declaration text from root node (e.g., "package com.example.service;")
+ */
+function extractPackage(rootNode: Parser.SyntaxNode): string {
+  for (const child of rootNode.children) {
+    if (child.type === 'package_declaration') {
+      return child.text;
+    }
+  }
+  return '';
+}
+
+/**
+ * Build preamble string for method chunks: package + import lines + class/interface signature.
+ * The preamble gives each method chunk enough context to be independently comprehensible.
+ */
+function buildPreamble(
+  rootNode: Parser.SyntaxNode,
+  enclosingNode: Parser.SyntaxNode,
+  sourceLines: string[],
+): string {
+  const parts: string[] = [];
+
+  // 1. Package declaration
+  const pkg = extractPackage(rootNode);
+  if (pkg) {
+    parts.push(pkg);
+  }
+
+  // 2. Import declarations
+  for (const child of rootNode.children) {
+    if (child.type === 'import_declaration') {
+      parts.push(child.text);
+    }
+  }
+
+  // 3. Enclosing class/interface signature line — search for the line containing `class` or
+  //    `interface` keyword within the declaration node, since annotations may precede it.
+  const declStartRow = enclosingNode.startPosition.row; // 0-indexed
+  const declEndRow = enclosingNode.endPosition.row;
+  let signatureLine = sourceLines[declStartRow] ?? '';
+  for (let r = declStartRow; r <= Math.min(declEndRow, declStartRow + 10); r++) {
+    const line = sourceLines[r] ?? '';
+    if (/\b(class|interface|enum|record)\b/.test(line)) {
+      signatureLine = line;
+      break;
+    }
+  }
+  parts.push(signatureLine.trimEnd());
+
+  return parts.join('\n');
+}
+
+const MEMBER_DECLARATION_TYPES = new Set([
+  'method_declaration',
+  'constructor_declaration',
+  'field_declaration',
+]);
+
+const TOP_LEVEL_DECLARATION_TYPES = new Set([
+  'class_declaration',
+  'interface_declaration',
+  'enum_declaration',
+  'record_declaration',
+  'annotation_type_declaration',
+]);
+
+/**
  * Recursively collect declarations from a node and its class/interface body children.
  * Java classes contain methods, fields, and inner classes in their body nodes.
  */
@@ -73,30 +129,53 @@ function collectDeclarations(
   relativePath: string,
   allImports: string[],
   chunks: CodeChunk[],
+  rootNode?: Parser.SyntaxNode,
+  enclosingNode?: Parser.SyntaxNode,
+  enclosingName?: string,
 ): void {
   for (const child of node.children) {
-    let targetNode = child;
+    const targetNode = child;
+    const isTopLevel = TOP_LEVEL_DECLARATION_TYPES.has(targetNode.type);
+    const isMember = MEMBER_DECLARATION_TYPES.has(targetNode.type);
 
-    // In Java, modifiers (public, private, static) are separate nodes — skip them.
-    // The actual declaration is the child itself if it matches DECLARATION_TYPES.
-    if (!DECLARATION_TYPES.has(targetNode.type)) {
+    if (!isTopLevel && !isMember) {
       // Check class_body, interface_body, enum_body for nested declarations
       if (
         targetNode.type === 'class_body' ||
         targetNode.type === 'interface_body' ||
         targetNode.type === 'enum_body'
       ) {
-        collectDeclarations(targetNode, sourceLines, filePath, relativePath, allImports, chunks);
+        collectDeclarations(
+          targetNode,
+          sourceLines,
+          filePath,
+          relativePath,
+          allImports,
+          chunks,
+          rootNode,
+          enclosingNode,
+          enclosingName,
+        );
       }
       continue;
     }
 
     const startLine = child.startPosition.row + 1;
     const endLine = child.endPosition.row + 1;
-    const content = sourceLines.slice(startLine - 1, endLine).join('\n');
+    const rawContent = sourceLines.slice(startLine - 1, endLine).join('\n');
 
     const chunkType: CodeChunk['chunkType'] = CHUNK_TYPE_MAP[targetNode.type] ?? 'other';
     const name = getNodeName(targetNode);
+
+    let content = rawContent;
+    let parentName: string | undefined;
+
+    // Method/constructor members inside a class/interface get preamble + parentName
+    if (isMember && enclosingNode && rootNode && enclosingName) {
+      const preamble = buildPreamble(rootNode, enclosingNode, sourceLines);
+      content = preamble + '\n\n' + rawContent;
+      parentName = enclosingName;
+    }
 
     chunks.push({
       id: makeChunkId(filePath, startLine, endLine),
@@ -110,26 +189,35 @@ function collectDeclarations(
       endLine,
       imports: allImports,
       exports: name ? [name] : [],
+      parentName,
     });
 
-    // Recurse into class/interface bodies for inner declarations
-    for (const sub of targetNode.children) {
-      if (
-        sub.type === 'class_body' ||
-        sub.type === 'interface_body' ||
-        sub.type === 'enum_body'
-      ) {
-        collectDeclarations(sub, sourceLines, filePath, relativePath, allImports, chunks);
+    // Recurse into class/interface bodies for inner declarations — pass enclosing context
+    if (isTopLevel) {
+      for (const sub of targetNode.children) {
+        if (
+          sub.type === 'class_body' ||
+          sub.type === 'interface_body' ||
+          sub.type === 'enum_body'
+        ) {
+          collectDeclarations(
+            sub,
+            sourceLines,
+            filePath,
+            relativePath,
+            allImports,
+            chunks,
+            rootNode ?? node,
+            targetNode,
+            name,
+          );
+        }
       }
     }
   }
 }
 
-export function parseJava(
-  sourceCode: string,
-  filePath: string,
-  relativePath: string,
-): CodeChunk[] {
+export function parseJava(sourceCode: string, filePath: string, relativePath: string): CodeChunk[] {
   const parser = getParser();
   const tree = parser.parse(sourceCode);
   const root = tree.rootNode;
@@ -138,7 +226,17 @@ export function parseJava(
   const allImports = extractImports(root);
   const chunks: CodeChunk[] = [];
 
-  collectDeclarations(root, lines, filePath, relativePath, allImports, chunks);
+  collectDeclarations(
+    root,
+    lines,
+    filePath,
+    relativePath,
+    allImports,
+    chunks,
+    root,
+    undefined,
+    undefined,
+  );
 
   // If no recognizable declarations, create one module chunk
   if (chunks.length === 0) {

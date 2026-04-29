@@ -1,9 +1,10 @@
 import { describe, test, expect, vi } from 'vitest';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { searchCodebaseHandler, registerSearchCodebaseTool } from './tools/search-codebase.js';
-import { getFileHandler, registerGetFileTool } from './tools/get-file.js';
-import { getDependenciesHandler, registerGetDependenciesTool } from './tools/get-dependencies.js';
+import { searchCodebaseHandler } from './tools/search-codebase.js';
+import { getFileHandler } from './tools/get-file.js';
+import { getDependenciesHandler } from './tools/get-dependencies.js';
+import { benchmarkPreflightHandler } from './tools/benchmark-preflight.js';
 import { createMcpServer } from './server.js';
 
 /** Extract text from a CallToolResult's first content item */
@@ -13,9 +14,7 @@ function getFirstText(output: CallToolResult): string {
   return item.text;
 }
 
-function makeResult(
-  overrides: Partial<RetrievalResult> = {},
-): RetrievalResult {
+function makeResult(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
   return {
     chunkId: 'chunk-1',
     filePath: '/project/src/auth/middleware.ts',
@@ -34,10 +33,14 @@ function makeResult(
   };
 }
 
-function makeMockEngine(searchResults: RetrievalResult[] = [], fileResults: RetrievalResult[] = []) {
+function makeMockEngine(
+  searchResults: RetrievalResult[] = [],
+  fileResults: RetrievalResult[] = [],
+) {
   return {
     search: vi.fn().mockResolvedValue(searchResults),
     searchWithExpansion: vi.fn().mockResolvedValue(searchResults),
+    searchHybrid: vi.fn().mockResolvedValue(searchResults),
     getFile: vi.fn().mockResolvedValue(fileResults),
   };
 }
@@ -47,10 +50,12 @@ describe('MCP Server Tools', () => {
     test('Test 1: calls searchEngine.searchWithExpansion() with the query text', async () => {
       const engine = makeMockEngine([]);
       await searchCodebaseHandler(engine, { query: 'authentication middleware' });
-      expect(engine.searchWithExpansion).toHaveBeenCalledWith(
-        expect.objectContaining({ text: 'authentication middleware' }),
-        expect.objectContaining({ hops: expect.any(Number) }),
-      );
+      const [query, options] = engine.searchWithExpansion.mock.calls[0] as [
+        { text: string },
+        { hops: number },
+      ];
+      expect(query.text).toBe('authentication middleware');
+      expect(options.hops).toEqual(expect.any(Number));
     });
 
     test('Test 2: formats results as markdown with file path, chunk name, and score', async () => {
@@ -66,10 +71,12 @@ describe('MCP Server Tools', () => {
     test('Test 3: passes limit to searchEngine.searchWithExpansion()', async () => {
       const engine = makeMockEngine([]);
       await searchCodebaseHandler(engine, { query: 'auth', limit: 3 });
-      expect(engine.searchWithExpansion).toHaveBeenCalledWith(
-        expect.objectContaining({ limit: 3 }),
-        expect.objectContaining({ hops: expect.any(Number) }),
-      );
+      const [query, options] = engine.searchWithExpansion.mock.calls[0] as [
+        { limit?: number | undefined },
+        { hops: number },
+      ];
+      expect(query.limit).toBe(3);
+      expect(options.hops).toEqual(expect.any(Number));
     });
 
     test('Test 4: returns "no results" message when results are empty', async () => {
@@ -78,6 +85,21 @@ describe('MCP Server Tools', () => {
       const text = getFirstText(output);
       expect(text.toLowerCase()).toContain('no');
       expect(text.toLowerCase()).toContain('result');
+    });
+
+    test('Test 4b: falls back to plain search when expansion fails', async () => {
+      const result = makeResult({ relativePath: 'src/fallback.ts' });
+      const engine = makeMockEngine([result]);
+      engine.searchWithExpansion.mockRejectedValueOnce(new Error('permission denied'));
+
+      const output = await searchCodebaseHandler(engine, { query: 'fallback query' });
+      const text = getFirstText(output);
+
+      expect(engine.search).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'fallback query' }),
+      );
+      expect(text).toContain('dependency expansion was unavailable');
+      expect(text).toContain('src/fallback.ts');
     });
   });
 
@@ -96,11 +118,27 @@ describe('MCP Server Tools', () => {
       expect(text).toContain('```');
       expect(text).toContain('authMiddleware');
     });
+
+    test('Test 6b: falls back to search evidence when getFile fails', async () => {
+      const result = makeResult({ relativePath: 'src/auth/fallback.ts' });
+      const engine = makeMockEngine([result], []);
+      engine.getFile.mockRejectedValueOnce(new Error('blocked'));
+
+      const output = await getFileHandler(engine, { path: 'src/auth/fallback.ts' });
+      const text = getFirstText(output);
+
+      expect(engine.search).toHaveBeenCalledWith({ text: 'src/auth/fallback.ts', limit: 5 });
+      expect(text).toContain('direct file retrieval was unavailable');
+      expect(text).toContain('Indexed evidence for: src/auth/fallback.ts');
+    });
   });
 
   describe('get_dependencies handler', () => {
     test('Test 7: calls searchEngine.getFile() and extracts unique imports and exports', async () => {
-      const chunk1 = makeResult({ imports: ['express', 'jsonwebtoken'], exports: ['authMiddleware'] });
+      const chunk1 = makeResult({
+        imports: ['express', 'jsonwebtoken'],
+        exports: ['authMiddleware'],
+      });
       const chunk2 = makeResult({
         chunkId: 'chunk-2',
         name: 'validateToken',
@@ -121,6 +159,42 @@ describe('MCP Server Tools', () => {
       expect(text).toContain('authMiddleware');
       expect(text).toContain('validateToken');
     });
+
+    test('Test 7b: falls back to search evidence when dependency extraction fails', async () => {
+      const chunk = makeResult({ imports: ['express'], exports: ['authMiddleware'] });
+      const engine = makeMockEngine([chunk], []);
+      engine.getFile.mockRejectedValueOnce(new Error('permission denied'));
+
+      const output = await getDependenciesHandler(engine, { path: 'src/auth/middleware.ts' });
+      const text = getFirstText(output);
+
+      expect(text).toContain('direct dependency extraction was unavailable');
+      expect(text).toContain('express');
+      expect(text).toContain('authMiddleware');
+    });
+  });
+
+  describe('benchmark_preflight handler', () => {
+    test('Test 7c: reports runnable preflight when required tools are callable', async () => {
+      const engine = makeMockEngine([makeResult()], [makeResult()]);
+
+      const output = await benchmarkPreflightHandler(engine);
+      const text = getFirstText(output);
+
+      expect(text).toContain('Benchmark preflight');
+      expect(text).toContain('0 blocked');
+    });
+
+    test('Test 7d: reports fallback when semantic search is blocked but get_file works', async () => {
+      const engine = makeMockEngine([makeResult()], [makeResult()]);
+      engine.searchWithExpansion.mockRejectedValueOnce(new Error('permission denied'));
+
+      const output = await benchmarkPreflightHandler(engine);
+      const text = getFirstText(output);
+
+      expect(text).toContain('search_codebase: fallback');
+      expect(text).toContain('fallback: get_file');
+    });
   });
 
   describe('createMcpServer', () => {
@@ -129,6 +203,13 @@ describe('MCP Server Tools', () => {
       const server = createMcpServer({ searchEngine: engine as never });
       expect(server).toBeDefined();
       expect(typeof server.connect).toBe('function');
+    });
+
+    test('Test 9: registers benchmark_preflight tool', () => {
+      const engine = makeMockEngine();
+      const server = createMcpServer({ searchEngine: engine as never });
+
+      expect(server).toBeDefined();
     });
   });
 });

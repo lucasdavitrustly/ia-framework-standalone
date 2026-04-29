@@ -37,7 +37,7 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig): Embedd
 
     default: {
       // TypeScript exhaustiveness — provider is 'never' here in strict mode
-      const p = (config as EmbeddingProviderConfig).provider;
+      const p = config.provider;
       throw new Error(`Unknown provider: ${String(p)}. Supported: openai, ollama`);
     }
   }

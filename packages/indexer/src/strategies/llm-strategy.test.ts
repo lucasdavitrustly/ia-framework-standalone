@@ -3,10 +3,15 @@ import { LlmChunkingStrategy } from './llm-strategy.js';
 import type { LlmChunkingOptions } from './llm-strategy.js';
 import type { ChunkingConfig } from './types.js';
 import { createHash } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import type { LlmChunkCache } from './llm-cache.js';
+
+function getStrategyCache(strategy: LlmChunkingStrategy): LlmChunkCache {
+  return (strategy as unknown as { cache: LlmChunkCache }).cache;
+}
 
 // Mock the chunkFile function from llm-chunker
 vi.mock('./llm-chunker.js', () => ({
@@ -79,8 +84,7 @@ describe('LlmChunkingStrategy', () => {
 
     // Pre-populate cache
     const strategy = new LlmChunkingStrategy(options);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private cache for test setup
-    const cache = (strategy as any)['cache'];
+    const cache = getStrategyCache(strategy);
     cache.set(contentHash, 'llama3.2:latest', 1, [
       { startLine: 1, endLine: 1, summary: 'Variable declaration' },
     ]);

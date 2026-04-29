@@ -2,9 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RetrievalResult } from '@ia-framework/retrieval';
+import { formatRetrievalContext } from './result-formatting.js';
 
 type Engine = {
   getFile(path: string): Promise<RetrievalResult[]>;
+  search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
 };
 
 export interface GetFileInput {
@@ -18,16 +20,33 @@ export type ToolOutput = CallToolResult;
  * Returns all chunks for a file formatted as sequential code blocks.
  */
 export async function getFileHandler(engine: Engine, input: GetFileInput): Promise<ToolOutput> {
-  const results = await engine.getFile(input.path);
+  let results: RetrievalResult[];
+  let fallbackNote: string | undefined;
+
+  try {
+    results = await engine.getFile(input.path);
+  } catch (error) {
+    if (!engine.search) {
+      throw error;
+    }
+
+    results = await engine.search({ text: input.path, limit: 5 });
+    fallbackNote =
+      `Note: direct file retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
+      'Returning indexed evidence matching the requested path.';
+  }
 
   if (results.length === 0) {
     return {
       content: [
         {
           type: 'text',
-          text: `No indexed chunks found for: ${input.path}`,
+          text: fallbackNote
+            ? `${fallbackNote}\n\nNo indexed chunks found for: ${input.path}`
+            : `No indexed chunks found for: ${input.path}`,
         },
       ],
+      ...(fallbackNote ? { structuredContent: { fallbackUsed: true } } : {}),
     };
   }
 
@@ -39,13 +58,20 @@ export async function getFileHandler(engine: Engine, input: GetFileInput): Promi
     const header = r.name
       ? `### ${r.chunkType}: ${r.name} (lines ${r.startLine}-${r.endLine})${sourceTag}`
       : `### Lines ${r.startLine}-${r.endLine}${sourceTag}`;
-    return `${header}\n\`\`\`${r.language}\n${r.content}\n\`\`\``;
+    const contextLine = formatRetrievalContext(r);
+    return `${header}\n${contextLine}\n\`\`\`${r.language}\n${r.content}\n\`\`\``;
   });
 
-  const text = `## File: ${input.path}\n\n${sections.join('\n\n')}`;
+  const title = fallbackNote ? `## Indexed evidence for: ${input.path}` : `## File: ${input.path}`;
+  const conclusion = `Conclusion: returning ${results.length} indexed ${results.length === 1 ? 'section' : 'sections'} for ${input.path}.`;
+  const text = `${conclusion}\n\n${fallbackNote ? `${fallbackNote}\n\n` : ''}${title}\n\n${sections.join('\n\n')}`;
 
   return {
     content: [{ type: 'text', text }],
+    structuredContent: {
+      ...(fallbackNote ? { fallbackUsed: true } : {}),
+      answered: true,
+    },
   };
 }
 

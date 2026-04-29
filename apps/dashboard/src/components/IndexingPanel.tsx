@@ -58,7 +58,7 @@ export default function IndexingPanel() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const isRunning = status?.running ?? false;
   const isDone = status?.stage === 'done';

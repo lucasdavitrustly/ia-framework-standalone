@@ -5,6 +5,7 @@ import type { RetrievalResult } from '@ia-framework/retrieval';
 
 type Engine = {
   getFile(path: string): Promise<RetrievalResult[]>;
+  search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
 };
 
 export interface GetDependenciesInput {
@@ -21,16 +22,33 @@ export async function getDependenciesHandler(
   engine: Engine,
   input: GetDependenciesInput,
 ): Promise<ToolOutput> {
-  const results = await engine.getFile(input.path);
+  let results: RetrievalResult[];
+  let fallbackNote: string | undefined;
+
+  try {
+    results = await engine.getFile(input.path);
+  } catch (error) {
+    if (!engine.search) {
+      throw error;
+    }
+
+    results = await engine.search({ text: input.path, limit: 5 });
+    fallbackNote =
+      `Note: direct dependency extraction was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
+      'Returning dependency hints from indexed evidence matching the requested path.';
+  }
 
   if (results.length === 0) {
     return {
       content: [
         {
           type: 'text',
-          text: `No indexed chunks found for: ${input.path}`,
+          text: fallbackNote
+            ? `${fallbackNote}\n\nNo indexed chunks found for: ${input.path}`
+            : `No indexed chunks found for: ${input.path}`,
         },
       ],
+      ...(fallbackNote ? { structuredContent: { fallbackUsed: true } } : {}),
     };
   }
 
@@ -63,10 +81,15 @@ export async function getDependenciesHandler(
           .join('\n')
       : '(none)';
 
-  const text = `## Dependencies for: ${input.path}\n\n### Imports\n${importsList}\n\n### Exports\n${exportsList}`;
+  const text = `${fallbackNote ? `${fallbackNote}\n\n` : ''}## Dependencies for: ${input.path}\n\n### Imports\n${importsList}\n\n### Exports\n${exportsList}`;
+  const conclusion = `Conclusion: found dependency evidence for ${input.path}.`;
 
   return {
-    content: [{ type: 'text', text }],
+    content: [{ type: 'text', text: `${conclusion}\n\n${text}` }],
+    structuredContent: {
+      ...(fallbackNote ? { fallbackUsed: true } : {}),
+      answered: true,
+    },
   };
 }
 

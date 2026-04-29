@@ -38,14 +38,11 @@ const DECLARATION_TYPES = new Set([
   'type_alias_declaration',
   'enum_declaration',
   'lexical_declaration', // const/let at module level
-  'variable_statement',  // var at module level
+  'variable_statement', // var at module level
 ]);
 
 // Node types inside a class body that become their own chunks
-const CLASS_MEMBER_TYPES = new Set([
-  'method_definition',
-  'public_field_definition',
-]);
+const CLASS_MEMBER_TYPES = new Set(['method_definition', 'public_field_definition']);
 
 const CHUNK_TYPE_MAP: Partial<Record<string, CodeChunk['chunkType']>> = {
   function_declaration: 'function',
@@ -78,15 +75,6 @@ function extractImports(rootNode: Parser.SyntaxNode): string[] {
   return imports;
 }
 
-function extractExportsFromNode(
-  child: Parser.SyntaxNode,
-  targetNode: Parser.SyntaxNode,
-): string[] {
-  if (child.type !== 'export_statement') return [];
-  const name = getNodeName(targetNode);
-  return name ? [name] : [];
-}
-
 /**
  * Extract individual members (methods, fields) from a class body node.
  * This decomposes large classes into smaller, semantically meaningful chunks —
@@ -114,7 +102,8 @@ function extractClassMembers(
     const content = sourceLines.slice(startLine - 1, endLine).join('\n');
 
     const memberName = getNodeName(member);
-    const chunkType: CodeChunk['chunkType'] = member.type === 'method_definition' ? 'function' : 'other';
+    const chunkType: CodeChunk['chunkType'] =
+      member.type === 'method_definition' ? 'function' : 'other';
 
     members.push({
       id: makeChunkId(filePath, startLine, endLine),
@@ -173,7 +162,7 @@ export function parseTypeScript(
 
     hasDeclarations = true;
     const startLine = child.startPosition.row + 1; // 1-indexed
-    const endLine = child.endPosition.row + 1;     // 1-indexed
+    const endLine = child.endPosition.row + 1; // 1-indexed
     const content = lines.slice(startLine - 1, endLine).join('\n');
 
     const chunkType: CodeChunk['chunkType'] = CHUNK_TYPE_MAP[targetNode.type] ?? 'other';
@@ -195,9 +184,18 @@ export function parseTypeScript(
     });
 
     // For class declarations, also extract individual members as sub-chunks
-    if (targetNode.type === 'class_declaration' || targetNode.type === 'abstract_class_declaration') {
+    if (
+      targetNode.type === 'class_declaration' ||
+      targetNode.type === 'abstract_class_declaration'
+    ) {
       const memberChunks = extractClassMembers(
-        targetNode, name, lines, filePath, relativePath, language, allImports,
+        targetNode,
+        name,
+        lines,
+        filePath,
+        relativePath,
+        language,
+        allImports,
       );
       chunks.push(...memberChunks);
     }

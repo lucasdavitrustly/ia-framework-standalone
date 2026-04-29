@@ -23,11 +23,14 @@ async function makeFile(name: string, content: string): Promise<string> {
 
 describe('parseFile', () => {
   it('detects function declarations with correct chunkType and name', async () => {
-    const filePath = await makeFile('index.ts', `
+    const filePath = await makeFile(
+      'index.ts',
+      `
 export function greet(name: string): string {
   return \`Hello \${name}\`;
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     expect(chunks.length).toBeGreaterThanOrEqual(1);
@@ -37,7 +40,9 @@ export function greet(name: string): string {
   });
 
   it('detects class declarations with correct chunkType and name', async () => {
-    const filePath = await makeFile('class.ts', `
+    const filePath = await makeFile(
+      'class.ts',
+      `
 export class UserService {
   private users: string[] = [];
 
@@ -45,7 +50,8 @@ export class UserService {
     this.users.push(name);
   }
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const cls = chunks.find((c) => c.chunkType === 'class');
@@ -54,13 +60,16 @@ export class UserService {
   });
 
   it('detects interface declarations with correct chunkType', async () => {
-    const filePath = await makeFile('interface.ts', `
+    const filePath = await makeFile(
+      'interface.ts',
+      `
 export interface User {
   id: string;
   name: string;
   email?: string;
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const iface = chunks.find((c) => c.chunkType === 'interface');
@@ -69,14 +78,17 @@ export interface User {
   });
 
   it('extracts imports from a file with import statements', async () => {
-    const filePath = await makeFile('with-imports.ts', `
+    const filePath = await makeFile(
+      'with-imports.ts',
+      `
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function loadFile(path: string): Promise<string> {
   return readFile(join(path), 'utf-8');
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     expect(chunks.length).toBeGreaterThanOrEqual(1);
@@ -89,10 +101,13 @@ export function loadFile(path: string): Promise<string> {
   });
 
   it('returns a single module chunk for a file with only imports', async () => {
-    const filePath = await makeFile('imports-only.ts', `
+    const filePath = await makeFile(
+      'imports-only.ts',
+      `
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     expect(chunks.length).toBe(1);
@@ -102,10 +117,13 @@ import { join } from 'node:path';
   });
 
   it('returns chunks with non-empty id and correct startLine/endLine', async () => {
-    const filePath = await makeFile('lines.ts', `
+    const filePath = await makeFile(
+      'lines.ts',
+      `
 export function alpha(): void {}
 export function beta(): void {}
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     expect(chunks.length).toBeGreaterThanOrEqual(1);
@@ -118,11 +136,14 @@ export function beta(): void {}
   });
 
   it('parses .js files (JavaScript) correctly', async () => {
-    const filePath = await makeFile('util.js', `
+    const filePath = await makeFile(
+      'util.js',
+      `
 export function add(a, b) {
   return a + b;
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const fn = chunks.find((c) => c.chunkType === 'function');
@@ -132,15 +153,15 @@ export function add(a, b) {
   });
 
   it('throws an error for non-existent files', async () => {
-    await expect(
-      parseFile('/does/not/exist/file.ts'),
-    ).rejects.toThrow();
+    await expect(parseFile('/does/not/exist/file.ts')).rejects.toThrow();
   });
 });
 
 describe('parseFile — TypeScript class decomposition', () => {
   it('extracts methods from classes as separate function chunks', async () => {
-    const filePath = await makeFile('service.ts', `
+    const filePath = await makeFile(
+      'service.ts',
+      `
 export class OrderService {
   private orders: string[] = [];
 
@@ -156,7 +177,8 @@ export class OrderService {
     return this.orders;
   }
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const cls = chunks.find((c) => c.chunkType === 'class');
@@ -172,11 +194,14 @@ export class OrderService {
   });
 
   it('sets parentName on method chunks extracted from a class', async () => {
-    const filePath = await makeFile('parent.ts', `
+    const filePath = await makeFile(
+      'parent.ts',
+      `
 export class UserService {
   getUser(): string { return 'user'; }
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const method = chunks.find((c) => c.chunkType === 'function' && c.name === 'getUser');
@@ -188,14 +213,8 @@ export class UserService {
 describe('parseFile — oversized chunk splitting', () => {
   it('splits an oversized TypeScript function into sub-chunks', async () => {
     // Generate a function with 50 body lines
-    const bodyLines = Array.from({ length: 50 }, (_, i) =>
-      `  const v${i} = process(${i});`,
-    );
-    const content = [
-      'export function bigFn(): void {',
-      ...bodyLines,
-      '}',
-    ].join('\n');
+    const bodyLines = Array.from({ length: 50 }, (_, i) => `  const v${i} = process(${i});`);
+    const content = ['export function bigFn(): void {', ...bodyLines, '}'].join('\n');
 
     const filePath = await makeFile('big.ts', content);
     const chunks = await parseFile(filePath, { projectRoot: tmpDir, maxChunkLines: 20 });
@@ -215,11 +234,14 @@ describe('parseFile — oversized chunk splitting', () => {
   });
 
   it('does not split a small function when maxChunkLines is large', async () => {
-    const filePath = await makeFile('small.ts', `
+    const filePath = await makeFile(
+      'small.ts',
+      `
 export function smallFn(): string {
   return 'hello';
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir, maxChunkLines: 200 });
     const fn = chunks.find((c) => c.name === 'smallFn');
@@ -228,9 +250,7 @@ export function smallFn(): string {
   });
 
   it('splits an oversized Java method into sub-chunks', async () => {
-    const bodyLines = Array.from({ length: 50 }, (_, i) =>
-      `        int v${i} = process(${i});`,
-    );
+    const bodyLines = Array.from({ length: 50 }, (_, i) => `        int v${i} = process(${i});`);
     const content = [
       'public class BigService {',
       '    public void bigMethod() {',
@@ -250,7 +270,9 @@ export function smallFn(): string {
 
 describe('parseFile — Java', () => {
   it('detects class declarations with correct chunkType and name', async () => {
-    const filePath = await makeFile('UserService.java', `
+    const filePath = await makeFile(
+      'UserService.java',
+      `
 public class UserService {
     private String name;
 
@@ -262,7 +284,8 @@ public class UserService {
         return this.name;
     }
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'UserService');
@@ -271,7 +294,9 @@ public class UserService {
   });
 
   it('detects method declarations inside classes', async () => {
-    const filePath = await makeFile('Calculator.java', `
+    const filePath = await makeFile(
+      'Calculator.java',
+      `
 public class Calculator {
     public int add(int a, int b) {
         return a + b;
@@ -281,7 +306,8 @@ public class Calculator {
         return a - b;
     }
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const methods = chunks.filter((c) => c.chunkType === 'function');
@@ -292,12 +318,15 @@ public class Calculator {
   });
 
   it('detects interface declarations', async () => {
-    const filePath = await makeFile('Repository.java', `
+    const filePath = await makeFile(
+      'Repository.java',
+      `
 public interface Repository {
     void save(Object entity);
     Object findById(String id);
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const iface = chunks.find((c) => c.chunkType === 'interface' && c.name === 'Repository');
@@ -305,13 +334,16 @@ public interface Repository {
   });
 
   it('detects enum declarations', async () => {
-    const filePath = await makeFile('Status.java', `
+    const filePath = await makeFile(
+      'Status.java',
+      `
 public enum Status {
     ACTIVE,
     INACTIVE,
     PENDING
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const en = chunks.find((c) => c.chunkType === 'enum' && c.name === 'Status');
@@ -319,7 +351,9 @@ public enum Status {
   });
 
   it('extracts import statements', async () => {
-    const filePath = await makeFile('App.java', `
+    const filePath = await makeFile(
+      'App.java',
+      `
 import java.util.List;
 import java.util.Map;
 
@@ -328,7 +362,8 @@ public class App {
         return List.of("a", "b");
     }
 }
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     const withImports = chunks.filter((c) => c.imports.length > 0);
@@ -339,9 +374,12 @@ public class App {
   });
 
   it('returns a module chunk for an empty Java file', async () => {
-    const filePath = await makeFile('Empty.java', `
+    const filePath = await makeFile(
+      'Empty.java',
+      `
 // just a comment
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     expect(chunks.length).toBe(1);
@@ -350,12 +388,295 @@ public class App {
   });
 
   it('sets relativePath correctly when projectRoot is provided', async () => {
-    const filePath = await makeFile('Foo.java', `
+    const filePath = await makeFile(
+      'Foo.java',
+      `
 public class Foo {}
-    `.trim());
+    `.trim(),
+    );
 
     const chunks = await parseFile(filePath, { projectRoot: tmpDir });
     expect(chunks.length).toBeGreaterThanOrEqual(1);
     expect(chunks[0]!.relativePath).toBe('Foo.java');
+  });
+});
+
+describe('parseFile — Java preamble and fallback', () => {
+  it('method chunks include class-level preamble (package + imports + class signature)', async () => {
+    const filePath = await makeFile(
+      'OrderService.java',
+      `
+package com.example.service;
+
+import java.util.List;
+import java.util.Map;
+
+public class OrderService {
+    public List<String> getOrders() {
+        return List.of("order1");
+    }
+
+    public void createOrder(String name) {
+        // logic
+    }
+}
+    `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(2);
+
+    for (const method of methods) {
+      expect(method.content).toContain('package com.example.service;');
+      expect(method.content).toContain('import java.util.List;');
+      expect(method.content).toContain('import java.util.Map;');
+      expect(method.content).toContain('public class OrderService {');
+    }
+  });
+
+  it('method chunks have parentName set to the enclosing class name', async () => {
+    const filePath = await makeFile(
+      'UserService.java',
+      `
+package com.example;
+
+public class UserService {
+    public String getUser() {
+        return "user";
+    }
+
+    public void saveUser(String name) {
+        // save
+    }
+}
+    `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(2);
+
+    for (const method of methods) {
+      expect(method.parentName).toBe('UserService');
+    }
+  });
+
+  it('constructor chunks include preamble and parentName', async () => {
+    const filePath = await makeFile(
+      'ProductService.java',
+      `
+package com.example;
+
+import java.util.ArrayList;
+
+public class ProductService {
+    private String name;
+
+    public ProductService(String name) {
+        this.name = name;
+    }
+}
+    `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const constructors = chunks.filter(
+      (c) => c.chunkType === 'function' && c.name === 'ProductService',
+    );
+    expect(constructors.length).toBeGreaterThanOrEqual(1);
+
+    const ctor = constructors[0]!;
+    expect(ctor.content).toContain('package com.example;');
+    expect(ctor.content).toContain('public class ProductService {');
+    expect(ctor.parentName).toBe('ProductService');
+  });
+
+  it('top-level class chunk does NOT have preamble prepended', async () => {
+    const filePath = await makeFile(
+      'SimpleClass.java',
+      `
+package com.example;
+
+import java.util.List;
+
+public class SimpleClass {
+    public void doSomething() {}
+}
+    `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const classChunk = chunks.find((c) => c.chunkType === 'class' && c.name === 'SimpleClass');
+    expect(classChunk).toBeDefined();
+
+    // The class chunk content should start with "public class" or the original source,
+    // NOT be duplicated with a leading package + imports preamble
+    const firstLine = classChunk!.content.split('\n')[0]!.trim();
+    expect(firstLine).toBe('public class SimpleClass {');
+  });
+
+  it('interface method declarations include preamble with interface signature', async () => {
+    const filePath = await makeFile(
+      'Repository.java',
+      `
+package com.example.repo;
+
+import java.util.Optional;
+
+public interface Repository {
+    void save(Object entity);
+    Optional<Object> findById(String id);
+}
+    `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(1);
+
+    for (const method of methods) {
+      expect(method.content).toContain('package com.example.repo;');
+      expect(method.content).toContain('public interface Repository {');
+    }
+  });
+
+  it('returns a fallback module chunk (does not throw) when Java source has syntax errors', async () => {
+    // Unclosed brace — syntactically broken
+    const filePath = await makeFile(
+      'Broken.java',
+      `
+public class Broken {
+    public void brokenMethod() {
+        // missing closing braces
+    `.trim(),
+    );
+
+    let chunks: Awaited<ReturnType<typeof parseFile>>;
+    await expect(
+      parseFile(filePath, { projectRoot: tmpDir }).then((c) => {
+        chunks = c;
+        return c;
+      }),
+    ).resolves.toBeDefined();
+    expect(chunks!.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('preamble works correctly when Java file has no package statement', async () => {
+    const filePath = await makeFile(
+      'NoPackage.java',
+      `
+import java.util.List;
+
+public class NoPackage {
+    public List<String> items() {
+        return List.of();
+    }
+}
+    `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(1);
+
+    const method = methods[0]!;
+    // No package line — preamble should still include imports and class signature
+    expect(method.content).toContain('import java.util.List;');
+    expect(method.content).toContain('public class NoPackage {');
+    expect(method.parentName).toBe('NoPackage');
+  });
+});
+
+describe('parseFile — Java Spring Boot integration', () => {
+  const springBootSource = `
+package com.example.demo.controller;
+
+import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import java.util.List;
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+
+    @Autowired
+    private OrderService orderService;
+
+    @GetMapping
+    public List<OrderDTO> getAllOrders() {
+        return orderService.findAll();
+    }
+
+    @GetMapping("/{id}")
+    public Optional<OrderDTO> getOrderById(@PathVariable Long id) {
+        return orderService.findById(id);
+    }
+
+    @PostMapping
+    public OrderDTO createOrder(@RequestBody CreateOrderRequest request) {
+        return orderService.create(request);
+    }
+}
+  `.trim();
+
+  it('produces >= 4 chunks (class + 3 methods + field)', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    expect(chunks.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('each method chunk content contains the package declaration', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    expect(methods.length).toBeGreaterThanOrEqual(3);
+    for (const method of methods) {
+      expect(method.content).toContain('package com.example.demo.controller');
+    }
+  });
+
+  it('each method chunk content contains the class signature', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    for (const method of methods) {
+      expect(method.content).toContain('public class OrderController');
+    }
+  });
+
+  it('each method chunk content contains Spring import statements', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    for (const method of methods) {
+      expect(method.content).toContain('import org.springframework');
+    }
+  });
+
+  it('method chunks have parentName === OrderController', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    for (const method of methods) {
+      expect(method.parentName).toBe('OrderController');
+    }
+  });
+
+  it('class chunk exists with name OrderController and chunkType class', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'OrderController');
+    expect(cls).toBeDefined();
+  });
+
+  it('method chunk content includes HTTP method annotations (@GetMapping, @PostMapping)', async () => {
+    const filePath = await makeFile('OrderController.java', springBootSource);
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const methods = chunks.filter((c) => c.chunkType === 'function');
+    const allContent = methods.map((m) => m.content).join('\n');
+    expect(allContent).toContain('@GetMapping');
+    expect(allContent).toContain('@PostMapping');
   });
 });

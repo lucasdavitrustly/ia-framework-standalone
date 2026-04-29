@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BenchmarkRunner } from '../benchmark-runner.js';
 import { BenchmarkStore } from '../benchmark-store.js';
-import type { BenchmarkConfig, BenchmarkQuery, BenchmarkRun, ConfigSnapshot } from '../types.js';
+import type { BenchmarkConfig, BenchmarkQuery, ConfigSnapshot } from '../types.js';
 import type { RetrievalResult, RetrievalQuery } from '@ia-framework/retrieval';
 
 function makeRetrievalResult(relativePath: string, score = 0.9): RetrievalResult {
@@ -209,37 +209,6 @@ describe('BenchmarkStore baseline methods', () => {
   afterEach(() => {
     store.close();
   });
-
-  function makeBaselineRun(overrides?: Partial<BenchmarkRun>): BenchmarkRun {
-    return {
-      runId: crypto.randomUUID(),
-      isBaseline: true,
-      configSnapshot: {
-        embeddingProvider: 'ollama',
-        embeddingModel: 'nomic-embed-text',
-        collectionName: 'test',
-        topK: 10,
-        scoreThreshold: 0.5,
-      },
-      queries: [
-        {
-          queryId: 'q1',
-          query: 'test query',
-          expectedFiles: ['src/file.ts'],
-          retrievedFiles: ['src/file.ts'],
-          hit: true,
-          rank: 1,
-          reciprocalRank: 1.0,
-          latencyMs: 10,
-        },
-      ],
-      hitAtK: 1.0,
-      mrr: 1.0,
-      avgLatencyMs: 10,
-      timestamp: new Date().toISOString(),
-      ...overrides,
-    };
-  }
 
   it('saveBaseline() saves a BaselineResult to baseline_runs table', async () => {
     const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/file1.ts')]);

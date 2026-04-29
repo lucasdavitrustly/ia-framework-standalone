@@ -1,6 +1,7 @@
 // Types
 export type {
   ChunkMetadata,
+  CodeAnchor,
   ContextSource,
   ProjectProfile,
   EmbeddingVector,
@@ -26,3 +27,21 @@ export {
 // Logger
 export { createLogger } from './logger/index.js';
 export type { Logger } from './logger/index.js';
+
+// Retrieval helpers
+export {
+  analyzeRetrievalQuery,
+  buildCodeAnchor,
+  inferLayerHints,
+  inferModulePath,
+  inferPackageName,
+} from './retrieval/query-intelligence.js';
+
+// Maven
+export { MavenModuleParser } from './maven/index.js';
+export type {
+  MavenCoordinate,
+  MavenModuleInfo,
+  ModuleGraph,
+  ModuleGraphJSON,
+} from './maven/index.js';

@@ -5,6 +5,7 @@
 - ✅ **v1.0 MVP** - Phases 1-11 (shipped 2026-04-07)
 - ✅ **v1.1 RAG Quality & Dashboard Evolution** - Phases 12-18 (shipped 2026-04-15)
 - 🚧 **v1.2 Chunking Tuning & Retrieval Quality** - Phases 19-21 (in progress)
+- ⬜ **v1.3 RAG Quality Improvements** - Phases 22-27 (planned)
 
 ## Phases
 
@@ -369,6 +370,17 @@ Plans:
 - [ ] **Phase 20: Prompt Engineering** - Better chunk boundaries and summaries via few-shot examples, class grouping, intent-focused summaries, quality scoring, A/B comparison
 - [ ] **Phase 21: Dashboard Tuning Views** - Chunk inspector, score distributions, filtering effectiveness, prompt version comparison
 
+### ⬜ v1.3 RAG Quality Improvements (Planned)
+
+**Milestone Goal:** Improve RAG retrieval quality and benchmark scores based on findings from the 2026-04-24 benchmark run comparing WITH vs WITHOUT MCP server responses across a Java/Spring Boot payment gateway codebase.
+
+- [x] **Phase 22: AST-aware Java Semantic Chunking** — Replace fixed-size Java chunking with web-tree-sitter AST-aware chunking at class/method boundaries _(packages/core)_ (completed 2026-04-28)
+- [x] **Phase 23: Zero-result Fallback Search Strategy** — Automatic hybrid fallback + "did you mean?" suggestions when semantic search returns 0 results _(packages/mcp-server)_ (completed 2026-04-28)
+- [x] **Phase 24: Maven Multi-module Dependency Graph Traversal** — Parse pom.xml files, build module dependency graph, expose `get_module_dependencies` MCP tool _(packages/core + packages/mcp-server)_ (completed 2026-04-28)
+- [x] **Phase 25: RAG-to-action Prompt Templates** — Structured prompt templates injected for impact/change-analysis query patterns _(packages/mcp-server)_ (completed 2026-04-28)
+- [ ] **Phase 26: Hallucination Penalty Calibration in Benchmark Judge** — Add Hallucination Check dimension; zero Factual Precision for responses asserting non-existent entities _(packages/benchmark)_
+- [x] **Phase 27: Benchmark Executor Model Lock Enforcement** — Validate LLM-IDENTITY block after each run; flag `model_mismatch: true` on deviation _(packages/benchmark)_ (completed 2026-04-29)
+
 ## Phase Details
 
 ### Phase 19: Baseline & Score Filtering
@@ -404,7 +416,12 @@ Plans:
 3. Chunk summaries describe what code does using domain terminology (not "this function takes X and returns Y" syntax descriptions)
 4. Each chunk summary receives a heuristic quality score; developer can identify low-quality summaries for diagnosis
 5. Developer can run CLI comparison of two prompt versions on the same corpus and see per-query MRR deltas side-by-side
-   **Plans**: TBD
+   **Plans**: 3 plans
+
+Plans:
+- [x] 27-01-PLAN.md — Types, identity parser, store schema
+- [x] 27-02-PLAN.md — Runner integration with model validation
+- [x] 27-03-PLAN.md — CLI --strict-model and validate-models
 
 ### Phase 21: Dashboard Tuning Views
 
@@ -417,7 +434,125 @@ Plans:
 2. Dashboard shows histogram of top-50 candidate scores with threshold boundary line clearly marking returned vs filtered zones
 3. Dashboard shows returned results alongside near-miss filtered results (just below threshold) with score comparison for diagnosis
 4. Dashboard links benchmark MRR results to prompt versions so developer can see which prompt version produced which MRR score over time
-   **Plans**: TBD
+   **Plans**: 3 plans
+
+Plans:
+- [x] 27-01-PLAN.md — Types, identity parser, store schema
+- [x] 27-02-PLAN.md — Runner integration with model validation
+- [ ] 27-03-PLAN.md — CLI --strict-model and validate-models
+
+### Phase 22: AST-aware Java Semantic Chunking
+
+**Goal**: Java files are chunked at class and method boundaries using web-tree-sitter, preserving semantic coherence and improving retrieval precision for architecture and cross-module queries
+**Depends on**: Phase 19 (baseline measurement infrastructure)
+**Package**: packages/core
+**Success Criteria** (what must be TRUE):
+
+1. Java grammar loaded via web-tree-sitter; parser correctly identifies class declarations, method declarations, and interface declarations in representative Java files
+2. Each produced chunk maps to exactly one complete class, method, constructor, or interface — no chunk splits a method body or spans two unrelated declarations
+3. Chunks include full class-level context (package, imports, class signature) as a header preamble so each chunk is semantically self-contained
+4. Benchmark run on Java/Spring Boot corpus shows ≥+3 quality points on Technical Depth and Code References dimensions for architecture/cross-file queries vs the fixed-size baseline
+5. Existing TypeScript/Python AST chunking is unaffected; language dispatch is driven by file extension
+   **Plans**: 2 plans
+
+Plans:
+
+- [x] 22-01-PLAN.md — TDD: Java preamble, parentName, and parse-failure fallback
+- [x] 22-02-PLAN.md — Spring Boot integration test and verification
+
+### Phase 23: Zero-result Fallback Search Strategy
+
+**Goal**: MCP server never returns a bare empty result set — zero-result queries automatically re-run with hybrid search and surface closest-match suggestions
+**Depends on**: Phase 11 (hybrid search MCP tool exists)
+**Package**: packages/mcp-server
+**Success Criteria** (what must be TRUE):
+
+1. When `search_codebase` returns 0 results, the server automatically re-runs the query using `searchHybrid` (BM25+semantic) without caller intervention
+2. If the hybrid fallback also returns 0 results, the response includes a structured `not_found` envelope with the top-3 closest matches by BM25 keyword similarity as "did you mean?" suggestions
+3. Response envelope includes a `fallback_used: true` flag so the LLM can adjust its tone ("I didn't find an exact match, but the closest related code is...")
+4. Benchmark scores for negative/edge-case queries (non-existent class queries) improve by ≥+2 Actionability points vs the bare-empty baseline
+5. Fallback behavior is covered by unit tests with mocked search engine returning empty first-pass results
+   **Plans:** 2/2 plans complete
+
+Plans:
+
+- [x] 23-01-PLAN.md — TDD: searchKeyword interface + searchWithFallback engine orchestration
+- [x] 23-02-PLAN.md — Wire MCP search tools to use searchWithFallback + structured envelope
+
+### Phase 24: Maven Multi-module Dependency Graph Traversal
+
+**Goal**: Framework understands Maven module relationships and exposes cross-module dependency context as a queryable MCP tool
+**Depends on**: Phase 10 (dependency graph infrastructure), Phase 22 (Java indexing improvements)
+**Packages**: packages/core, packages/mcp-server
+**Success Criteria** (what must be TRUE):
+
+1. POM parser reads `pom.xml` files recursively from the target project root and extracts `<modules>`, `<dependencies>`, `<groupId>`, `<artifactId>`, and `<version>` for all modules
+2. Module dependency graph is persisted as Qdrant payload metadata alongside code chunks; each chunk's metadata includes its owning Maven module ID
+3. New MCP tool `get_module_dependencies` accepts a module name and returns its direct and transitive dependencies plus the key interfaces/DTOs that cross module boundaries
+4. Cross-module dependency queries (e.g. "how does core depend on processor?") return a structured dependency path with file/class references — not generic text answers
+5. Benchmark scores for cross-file/cross-module query category improve by ≥+4 points vs baseline
+   **Plans:** 3/3 plans complete
+
+Plans:
+
+- [x] 24-01-PLAN.md — Maven POM parser, ModuleGraph types, SQLite persistence
+- [x] 24-02-PLAN.md — ChunkPayload maven_module enrichment, get_module_dependencies MCP tool
+
+### Phase 25: RAG-to-action Prompt Templates
+
+**Goal**: Impact analysis and change-propagation queries produce ranked, actionable change plans by injecting structured scaffolding around retrieved context
+**Depends on**: Phase 24 (module graph available for dependency ordering)
+**Package**: packages/mcp-server
+**Success Criteria** (what must be TRUE):
+
+1. MCP server detects impact/change-analysis query patterns (keywords: "what files", "what changes", "impact", "affects", "need to update") and wraps retrieved context in a structured prompt template
+2. Template instructs the LLM to: list affected files in dependency order, explain why each needs updating, and estimate effort (S/M/L)
+3. Template is injected as system context before the retrieved chunks — not appended after; LLM receives it as a formatting directive
+4. Benchmark scores for impact-analysis queries improve by ≥+2 on Actionability and Completeness dimensions vs baseline
+5. Template injection is configurable (can be disabled via MCP tool param `use_template: false`) so power users can opt out
+   **Plans:** 2/2 plans complete
+
+Plans:
+
+- [x] 25-01-PLAN.md — Intent detection module + prompt template registry (TDD)
+- [x] 25-02-PLAN.md — Wire template injection into both search tools
+
+### Phase 26: Hallucination Penalty Calibration in Benchmark Judge
+
+**Goal**: Benchmark judge scoring correctly penalizes fabricated entities so benchmark results reflect production-safety requirements, not confident-sounding hallucination
+**Depends on**: Phase 7 (benchmark judge infrastructure)
+**Package**: packages/benchmark
+**Success Criteria** (what must be TRUE):
+
+1. Judge evaluation rubric includes a new "Hallucination Check" dimension (0 or 5 points); responses that assert facts about non-existent classes, methods, or files receive 0 on this dimension
+2. Judge prompt explicitly instructs the model to cross-reference asserted entity names against the provided code context; unverified entities are flagged as hallucinations
+3. Re-scoring the 2026-04-24 benchmark run with the updated judge flips the anomalous result: the "class doesn't exist" answer scores higher than the fabricated `CryptoPaymentAdapter` response
+4. Judge output includes a `hallucination_flags` array listing any detected fabricated entities for traceability
+5. Updated rubric and judge prompt are versioned (prompt_version field) so historical runs remain comparable
+   **Plans**: 1 plan
+
+Plans:
+
+- [ ] 26-01-PLAN.md — Update benchmark-judge.md (Hallucination Check rubric, /30 total, entity verification) + benchmark-executor.md (Verified Entities injection) + SKILL.md
+
+### Phase 27: Benchmark Executor Model Lock Enforcement
+
+**Goal**: Benchmark runs detect model identity mismatches and flag contaminated results, eliminating model inconsistency as a confounding variable
+**Depends on**: Phase 7 (benchmark runner)
+**Package**: packages/benchmark
+**Success Criteria** (what must be TRUE):
+
+1. After each prompt execution, benchmark runner parses the `LLM-IDENTITY` block from the response and extracts the `Model` field
+2. Extracted model identity is compared against the configured model; mismatch is logged with `model_mismatch: true` in the run output JSON
+3. Contaminated prompts are flagged individually in results; aggregate run is marked `run_integrity: partial` if any prompt mismatched
+4. Optional `--strict-model` CLI flag causes the runner to abort on first mismatch rather than continuing (useful for CI/reproducibility enforcement)
+5. Re-analysis of the 2026-04-24 run identifies prompts 3 and 4 as `model_mismatch: true` using the new validator
+   **Plans**: 3 plans
+
+Plans:
+- [x] 27-01-PLAN.md — Types, identity parser, store schema
+- [ ] 27-02-PLAN.md — Runner integration with model validation
+- [ ] 27-03-PLAN.md — CLI --strict-model and validate-models
 
 ## Progress
 
@@ -447,3 +582,9 @@ Phases execute in numeric order: 19 → 20 → 21
 | 19. Baseline & Score Filtering                | v1.2      | 0/?            | Not started | -          |
 | 20. Prompt Engineering                        | v1.2      | 0/?            | Not started | -          |
 | 21. Dashboard Tuning Views                    | v1.2      | 0/?            | Not started | -          |
+| 22. AST-aware Java Semantic Chunking          | v1.3      | 2/2            | Complete    | 2026-04-28 |
+| 23. Zero-result Fallback Search Strategy      | v1.3      | 2/2            | Complete    | 2026-04-28 |
+| 24. Maven Multi-module Dependency Graph       | v1.3      | 3/3            | Complete    | 2026-04-28 |
+| 25. RAG-to-action Prompt Templates            | v1.3      | 2/2            | Complete    | 2026-04-28 |
+| 26. Hallucination Penalty Calibration         | v1.3      | 0/?            | Not started | -          |
+| 27. Benchmark Executor Model Lock Enforcement | v1.3      | 3/3 | Complete    | 2026-04-29 |

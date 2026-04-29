@@ -226,6 +226,7 @@ describe('createApp', () => {
     const app = createApp(deps);
     const res = await app.request('/api/metrics/events?offset=0&limit=10');
     expect(res.status).toBe(200);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(deps.metricsStore.listEvents).toHaveBeenCalledWith(10, 0);
   });
 

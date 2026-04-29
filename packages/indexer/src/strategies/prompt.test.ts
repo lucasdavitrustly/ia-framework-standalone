@@ -13,9 +13,9 @@ describe('buildPrompt - class grouping rules', () => {
     expect(prompt).toMatch(/class.*methods.*MUST.*single chunk/i);
   });
 
-  it('contains 100-line split rule with class name prefix', () => {
+  it('contains 200-line split rule with class name prefix', () => {
     const prompt = buildPrompt(SAMPLE_SOURCE, 'OrderService.java');
-    expect(prompt).toContain('100 lines');
+    expect(prompt).toContain('200 lines');
     expect(prompt).toContain('prefix each sub-chunk summary with the class name');
   });
 
@@ -31,7 +31,7 @@ describe('buildPrompt - class grouping rules', () => {
 
   it('contains syntax anti-pattern guidance', () => {
     const prompt = buildPrompt(SAMPLE_SOURCE, 'OrderService.java');
-    expect(prompt).toContain('Do NOT describe syntax');
+    expect(prompt).toContain('PURPOSE and BEHAVIOR, not syntax structure');
   });
 });
 

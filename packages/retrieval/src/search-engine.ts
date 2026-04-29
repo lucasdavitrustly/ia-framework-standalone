@@ -1,4 +1,11 @@
-import type { SearchEngineConfig, RetrievalQuery, RetrievalResult } from './types.js';
+import type {
+  SearchEngineConfig,
+  RetrievalQuery,
+  RetrievalResult,
+  FallbackSearchResult,
+  FallbackSuggestion,
+} from './types.js';
+import { analyzeRetrievalQuery } from './query-intelligence.js';
 
 type VectorSearchResult = {
   id: string;
@@ -16,6 +23,9 @@ type VectorSearchResult = {
     endLine: number;
     imports: string[];
     exports: string[];
+    modulePath?: string | undefined;
+    packageName?: string | undefined;
+    layerHints?: string[] | undefined;
     indexedAt: string;
   };
 };
@@ -36,9 +46,86 @@ function toRetrievalResult(
     endLine: raw.payload.endLine,
     imports: raw.payload.imports,
     exports: raw.payload.exports,
+    modulePath: raw.payload.modulePath,
+    packageName: raw.payload.packageName,
+    layerHints: raw.payload.layerHints,
     score: raw.score,
     matchedVector,
   };
+}
+
+function normalizePath(value: string | undefined): string {
+  return (value ?? '').replace(/\\/g, '/').toLowerCase();
+}
+
+function rerankResults(results: RetrievalResult[], query: RetrievalQuery): RetrievalResult[] {
+  const intent = analyzeRetrievalQuery(query.text);
+  if (
+    !intent.symbolTerms.length &&
+    !intent.packageTerms.length &&
+    !intent.entryPointQuery &&
+    !intent.architectureQuery &&
+    !intent.dataFlowQuery &&
+    !query.preferredModule
+  ) {
+    return [...results].sort((a, b) => b.score - a.score);
+  }
+
+  const preferredModule = normalizePath(query.preferredModule);
+
+  return [...results]
+    .map((result) => {
+      let bonus = 0;
+      const relativePath = normalizePath(result.relativePath);
+      const modulePath = normalizePath(result.modulePath);
+      const packageName = (result.packageName ?? '').toLowerCase();
+      const symbolName = result.name ?? '';
+      const layerHints = new Set((result.layerHints ?? []).map((hint) => hint.toLowerCase()));
+
+      for (const symbol of intent.symbolTerms) {
+        if (symbolName === symbol) {
+          bonus += 0.3;
+        } else if (relativePath.includes(symbol.toLowerCase())) {
+          bonus += 0.18;
+        }
+      }
+
+      for (const packageTerm of intent.packageTerms) {
+        if (packageName === packageTerm.toLowerCase()) {
+          bonus += 0.24;
+        } else if (packageName.startsWith(packageTerm.toLowerCase())) {
+          bonus += 0.16;
+        }
+      }
+
+      if (preferredModule && modulePath === preferredModule) {
+        bonus += 0.14;
+      }
+
+      if (intent.entryPointQuery) {
+        if (layerHints.has('config') || layerHints.has('route') || layerHints.has('handler')) {
+          bonus += 0.12;
+        }
+        if (/application|main|server|bootstrap|app\./.test(relativePath)) {
+          bonus += 0.12;
+        }
+      }
+
+      if (intent.architectureQuery || intent.dataFlowQuery) {
+        if (layerHints.has('controller')) bonus += 0.1;
+        if (layerHints.has('service')) bonus += 0.09;
+        if (layerHints.has('repository')) bonus += 0.08;
+        if (layerHints.has('model')) bonus += 0.06;
+      }
+
+      if (intent.dataFlowQuery && layerHints.has('data')) {
+        bonus += 0.05;
+      }
+
+      return { result, effectiveScore: result.score + bonus };
+    })
+    .sort((a, b) => b.effectiveScore - a.effectiveScore)
+    .map(({ result }) => result);
 }
 
 /**
@@ -106,9 +193,7 @@ export class SearchEngine {
     }
 
     // Sort by score descending, cap at limit
-    return Array.from(merged.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    return rerankResults(Array.from(merged.values()), query).slice(0, limit);
   }
 
   /**
@@ -136,12 +221,22 @@ export class SearchEngine {
     // Collect unique file paths from base results
     const baseFilePaths = [...new Set(baseResults.map((r) => r.filePath))];
     const baseChunkIds = new Set(baseResults.map((r) => r.chunkId));
+    const intent = analyzeRetrievalQuery(query.text);
+    const dominantModule =
+      query.preferredModule ??
+      baseResults.find((result) => result.modulePath)?.modulePath ??
+      undefined;
 
     // Get neighbor files from the dependency graph
-    const neighborFiles = await this.config.dependencyGraph.getNeighborFiles(
-      baseFilePaths,
-      hops as 1 | 2,
-    );
+    let neighborFiles = await this.config.dependencyGraph.getNeighborFiles(baseFilePaths, hops);
+
+    if ((intent.architectureQuery || intent.dataFlowQuery) && dominantModule) {
+      const normalizedModule = normalizePath(dominantModule);
+      neighborFiles = [
+        ...neighborFiles.filter((filePath) => normalizePath(filePath).includes(normalizedModule)),
+        ...neighborFiles.filter((filePath) => !normalizePath(filePath).includes(normalizedModule)),
+      ];
+    }
 
     // Filter out files that are already represented in base results
     const baseFileSet = new Set(baseFilePaths);
@@ -192,7 +287,91 @@ export class SearchEngine {
   }
 
   /**
-   * Retrieve all chunks for a specific file by relative path.
+   * Search with automatic fallback: semantic → hybrid → BM25 keyword-only.
+   *
+   * Sequence:
+   * 1. Primary semantic search (with user threshold)
+   * 2. If empty and fallback enabled: hybrid search (no threshold)
+   * 3. If still empty: BM25 keyword search via searchKeyword (no threshold)
+   * 4. Returns FallbackSearchResult envelope with metadata about which mode succeeded.
+   */
+  async searchWithFallback(
+    query: RetrievalQuery,
+    options?: { enableFallback?: boolean; maxSuggestions?: number },
+  ): Promise<FallbackSearchResult> {
+    const { vectorStore } = this.config;
+    const maxSuggestions = options?.maxSuggestions ?? 3;
+
+    // Step 1: primary semantic search
+    const primaryResults = await this.search(query);
+    if (primaryResults.length > 0) {
+      return {
+        found: true,
+        fallback_used: false,
+        fallback_mode: 'none',
+        results: primaryResults,
+        suggestions: [],
+      };
+    }
+
+    // No fallback requested
+    if (options?.enableFallback === false) {
+      return {
+        found: false,
+        fallback_used: false,
+        fallback_mode: 'none',
+        results: [],
+        suggestions: [],
+      };
+    }
+
+    // Step 2: hybrid fallback (no scoreThreshold)
+    if (vectorStore.searchHybrid) {
+      const hybridResults = await this.searchHybrid({ ...query, scoreThreshold: undefined });
+      if (hybridResults.length > 0) {
+        return {
+          found: true,
+          fallback_used: true,
+          fallback_mode: 'hybrid',
+          results: hybridResults,
+          suggestions: [],
+        };
+      }
+    }
+
+    // Step 3: BM25 keyword fallback
+    if (vectorStore.searchKeyword) {
+      const sparseVector = computeTermFrequencySparseVector(query.text);
+      const kwRaw = await vectorStore.searchKeyword({
+        sparseVector,
+        limit: maxSuggestions,
+        filter: query.filter,
+      });
+      const suggestions: FallbackSuggestion[] = kwRaw.slice(0, maxSuggestions).map((r) => ({
+        file: r.payload.relativePath,
+        name: r.payload.name ?? r.payload.chunkType,
+        snippet: r.payload.content.slice(0, 200),
+      }));
+      return {
+        found: false,
+        fallback_used: true,
+        fallback_mode: 'keyword',
+        results: [],
+        suggestions,
+      };
+    }
+
+    // All fallbacks exhausted (keyword not supported)
+    return {
+      found: false,
+      fallback_used: true,
+      fallback_mode: 'keyword',
+      results: [],
+      suggestions: [],
+    };
+  }
+
+  /**
    * Uses a Qdrant filter on relativePath — returns all matching chunks.
    */
   async getFile(relativePath: string): Promise<RetrievalResult[]> {
@@ -251,7 +430,10 @@ export class SearchEngine {
       filter: query.filter,
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'both'));
+    return rerankResults(
+      results.map((raw) => toRetrievalResult(raw, 'both')),
+      query,
+    );
   }
 }
 

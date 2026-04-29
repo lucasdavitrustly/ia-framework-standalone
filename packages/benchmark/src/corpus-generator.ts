@@ -95,7 +95,6 @@ function shuffleArray<T>(arr: T[]): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     [copy[i], copy[j]] = [copy[j]!, copy[i]!];
   }
   return copy;
@@ -343,7 +342,7 @@ export async function generateCorpus(options: CorpusGeneratorOptions): Promise<B
       expectedFiles = [];
     } else {
       // Filter to only files that actually exist in our sampled list
-      expectedFiles = (raw.expectedFiles as unknown[]).filter(
+      expectedFiles = raw.expectedFiles.filter(
         (f): f is string => typeof f === 'string' && relativePathSet.has(f),
       );
 

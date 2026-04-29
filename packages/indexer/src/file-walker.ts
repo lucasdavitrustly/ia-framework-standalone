@@ -8,7 +8,6 @@ void access; // imported for potential future use
 
 // CJS interop: ignore is a CommonJS module with a callable default export
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const createIgnore = require('ignore') as { default?: () => Ignore; (): Ignore };
 
 const SKIP_DIRS = [

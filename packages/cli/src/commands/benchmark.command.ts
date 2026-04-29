@@ -60,6 +60,8 @@ function runSubcommand(): Command {
     .option('-b, --baseline', 'Run no-RAG baseline (sets scoreThreshold=2.0)')
     .option('-l, --label <text>', 'Human-readable label for this run')
     .option('--corpus <path>', 'Path to benchmark-queries.json')
+    .option('--strict-model', 'Abort on first model identity mismatch')
+    .option('--model <model-id>', 'Expected model ID for identity verification')
     .action(
       async (options: {
         config?: string;
@@ -68,6 +70,8 @@ function runSubcommand(): Command {
         baseline?: boolean;
         label?: string;
         corpus?: string;
+        strictModel?: boolean;
+        model?: string;
       }) => {
         const logger = createLogger('cli:benchmark:run');
         const configPath = getConfigPath(options);
@@ -121,7 +125,11 @@ function runSubcommand(): Command {
           const benchmarkConfig: BenchmarkConfig = {
             topK: isNaN_topK ? 10 : topK,
             scoreThreshold: isNaN_threshold ? 0.5 : scoreThreshold,
+            strictModel: options.strictModel ?? false,
           };
+          if (options.model !== undefined) {
+            benchmarkConfig.configuredModel = options.model;
+          }
           if (options.label !== undefined) {
             benchmarkConfig.label = options.label;
           }
@@ -209,7 +217,7 @@ function listSubcommand(): Command {
     .description('List recent benchmark runs')
     .option('-c, --config <path>', 'Path to project.json config')
     .option('-n, --limit <n>', 'Number of runs to show', '10')
-    .action(async (options: { config?: string; limit: string }) => {
+    .action((options: { config?: string; limit: string }) => {
       const logger = createLogger('cli:benchmark:list');
       const configPath = getConfigPath(options);
       const frameworkDir = dirname(configPath);
@@ -267,7 +275,7 @@ function historySubcommand(): Command {
     .description('Show Hit@K trend across recent benchmark runs')
     .option('-c, --config <path>', 'Path to project.json config')
     .option('-n, --limit <n>', 'Number of runs to show', '20')
-    .action(async (options: { config?: string; limit: string }) => {
+    .action((options: { config?: string; limit: string }) => {
       const logger = createLogger('cli:benchmark:history');
       const configPath = getConfigPath(options);
       const frameworkDir = dirname(configPath);
@@ -341,7 +349,7 @@ function compareSubcommand(): Command {
     .argument('<runId1>', 'First run ID (full or prefix)')
     .argument('<runId2>', 'Second run ID (full or prefix)')
     .option('-c, --config <path>', 'Path to project.json config')
-    .action(async (runId1: string, runId2: string, options: { config?: string }) => {
+    .action((runId1: string, runId2: string, options: { config?: string }) => {
       const logger = createLogger('cli:benchmark:compare');
       const configPath = getConfigPath(options);
       const frameworkDir = dirname(configPath);
@@ -872,7 +880,7 @@ function cleanSubcommand(): Command {
   return new Command('clean')
     .description('Delete all benchmark runs from the database')
     .option('-c, --config <path>', 'Path to project.json config')
-    .action(async (options: { config?: string }) => {
+    .action((options: { config?: string }) => {
       const logger = createLogger('cli:benchmark:clean');
       const configPath = getConfigPath(options);
       const frameworkDir = dirname(configPath);
@@ -890,6 +898,67 @@ function cleanSubcommand(): Command {
         logger.error({ error }, 'Benchmark clean failed');
         process.exit(1);
       }
+    });
+}
+
+// ── validate-models subcommand ────────────────────────────────────────────────
+
+const DEFAULT_CONFIG = join(process.cwd(), '.ia-framework', 'project.json');
+
+function validateModelsSubcommand(): Command {
+  return new Command('validate-models')
+    .description('Re-analyze stored run for model identity mismatches')
+    .argument('<run-id>', 'Run ID or prefix to validate')
+    .option('-c, --config <path>', 'Path to benchmark config', DEFAULT_CONFIG)
+    .action(async (runIdArg: string, options: { config?: string }) => {
+      const configPath = options.config ?? DEFAULT_CONFIG;
+      const frameworkDir = dirname(configPath);
+      const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');
+      const store = new BenchmarkStore(benchmarksDbPath);
+      const run = resolveRun(store, runIdArg);
+      store.close();
+
+      if (!run) {
+        console.error('Run not found');
+        process.exit(1);
+        return;
+      }
+
+      // Use persisted per-query flags — rawResponse is not stored in the DB.
+      // modelMismatch and identityMissing are computed at run time and persisted.
+      let mismatches = 0;
+      let missing = 0;
+      let cannotValidate = 0;
+
+      for (const qr of run.queries) {
+        if (qr.modelMismatch === undefined && qr.identityMissing === undefined) {
+          // Run was recorded without model enforcement — no identity data available
+          cannotValidate++;
+          continue;
+        }
+
+        if (qr.identityMissing === true) {
+          missing++;
+          continue;
+        }
+
+        if (qr.modelMismatch === true) {
+          mismatches++;
+          console.log(`  [mismatch] query=${qr.queryId}`);
+        }
+      }
+
+      console.log(`\nValidation results for run ${run.runId}:`);
+      if (cannotValidate > 0) {
+        console.log(`  Note: ${cannotValidate} queries have no stored identity data.`);
+        console.log(`  Re-run with --strict-model to enable model enforcement.`);
+      }
+      console.log(`  Mismatches:       ${mismatches}`);
+      console.log(`  Identity missing: ${missing}`);
+      console.log(`  Cannot validate:  ${cannotValidate}`);
+      console.log(`  Run integrity:    ${run.runIntegrity ?? 'not enforced'}`);
+
+      if (mismatches > 0) process.exit(1);
     });
 }
 
@@ -920,6 +989,7 @@ See docs/benchmark.md for full reference.`,
   benchmark.addCommand(compareSubcommand());
   benchmark.addCommand(initCorpusSubcommand());
   benchmark.addCommand(cleanSubcommand());
+  benchmark.addCommand(validateModelsSubcommand());
 
   return benchmark;
 }

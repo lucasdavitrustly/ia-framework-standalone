@@ -74,24 +74,44 @@ ${options.examples.bad}
 `
     : '';
 
-  return `You are a code analysis tool. Analyze the following source code and identify semantic boundaries — groups of lines that form a cohesive unit of functionality.
+  return `You are a code analysis tool for a payment gateway system. This system processes RTP (Real-Time Payments) and ACH transactions using a Command-Query Separation (CQS) architecture, PostgreSQL for persistence, and RabbitMQ as the event bus. Payment processors are integrated via adapter pattern, allowing different providers to be plugged in or reused.
+
+Analyze the following source code and identify semantic boundaries — groups of lines that form a cohesive unit of functionality.
 
 For each semantic chunk, provide:
 - startLine: the first line number of the chunk (1-indexed, matching the line numbers shown)
 - endLine: the last line number of the chunk (1-indexed, matching the line numbers shown)
 - summary: a 1-3 sentence description of what this chunk does and why it matters
 
-Rules:
+## Summary Format
+
+Write summaries as: [Verb] [what] [for/to domain purpose]
+
+GOOD summaries:
+- "Validates RTP transfer amounts against account balance before submitting to the payment processor adapter"
+- "Orchestrates ACH batch processing by dispatching individual payment commands to RabbitMQ for async execution"
+- "Implements the payment processor adapter interface for Fifth Third Bank RTP integration"
+- "Queries PostgreSQL for pending transfer records filtered by processor type and settlement status"
+- "Handles RabbitMQ consumer events for payment status callbacks and updates transfer state accordingly"
+
+BAD summaries (DO NOT write these):
+- "This class contains methods for processing" (too vague, no domain context)
+- "Helper function that takes a request and returns a response" (describes syntax, not purpose)
+- "Utility for handling data" (meaningless — what data? what handling?)
+- "TransferService class with create, update, and delete methods" (lists identifiers, not behavior)
+- "Contains configuration" (what configuration? for what system?)
+
+## Rules
+
 - Every line of the file MUST be covered by exactly one chunk (no gaps, no overlaps)
 - Chunk boundaries should align with semantic units (functions, classes, logical blocks)
 - Import/export blocks should be their own chunk
-- Summaries should describe the PURPOSE and BEHAVIOR, not just list identifiers
-- Do NOT include import/export analysis — only semantic boundaries and prose summaries
 - A class and all its methods MUST be a single chunk. Never split a class across chunks.
-- If a class exceeds 100 lines, split into logical method groups but always prefix each sub-chunk summary with the class name.
+- If a class exceeds 200 lines, split into logical method groups (e.g., command handlers vs query handlers, lifecycle methods vs business logic, public API vs private helpers). Always prefix each sub-chunk summary with the class name.
 - Minimum chunk size: 5 lines. Do not create chunks smaller than 5 lines — merge them with adjacent context.
-- Summaries MUST describe what the code DOES using domain terminology (handles, validates, orchestrates, manages, transforms, routes, etc.)
-- Do NOT describe syntax structure ("this function takes X and returns Y"). Describe PURPOSE and BEHAVIOR.
+- Summaries MUST use domain terminology: payment, transfer, settlement, processor, adapter, command, query, event, routing, validation, reconciliation, batch, callback, etc.
+- Summaries MUST describe PURPOSE and BEHAVIOR, not syntax structure.
+- Do NOT include import/export analysis — only semantic boundaries and prose summaries.
 
 ${examplesSection}File: ${fileName}
 

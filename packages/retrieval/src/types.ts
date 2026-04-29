@@ -10,6 +10,8 @@ export interface RetrievalQuery {
   scoreThreshold?: number | undefined;
   /** Optional Qdrant payload filter */
   filter?: Record<string, unknown> | undefined;
+  /** Optional retrieval hint for path/module-aware search */
+  preferredModule?: string | undefined;
 }
 
 /**
@@ -45,6 +47,12 @@ export interface RetrievalResult {
   matchedVector: 'text' | 'code' | 'both';
   /** Which collection/strategy produced this result */
   source?: 'ast' | 'llm' | undefined;
+  /** Best-effort module or package root used for reranking */
+  modulePath?: string | undefined;
+  /** Best-effort package or namespace */
+  packageName?: string | undefined;
+  /** Heuristic architectural role hints */
+  layerHints?: string[] | undefined;
 }
 
 /**
@@ -82,6 +90,38 @@ export interface SearchEngineConfig {
           endLine: number;
           imports: string[];
           exports: string[];
+          modulePath?: string | undefined;
+          packageName?: string | undefined;
+          layerHints?: string[] | undefined;
+          indexedAt: string;
+        };
+        vectorName: 'text' | 'code';
+      }>
+    >;
+    /** Optional: sparse-only BM25 keyword search. Falls back to skipping keyword step if absent. */
+    searchKeyword?(options: {
+      sparseVector: { indices: number[]; values: number[] };
+      limit: number;
+      filter?: Record<string, unknown> | undefined;
+    }): Promise<
+      Array<{
+        id: string;
+        score: number;
+        payload: {
+          chunkId: string;
+          filePath: string;
+          relativePath: string;
+          language: string;
+          chunkType: string;
+          name?: string | undefined;
+          content: string;
+          startLine: number;
+          endLine: number;
+          imports: string[];
+          exports: string[];
+          modulePath?: string | undefined;
+          packageName?: string | undefined;
+          layerHints?: string[] | undefined;
           indexedAt: string;
         };
         vectorName: 'text' | 'code';
@@ -109,6 +149,9 @@ export interface SearchEngineConfig {
           endLine: number;
           imports: string[];
           exports: string[];
+          modulePath?: string | undefined;
+          packageName?: string | undefined;
+          layerHints?: string[] | undefined;
           indexedAt: string;
         };
         vectorName: 'text' | 'code';
@@ -125,4 +168,32 @@ export interface SearchEngineConfig {
         getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]>;
       }
     | undefined;
+}
+
+/**
+ * A single keyword-based suggestion returned by the fallback search.
+ */
+export interface FallbackSuggestion {
+  /** Relative file path */
+  file: string;
+  /** Construct name or chunk type */
+  name: string;
+  /** First 200 chars of content */
+  snippet: string;
+}
+
+/**
+ * Result envelope returned by SearchEngine.searchWithFallback().
+ */
+export interface FallbackSearchResult {
+  /** Whether any results were found (true = results array is non-empty) */
+  found: boolean;
+  /** Whether a fallback strategy was used */
+  fallback_used: boolean;
+  /** Which mode ultimately produced results (or was last tried) */
+  fallback_mode: 'none' | 'hybrid' | 'keyword';
+  /** Ranked retrieval results (non-empty only when found=true) */
+  results: RetrievalResult[];
+  /** BM25 keyword suggestions (non-empty only when fallback_mode='keyword' and results found) */
+  suggestions: FallbackSuggestion[];
 }

@@ -1,7 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { RetrievalResult } from '@ia-framework/retrieval';
+import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
+import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
+import { detectIntent, getTemplate } from '../templates/index.js';
 
 type HybridEngine = {
   searchHybrid(query: {
@@ -9,11 +11,18 @@ type HybridEngine = {
     limit?: number | undefined;
     filter?: Record<string, unknown> | undefined;
   }): Promise<RetrievalResult[]>;
+  search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
+  searchWithFallback?(
+    query: { text: string; limit?: number | undefined },
+    options?: { enableFallback?: boolean; maxSuggestions?: number },
+  ): Promise<FallbackSearchResult>;
 };
 
 export interface SearchCodebaseHybridInput {
   query: string;
   limit?: number | undefined;
+  /** Enable prompt template injection for detected intents (default: true). Per D-05. */
+  use_template?: boolean | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -27,9 +36,10 @@ function formatResult(result: RetrievalResult, index: number): string {
   const header = result.name
     ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(3)} [hybrid]${sourceTag}`
     : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(3)} [hybrid]${sourceTag}`;
+  const contextLine = formatRetrievalContext(result);
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
-  return `${header}\n${codeBlock}`;
+  return `${header}\n${contextLine}\n${codeBlock}`;
 }
 
 /**
@@ -40,27 +50,126 @@ export async function searchCodebaseHybridHandler(
   engine: HybridEngine,
   input: SearchCodebaseHybridInput,
 ): Promise<ToolOutput> {
-  const results = await engine.searchHybrid({
-    text: input.query,
-    limit: input.limit ?? 10,
-  });
+  const intent = analyzeRetrievalQuery(input.query);
+  let results: RetrievalResult[];
+  let fallbackNote: string | undefined;
+
+  try {
+    results = await engine.searchHybrid({
+      text: input.query,
+      limit: input.limit ?? 10,
+    });
+  } catch (error) {
+    if (!engine.search) {
+      throw error;
+    }
+
+    results = await engine.search({
+      text: input.query,
+      limit: input.limit ?? 10,
+    });
+    fallbackNote =
+      `Note: hybrid retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
+      'Returning indexed semantic search results instead.';
+  }
 
   if (results.length === 0) {
+    const conclusion =
+      'Conclusion: the indexed hybrid search did not return strong evidence for this query.';
+
+    // Zero-result fallback: call searchWithFallback for keyword suggestions
+    if (engine.searchWithFallback) {
+      const fallbackResult = await engine.searchWithFallback(
+        { text: input.query, limit: input.limit ?? 10 },
+        { enableFallback: true, maxSuggestions: 3 },
+      );
+
+      if (fallbackResult.suggestions.length > 0) {
+        const suggestionLines = fallbackResult.suggestions
+          .map((s) => `- ${s.file} (${s.name}): ${s.snippet}`)
+          .join('\n');
+        const text = fallbackNote
+          ? `${conclusion}\n\n${fallbackNote}\n\nNo exact match found. Closest related code:\n${suggestionLines}`
+          : `${conclusion}\n\nNo exact match found. Closest related code:\n${suggestionLines}`;
+        return {
+          content: [{ type: 'text', text }],
+          structuredContent: {
+            found: false,
+            fallback_used: fallbackResult.fallback_used,
+            fallback_mode: fallbackResult.fallback_mode,
+            suggestions: fallbackResult.suggestions.map((s) => ({
+              file: s.file,
+              name: s.name,
+              snippet: s.snippet,
+            })),
+            answered: false,
+          },
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: fallbackNote
+              ? `${conclusion}\n\n${fallbackNote}\n\nNo results found for query: "${input.query}"`
+              : `${conclusion}\n\nNo results found for query: "${input.query}"`,
+          },
+        ],
+        structuredContent: {
+          found: false,
+          fallback_used: fallbackResult.fallback_used,
+          fallback_mode: fallbackResult.fallback_mode,
+          suggestions: [],
+          answered: false,
+        },
+      };
+    }
+
     return {
       content: [
         {
           type: 'text',
-          text: `No results found for query: "${input.query}"`,
+          text: fallbackNote
+            ? `${conclusion}\n\n${fallbackNote}\n\nNo results found for query: "${input.query}"`
+            : `${conclusion}\n\nNo results found for query: "${input.query}"`,
         },
       ],
+      structuredContent: {
+        ...(fallbackNote ? { fallbackUsed: true } : {}),
+        answered: false,
+      },
     };
   }
 
   const sections = results.map((r, i) => formatResult(r, i + 1));
-  const text = `## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}`;
+  const conclusion = `Conclusion: found ${results.length} hybrid evidence-backed ${results.length === 1 ? 'match' : 'matches'}${
+    intent.entryPointQuery || intent.architectureQuery || intent.dataFlowQuery
+      ? ' relevant to the requested code path.'
+      : '.'
+  }`;
+
+  // Template injection: detect intent and prepend scaffolding if applicable
+  let templatePrefix = '';
+  let intentDetected: string | undefined;
+  if (input.use_template !== false) {
+    const detectedIntent = detectIntent(input.query);
+    const template = getTemplate(detectedIntent);
+    if (template) {
+      templatePrefix = `${template}\n\n`;
+      intentDetected = detectedIntent!;
+    }
+  }
+
+  const text = `${conclusion}\n\n${templatePrefix}${fallbackNote ? `${fallbackNote}\n\n` : ''}## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}`;
 
   return {
     content: [{ type: 'text', text }],
+    structuredContent: {
+      ...(fallbackNote ? { fallbackUsed: true } : {}),
+      ...(intentDetected ? { intent_detected: intentDetected } : {}),
+      answered: true,
+    },
   };
 }
 
@@ -79,6 +188,12 @@ export function registerSearchCodebaseHybridTool(server: McpServer, engine: Hybr
       inputSchema: {
         query: z.string().describe('Natural language search query (can include exact identifiers)'),
         limit: z.number().optional().describe('Maximum number of results (default: 10)'),
+        use_template: z
+          .boolean()
+          .optional()
+          .describe(
+            'Enable prompt template injection for detected query intents (default: true). Set false to disable scaffolding.',
+          ),
       },
     },
     async (input) => {

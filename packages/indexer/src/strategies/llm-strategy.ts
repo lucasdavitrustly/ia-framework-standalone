@@ -193,7 +193,7 @@ export class LlmChunkingStrategy implements ChunkingStrategy {
     content: string,
     fileName: string,
     examples?: PromptExamples,
-    signal?: AbortSignal | undefined,
+    signal?: AbortSignal,
   ): Promise<{ chunks: LLMChunk[] }> {
     const params = {
       filePath,

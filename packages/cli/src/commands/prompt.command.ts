@@ -191,7 +191,6 @@ function compareSubcommand(): Command {
         v2Str: string,
         options: { config?: string; corpus?: string; output?: string },
       ) => {
-        const logger = createLogger('cli:prompt:compare');
         const configPath =
           options.config ||
           process.env['IA_FRAMEWORK_CONFIG'] ||

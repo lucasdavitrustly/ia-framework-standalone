@@ -2,6 +2,18 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { SearchEngine, computeTermFrequencySparseVector } from './search-engine.js';
 import type { SearchEngineConfig } from './types.js';
 
+type MockSearchFn = ReturnType<typeof vi.fn>;
+
+function getMockSearch(config: SearchEngineConfig): MockSearchFn {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  return vi.mocked(config.vectorStore.search);
+}
+
+function getMockEmbed(config: SearchEngineConfig): MockSearchFn {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  return vi.mocked(config.embeddingProvider.embed);
+}
+
 // Mock vector store search result helper
 function makeMockResult(
   chunkId: string,
@@ -31,6 +43,9 @@ function makeMockResult(
       endLine: 5,
       imports: overrides.imports ?? ['express'],
       exports: overrides.exports ?? ['authMiddleware'],
+      modulePath: 'billing-service',
+      packageName: 'com.acme.billing',
+      layerHints: ['controller'],
       indexedAt: '2026-04-01T00:00:00Z',
     },
   };
@@ -64,13 +79,13 @@ describe('SearchEngine', () => {
   test('Test 1: search() calls embeddingProvider.embed() with the query text', async () => {
     await engine.search({ text: 'authentication middleware' });
 
-    expect(config.embeddingProvider.embed).toHaveBeenCalledWith('authentication middleware');
+    expect(getMockEmbed(config)).toHaveBeenCalledWith('authentication middleware');
   });
 
   test('Test 2: search() calls vectorStore.search() twice — once for text, once for code', async () => {
     await engine.search({ text: 'auth' });
 
-    const calls = (config.vectorStore.search as ReturnType<typeof vi.fn>).mock.calls;
+    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: 'text' | 'code' }][];
     expect(calls).toHaveLength(2);
     const vectorNames = calls.map((c) => c[1].vectorName);
     expect(vectorNames).toContain('text');
@@ -81,9 +96,7 @@ describe('SearchEngine', () => {
     const textResult = makeMockResult('chunk-1', 0.9, 'text');
     const codeResult = makeMockResult('chunk-2', 0.8, 'code');
 
-    (config.vectorStore.search as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce([textResult])
-      .mockResolvedValueOnce([codeResult]);
+    getMockSearch(config).mockResolvedValueOnce([textResult]).mockResolvedValueOnce([codeResult]);
 
     const results = await engine.search({ text: 'auth' });
 
@@ -97,9 +110,7 @@ describe('SearchEngine', () => {
     const textResult = makeMockResult('chunk-1', 0.7, 'text');
     const codeResult = makeMockResult('chunk-1', 0.9, 'code');
 
-    (config.vectorStore.search as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce([textResult])
-      .mockResolvedValueOnce([codeResult]);
+    getMockSearch(config).mockResolvedValueOnce([textResult]).mockResolvedValueOnce([codeResult]);
 
     const results = await engine.search({ text: 'auth' });
 
@@ -115,9 +126,7 @@ describe('SearchEngine', () => {
     ];
     const results_code = [makeMockResult('chunk-c', 0.75, 'code', { relativePath: 'src/c.ts' })];
 
-    (config.vectorStore.search as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(results_text)
-      .mockResolvedValueOnce(results_code);
+    getMockSearch(config).mockResolvedValueOnce(results_text).mockResolvedValueOnce(results_code);
 
     const results = await engine.search({ text: 'auth' });
 
@@ -131,9 +140,7 @@ describe('SearchEngine', () => {
       makeMockResult(`chunk-${i}`, 0.9 - i * 0.05, 'text', { relativePath: `src/file${i}.ts` }),
     );
 
-    (config.vectorStore.search as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(manyResults)
-      .mockResolvedValueOnce([]);
+    getMockSearch(config).mockResolvedValueOnce(manyResults).mockResolvedValueOnce([]);
 
     const results = await engine.search({ text: 'auth', limit: 3 });
 
@@ -145,11 +152,14 @@ describe('SearchEngine', () => {
       relativePath: 'src/auth.ts',
     });
 
-    (config.vectorStore.search as ReturnType<typeof vi.fn>).mockResolvedValue([fileResult]);
+    getMockSearch(config).mockResolvedValue([fileResult]);
 
     const results = await engine.getFile('src/auth.ts');
 
-    const searchCalls = (config.vectorStore.search as ReturnType<typeof vi.fn>).mock.calls;
+    const searchCalls = getMockSearch(config).mock.calls as [
+      number[],
+      { filter?: Record<string, unknown> | undefined },
+    ][];
     expect(searchCalls.length).toBeGreaterThan(0);
     const filterUsed = searchCalls[0]![1].filter;
     expect(filterUsed).toBeDefined();
@@ -165,14 +175,15 @@ describe('SearchEngine', () => {
 
     // The vectorStore receives the scoreThreshold and should filter — but in our mock
     // we return both; the engine should apply threshold too
-    (config.vectorStore.search as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce([highScore, lowScore])
-      .mockResolvedValueOnce([]);
+    getMockSearch(config).mockResolvedValueOnce([highScore, lowScore]).mockResolvedValueOnce([]);
 
-    const results = await engine.search({ text: 'auth', scoreThreshold: 0.5 });
+    await engine.search({ text: 'auth', scoreThreshold: 0.5 });
 
     // Verify the scoreThreshold was passed to the vector store
-    const calls = (config.vectorStore.search as ReturnType<typeof vi.fn>).mock.calls;
+    const calls = getMockSearch(config).mock.calls as [
+      number[],
+      { vectorName: 'text' | 'code'; scoreThreshold?: number | undefined },
+    ][];
     const textCall = calls.find((c) => c[1].vectorName === 'text');
     expect(textCall![1].scoreThreshold).toBe(0.5);
   });
@@ -409,6 +420,67 @@ describe('SearchEngine.searchHybrid', () => {
     expect(results[0]!.matchedVector).toBe('both');
     expect(results[0]!.score).toBe(0.88);
     expect(results[0]!.chunkId).toBe('chunk-hybrid');
+  });
+
+  test('searchHybrid() reranks exact symbol matches ahead of generic results', async () => {
+    const generic = makeMockResult('chunk-generic', 0.95, 'text', {
+      relativePath: 'src/GenericService.java',
+      name: 'GenericService',
+    });
+    const exact = makeMockResult('chunk-exact', 0.82, 'text', {
+      relativePath: 'src/PaymentController.java',
+      name: 'PaymentController',
+    });
+    mockSearchHybrid.mockResolvedValue([generic, exact]);
+
+    const cfg = makeHybridConfig(true);
+    const eng = new SearchEngine(cfg);
+
+    const results = await eng.searchHybrid({ text: 'Where is PaymentController defined?' });
+
+    expect(results[0]!.name).toBe('PaymentController');
+  });
+});
+
+describe('SearchEngine module-aware expansion', () => {
+  test('searchWithExpansion biases same-module neighbors for architecture queries', async () => {
+    const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+    const mockSearch = vi.fn();
+    const mockGetNeighborFiles = vi
+      .fn()
+      .mockResolvedValue([
+        '/project/orders-service/src/main/java/com/acme/orders/OrderRepository.java',
+      ]);
+
+    mockSearch
+      .mockResolvedValueOnce([
+        makeMockResult('chunk-base', 0.9, 'text', {
+          filePath: '/project/orders-service/src/main/java/com/acme/orders/OrderController.java',
+          relativePath: 'orders-service/src/main/java/com/acme/orders/OrderController.java',
+        }),
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeMockResult('chunk-neighbor', 0.1, 'text', {
+          filePath: '/project/orders-service/src/main/java/com/acme/orders/OrderRepository.java',
+          relativePath: 'orders-service/src/main/java/com/acme/orders/OrderRepository.java',
+          name: 'OrderRepository',
+        }),
+      ]);
+
+    const eng = new SearchEngine({
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch },
+      dependencyGraph: { getNeighborFiles: mockGetNeighborFiles },
+    });
+
+    const results = await eng.searchWithExpansion(
+      { text: 'Describe the architecture and data flow for orders-service' },
+      { hops: 1 },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[1]!.relativePath).toContain('OrderRepository.java');
   });
 });
 

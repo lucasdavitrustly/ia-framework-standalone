@@ -94,8 +94,8 @@ describe('searchRouter', () => {
     await router.request('/', postBody({ query: 'auth', collections: ['ast'] }));
     const astEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'ast')!;
     const llmEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'llm')!;
-    expect(astEngine.engine.search as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
-    expect(llmEngine.engine.search as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(getMockSearch(astEngine)).toHaveBeenCalledOnce();
+    expect(getMockSearch(llmEngine)).not.toHaveBeenCalled();
   });
 
   // Test 3: POST / with collections=['llm'] searches only LLM engine
@@ -104,8 +104,8 @@ describe('searchRouter', () => {
     await router.request('/', postBody({ query: 'auth', collections: ['llm'] }));
     const astEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'ast')!;
     const llmEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'llm')!;
-    expect(astEngine.engine.search as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
-    expect(llmEngine.engine.search as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
+    expect(getMockSearch(astEngine)).not.toHaveBeenCalled();
+    expect(getMockSearch(llmEngine)).toHaveBeenCalledOnce();
   });
 
   // Test 3b: POST / with collections=['llm'] tags results with source='llm' even when engine omits source
@@ -114,7 +114,7 @@ describe('searchRouter', () => {
     const noSourceResult = makeRetrievalResult({ chunkId: 'no-src' });
     delete (noSourceResult as unknown as Record<string, unknown>).source;
     const llmEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'llm')!;
-    (llmEngine.engine.search as ReturnType<typeof vi.fn>).mockResolvedValue([noSourceResult]);
+    getMockSearch(llmEngine).mockResolvedValue([noSourceResult]);
 
     const router = searchRouter(deps);
     const res = await router.request('/', postBody({ query: 'auth', collections: ['llm'] }));
@@ -128,7 +128,7 @@ describe('searchRouter', () => {
     const noSourceResult = makeRetrievalResult({ chunkId: 'no-src' });
     delete (noSourceResult as unknown as Record<string, unknown>).source;
     const astEngine = deps.collectionEngines.find((e: CollectionEngine) => e.name === 'ast')!;
-    (astEngine.engine.search as ReturnType<typeof vi.fn>).mockResolvedValue([noSourceResult]);
+    getMockSearch(astEngine).mockResolvedValue([noSourceResult]);
 
     const router = searchRouter(deps);
     const res = await router.request('/', postBody({ query: 'auth', collections: ['ast'] }));
@@ -141,6 +141,7 @@ describe('searchRouter', () => {
   it('T4: POST / with collections=[both] uses multiSearchEngine', async () => {
     const router = searchRouter(deps);
     await router.request('/', postBody({ query: 'auth', collections: ['both'] }));
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(deps.multiSearchEngine.search as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
   });
 
@@ -240,3 +241,7 @@ describe('searchRouter', () => {
     expect(result.exports).toBeUndefined();
   });
 });
+function getMockSearch(engine: CollectionEngine): ReturnType<typeof vi.fn> {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  return vi.mocked(engine.engine.search);
+}

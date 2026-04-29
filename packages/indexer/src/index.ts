@@ -7,9 +7,11 @@ export {
   getCurrentCommit,
   getLastIndexedCommit,
   getLastEmbeddingModel,
+  getLastPromptContentHash,
   saveLastIndexedCommit,
 } from './incremental.js';
 export { chunkToDescription } from './chunk-description.js';
+export { PROMPT_CONTENT_HASH } from './strategies/prompt.js';
 export {
   AstChunkingStrategy,
   LlmChunkingStrategy,

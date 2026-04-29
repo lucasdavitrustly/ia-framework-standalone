@@ -50,7 +50,6 @@ function useFetch<T>(fetcher: () => Promise<T>): SectionState<T> {
     fetcher()
       .then((data) => setState({ data, loading: false, error: null }))
       .catch((err: unknown) => setState({ data: null, loading: false, error: String(err) }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return state;

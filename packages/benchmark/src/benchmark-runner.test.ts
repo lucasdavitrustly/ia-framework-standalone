@@ -159,6 +159,200 @@ describe('BenchmarkRunner', () => {
     expect(result.isBaseline).toBe(true);
   });
 
+  // --- Model identity enforcement tests ---
+
+  const IDENTITY_BLOCK = `---LLM-IDENTITY---
+Model: claude-sonnet-4-5
+Provider: anthropic
+Temperature: 1.0
+---END-IDENTITY---`;
+
+  it('Test 8: rawResponse with matching identity → modelMismatch=false, identityMissing=false', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(
+      mockEngine,
+      makeConfig({ configuredModel: 'claude-sonnet-4-5' }),
+    );
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'auth',
+        query: 'auth middleware',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Some answer.\n${IDENTITY_BLOCK}`,
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    const qr = result.queries[0]!;
+    expect(qr.identityMissing).toBe(false);
+    expect(qr.modelMismatch).toBe(false);
+  });
+
+  it('Test 9: rawResponse without identity block → identityMissing=true, modelMismatch=undefined', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(
+      mockEngine,
+      makeConfig({ configuredModel: 'claude-sonnet-4-5' }),
+    );
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'auth',
+        query: 'auth middleware',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: 'Some answer without identity block.',
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    const qr = result.queries[0]!;
+    expect(qr.identityMissing).toBe(true);
+    expect(qr.modelMismatch).toBeUndefined();
+  });
+
+  it('Test 10: rawResponse with mismatched model → modelMismatch=true', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(mockEngine, makeConfig({ configuredModel: 'gpt-4o' }));
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'auth',
+        query: 'auth middleware',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Some answer.\n${IDENTITY_BLOCK}`,
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    const qr = result.queries[0]!;
+    expect(qr.modelMismatch).toBe(true);
+  });
+
+  it('Test 11: strictModel=true with mismatch → throws Error containing "Model mismatch"', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(
+      mockEngine,
+      makeConfig({ configuredModel: 'gpt-4o', strictModel: true }),
+    );
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'auth',
+        query: 'auth middleware',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Some answer.\n${IDENTITY_BLOCK}`,
+      },
+    ];
+
+    await expect(runner.run(queries, makeConfigSnapshot())).rejects.toThrow('Model mismatch');
+  });
+
+  it('Test 12: all queries with matching identity → runIntegrity="full"', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(
+      mockEngine,
+      makeConfig({ configuredModel: 'claude-sonnet-4-5' }),
+    );
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'q1',
+        query: 'auth',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Answer.\n${IDENTITY_BLOCK}`,
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    expect(result.runIntegrity).toBe('full');
+  });
+
+  it('Test 13: any mismatch → runIntegrity="partial"', async () => {
+    let callCount = 0;
+    const mockEngine = {
+      search: vi.fn((): Promise<RetrievalResult[]> => {
+        callCount++;
+        return Promise.resolve([makeRetrievalResult('src/middleware/auth.ts')]);
+      }),
+    };
+    const runner = new BenchmarkRunner(mockEngine, makeConfig({ configuredModel: 'gpt-4o' }));
+    const mismatchIdentity = `---LLM-IDENTITY---
+Model: claude-sonnet-4-5
+Provider: anthropic
+Temperature: 1.0
+---END-IDENTITY---`;
+    const matchIdentity = `---LLM-IDENTITY---
+Model: gpt-4o
+Provider: openai
+Temperature: 1.0
+---END-IDENTITY---`;
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'q1',
+        query: 'auth',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Answer.\n${matchIdentity}`,
+      },
+      {
+        id: 'q2',
+        query: 'config',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Answer.\n${mismatchIdentity}`,
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    expect(result.runIntegrity).toBe('partial');
+  });
+
+  it('Test 14: no rawResponse on any query → runIntegrity="unknown"', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(
+      mockEngine,
+      makeConfig({ configuredModel: 'claude-sonnet-4-5' }),
+    );
+    const queries: BenchmarkQuery[] = [
+      { id: 'auth', query: 'auth middleware', expectedFiles: ['src/middleware/auth.ts'] },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    expect(result.runIntegrity).toBe('unknown');
+  });
+
+  it('Test 15: identity block present but Model: field absent → identityMissing=true, modelMismatch=undefined', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(
+      mockEngine,
+      makeConfig({ configuredModel: 'claude-sonnet-4-5' }),
+    );
+    const blockWithoutModel = `---LLM-IDENTITY---\nProvider: anthropic\nTemperature: 1.0\n---END-IDENTITY---`;
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'auth',
+        query: 'auth middleware',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Some answer.\n${blockWithoutModel}`,
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    const qr = result.queries[0]!;
+    expect(qr.identityMissing).toBe(true);
+    expect(qr.modelMismatch).toBeUndefined();
+  });
+
+  it('Test 16: no configuredModel set → runIntegrity is undefined', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(mockEngine, makeConfig());
+    const queries: BenchmarkQuery[] = [
+      {
+        id: 'auth',
+        query: 'auth middleware',
+        expectedFiles: ['src/middleware/auth.ts'],
+        rawResponse: `Some answer.\n${IDENTITY_BLOCK}`,
+      },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    expect(result.runIntegrity).toBeUndefined();
+  });
+
   it('Test 7: latencyMs in QueryResult is >= 0', async () => {
     const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
     const runner = new BenchmarkRunner(mockEngine, makeConfig());

@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-22 — Milestone v1.2 started: Chunking Tuning & Retrieval Quality_
+_Last updated: 2026-04-28 — Phase 24 complete: Maven multi-module dependency graph traversal with MCP tool_

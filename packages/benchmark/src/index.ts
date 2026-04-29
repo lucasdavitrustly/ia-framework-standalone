@@ -5,9 +5,18 @@ export type {
   BenchmarkConfig,
   ConfigSnapshot,
   BaselineResult,
+  BenchmarkToolProbe,
+  BenchmarkToolRequirement,
+  BenchmarkToolCapability,
+  BenchmarkPreflightReport,
+  IdentityInfo,
 } from './types.js';
 export { BenchmarkStore } from './benchmark-store.js';
 export { BenchmarkRunner } from './benchmark-runner.js';
+export {
+  DEFAULT_BENCHMARK_TOOL_REQUIREMENTS,
+  evaluateBenchmarkPreflight,
+} from './mcp-preflight.js';
 export {
   loadCorpus,
   scaffoldExampleCorpus,
@@ -19,3 +28,4 @@ export {
 export type { CorpusValidationError } from './corpus.js';
 export { generateCorpus } from './corpus-generator.js';
 export type { CorpusGeneratorOptions } from './corpus-generator.js';
+export { parseIdentityBlock, compareModelIdentity } from './identity-parser.js';

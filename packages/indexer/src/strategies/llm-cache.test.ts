@@ -56,7 +56,9 @@ describe('LlmChunkCache', () => {
 
     // Verify file was written
     const content = await readFile(cachePath, 'utf-8');
-    expect(() => JSON.parse(content)).not.toThrow();
+    expect(() => {
+      JSON.parse(content);
+    }).not.toThrow();
 
     // Load from fresh cache instance
     const cache2 = new LlmChunkCache(cachePath);

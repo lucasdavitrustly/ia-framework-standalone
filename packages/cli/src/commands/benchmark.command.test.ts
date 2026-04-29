@@ -99,6 +99,28 @@ describe('benchmarkCommand structure', () => {
     const opts = clean!.options.map((o) => o.long);
     expect(opts).toContain('--config');
   });
+
+  it('has a "validate-models" subcommand', () => {
+    const cmd = benchmarkCommand();
+    const names = cmd.commands.map((c) => c.name());
+    expect(names).toContain('validate-models');
+  });
+
+  it('run subcommand has --strict-model option', () => {
+    const cmd = benchmarkCommand();
+    const run = cmd.commands.find((c) => c.name() === 'run');
+    expect(run).toBeDefined();
+    const opts = run!.options.map((o) => o.long);
+    expect(opts).toContain('--strict-model');
+  });
+
+  it('run subcommand has --model option', () => {
+    const cmd = benchmarkCommand();
+    const run = cmd.commands.find((c) => c.name() === 'run');
+    expect(run).toBeDefined();
+    const opts = run!.options.map((o) => o.long);
+    expect(opts).toContain('--model');
+  });
 });
 
 // ── benchmark clean ───────────────────────────────────────────────────────────

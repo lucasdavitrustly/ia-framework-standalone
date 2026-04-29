@@ -74,3 +74,22 @@ export interface EventsPage {
   events: RagEvent[];
   total: number;
 }
+
+/**
+ * Serializable representation of a Maven module graph for disk cache and SQLite storage.
+ * Canonical source: @ia-framework/core packages/core/src/maven/types.ts
+ */
+export interface ModuleGraphJSON {
+  version: 1;
+  modules: Record<
+    string,
+    {
+      coordinate: { groupId: string; artifactId: string; version: string };
+      dependencies: string[];
+      interfaces: string[];
+      dtos: string[];
+      pomPath: string;
+      sourceRoot: string;
+    }
+  >;
+}

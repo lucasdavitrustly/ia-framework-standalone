@@ -12,6 +12,7 @@ import {
   saveLastIndexedCommit,
   getCurrentCommit,
 } from '@ia-framework/indexer';
+import { PROMPT_CONTENT_HASH } from '@ia-framework/indexer';
 import { DependencyGraph } from '@ia-framework/retrieval';
 
 function resolveFrameworkDir(configPath: string): string {
@@ -390,7 +391,7 @@ Browse available models: https://ollama.com/search
                 line = `  ✓ Done`;
                 break;
               default:
-                line = `  ${progress.stage}`;
+                line = `  ${String(progress.stage)}`;
             }
             process.stdout.write(`\r\x1b[2K${line}`);
           };
@@ -421,11 +422,12 @@ Browse available models: https://ollama.com/search
             chunksTotal: 0,
             chunksIndexed: 0,
           };
-          const sentinelPollInterval = setInterval(async () => {
-            const shouldStop = await checkAndClearStopSentinel(frameworkDir);
-            if (shouldStop) {
-              abortController.abort();
-            }
+          const sentinelPollInterval = setInterval(() => {
+            void checkAndClearStopSentinel(frameworkDir).then((shouldStop) => {
+              if (shouldStop) {
+                abortController.abort();
+              }
+            });
           }, 2000);
 
           const startTime = Date.now();
@@ -534,6 +536,7 @@ Browse available models: https://ollama.com/search
             currentCommit ?? '',
             collectionName,
             config.embedding.model,
+            options.strategy === 'llm' ? PROMPT_CONTENT_HASH : undefined,
           );
         } catch (error) {
           console.error(`\n\u2717 Indexing failed: ${String(error)}`);

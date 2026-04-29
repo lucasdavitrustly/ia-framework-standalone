@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { MetricsStore } from './metrics-store.js';
-import type { RagEvent } from './types.js';
+import type { RagEvent, ModuleGraphJSON } from './types.js';
 
 function makeEvent(overrides: Partial<RagEvent> = {}): RagEvent {
   return {
@@ -59,8 +59,12 @@ describe('MetricsStore', () => {
 
     it('returns correct stats for a session', () => {
       store = new MetricsStore(':memory:');
-      store.logEvent(makeEvent({ sessionId: 'session-A', tokenCount: 100, chunksRetrieved: 3, latencyMs: 50 }));
-      store.logEvent(makeEvent({ sessionId: 'session-A', tokenCount: 200, chunksRetrieved: 5, latencyMs: 100 }));
+      store.logEvent(
+        makeEvent({ sessionId: 'session-A', tokenCount: 100, chunksRetrieved: 3, latencyMs: 50 }),
+      );
+      store.logEvent(
+        makeEvent({ sessionId: 'session-A', tokenCount: 200, chunksRetrieved: 5, latencyMs: 100 }),
+      );
 
       const stats = store.getSessionStats('session-A');
       expect(stats).not.toBeNull();
@@ -97,13 +101,13 @@ describe('MetricsStore', () => {
       const stats = store.getStrategyStats();
       expect(stats).toHaveLength(2);
 
-      const mcp = stats.find(s => s.strategy === 'mcp');
+      const mcp = stats.find((s) => s.strategy === 'mcp');
       expect(mcp).toBeDefined();
       expect(mcp!.totalQueries).toBe(2);
       expect(mcp!.totalTokens).toBe(300);
       expect(mcp!.avgTokensPerQuery).toBe(150);
 
-      const autoCtx = stats.find(s => s.strategy === 'auto-context');
+      const autoCtx = stats.find((s) => s.strategy === 'auto-context');
       expect(autoCtx).toBeDefined();
       expect(autoCtx!.totalQueries).toBe(1);
       expect(autoCtx!.totalTokens).toBe(300);
@@ -151,17 +155,17 @@ describe('MetricsStore', () => {
       store = new MetricsStore(':memory:');
       store.logEvent(makeEvent({ tokenCount: 100, timestamp: '2026-04-01T10:00:00Z' }));
       store.logEvent(makeEvent({ tokenCount: 200, timestamp: '2026-04-01T18:00:00Z' }));
-      store.logEvent(makeEvent({ tokenCount: 50,  timestamp: '2026-04-02T09:00:00Z' }));
+      store.logEvent(makeEvent({ tokenCount: 50, timestamp: '2026-04-02T09:00:00Z' }));
 
       const days = store.getEventsByDay();
       expect(days).toHaveLength(2);
 
-      const day1 = days.find(d => d.date === '2026-04-01');
+      const day1 = days.find((d) => d.date === '2026-04-01');
       expect(day1).toBeDefined();
       expect(day1!.totalTokens).toBe(300);
       expect(day1!.totalQueries).toBe(2);
 
-      const day2 = days.find(d => d.date === '2026-04-02');
+      const day2 = days.find((d) => d.date === '2026-04-02');
       expect(day2).toBeDefined();
       expect(day2!.totalTokens).toBe(50);
       expect(day2!.totalQueries).toBe(1);
@@ -232,6 +236,54 @@ describe('MetricsStore', () => {
     it('closes the database without error', () => {
       store = new MetricsStore(':memory:');
       expect(() => store.close()).not.toThrow();
+    });
+  });
+
+  describe('module_graph persistence', () => {
+    const sampleGraph: ModuleGraphJSON = {
+      version: 1,
+      modules: {
+        'com.app:core': {
+          coordinate: { groupId: 'com.app', artifactId: 'core', version: '1.0' },
+          dependencies: [],
+          interfaces: [],
+          dtos: [],
+          pomPath: 'core/pom.xml',
+          sourceRoot: 'core/src/main/java',
+        },
+        'com.app:web': {
+          coordinate: { groupId: 'com.app', artifactId: 'web', version: '1.0' },
+          dependencies: ['com.app:core'],
+          interfaces: [],
+          dtos: [],
+          pomPath: 'web/pom.xml',
+          sourceRoot: 'web/src/main/java',
+        },
+      },
+    };
+
+    it('saveModuleGraph() stores and getModuleGraph() retrieves', () => {
+      store = new MetricsStore(':memory:');
+      store.saveModuleGraph('/projects/my-app', sampleGraph);
+      const result = store.getModuleGraph('/projects/my-app');
+      expect(result).toEqual(sampleGraph);
+    });
+
+    it('saveModuleGraph() with same projectRoot overwrites (upsert)', () => {
+      store = new MetricsStore(':memory:');
+      store.saveModuleGraph('/projects/my-app', sampleGraph);
+
+      const updated: ModuleGraphJSON = { version: 1, modules: {} };
+      store.saveModuleGraph('/projects/my-app', updated);
+
+      const result = store.getModuleGraph('/projects/my-app');
+      expect(result).toEqual(updated);
+    });
+
+    it('getModuleGraph() returns null for unknown project', () => {
+      store = new MetricsStore(':memory:');
+      const result = store.getModuleGraph('/nonexistent');
+      expect(result).toBeNull();
     });
   });
 });

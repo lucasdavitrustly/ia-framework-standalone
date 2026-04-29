@@ -12,7 +12,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup && cp -r src/strategies/default-examples dist/default-examples",
+    "build": "tsup && mkdir -p dist/default-examples && cp src/strategies/default-examples/*.md dist/default-examples/",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",

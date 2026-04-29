@@ -58,8 +58,8 @@ async function main(): Promise<void> {
     graph.initialize();
     // Wrap sync getNeighborFiles as async to match SearchEngineConfig interface
     dependencyGraph = {
-      getNeighborFiles: async (filePaths: string[], hops: 1 | 2) =>
-        graph.getNeighborFiles(filePaths, hops),
+      getNeighborFiles: (filePaths: string[], hops: 1 | 2) =>
+        Promise.resolve(graph.getNeighborFiles(filePaths, hops)),
     };
     logger.info({ graphDbPath }, 'Dependency graph loaded for search expansion');
   } catch {

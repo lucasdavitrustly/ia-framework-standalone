@@ -1,197 +1,246 @@
 [
   {
     "id": "sem-01",
-    "query": "how does the indexing pipeline process and embed files",
-    "expectedFiles": ["packages/indexer/src/pipeline.ts"],
-    "description": "Core indexing flow"
-  },
-  {
-    "id": "sem-02",
-    "query": "embedding provider interface for generating vectors",
-    "expectedFiles": ["packages/embedding/src/interface.ts"],
-    "description": "Embedding abstraction"
-  },
-  {
-    "id": "sem-03",
-    "query": "search engine querying qdrant and merging results",
-    "expectedFiles": ["packages/retrieval/src/search-engine.ts"],
-    "description": "Retrieval engine"
-  },
-  {
-    "id": "sem-04",
-    "query": "token counting and RAG event logging for observability",
-    "expectedFiles": ["packages/observability/src/token-counter.ts"],
-    "description": "Observability"
-  },
-  {
-    "id": "sem-05",
-    "query": "dependency graph tracking file import relationships",
-    "expectedFiles": ["packages/retrieval/src/dependency-graph.ts"],
-    "description": "Dependency graph"
+    "query": "How does payment-gateway-core handle its core processing flow?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/EntryFilter.java",
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/application/command/ProcessEntriesCommand.java",
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/domain/settings/Settings.java"
+    ],
+    "description": "Query about the core processing flow in payment-gateway-core."
   },
   {
     "id": "kw-01",
-    "query": "BenchmarkRunner class MRR computation",
-    "expectedFiles": ["packages/benchmark/src/benchmark-runner.ts"],
-    "description": "Exact class name"
-  },
-  {
-    "id": "kw-02",
-    "query": "QdrantVectorStore initialize collection named vectors",
-    "expectedFiles": ["packages/vector-store/src/qdrant.ts"],
-    "description": "Class + method name"
-  },
-  {
-    "id": "kw-03",
-    "query": "searchWithExpansion dependency graph hops",
-    "expectedFiles": ["packages/retrieval/src/search-engine.ts"],
-    "description": "Method name"
-  },
-  {
-    "id": "kw-04",
-    "query": "MetricsStore logEvent SQLite persistence",
-    "expectedFiles": ["packages/observability/src/metrics-store.ts"],
-    "description": "Metrics storage"
-  },
-  {
-    "id": "kw-05",
-    "query": "loadCorpus scaffold benchmark queries JSON",
-    "expectedFiles": ["packages/benchmark/src/corpus.ts"],
-    "description": "Corpus loading"
+    "query": "EntityAccount class",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/domain/settings/EntityAccount.java"
+    ],
+    "description": "Keyword query for EntityAccount class."
   },
   {
     "id": "xf-01",
-    "query": "MCP server tool registration and search handler wiring",
+    "query": "How do payment-gateway-core and adapters exchange data?",
     "expectedFiles": [
-      "packages/mcp-server/src/server.ts",
-      "packages/mcp-server/src/tools/search-codebase.ts"
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClient.java",
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/client/model/transfer/CreateTransferResponse.java"
     ],
-    "description": "MCP wiring"
-  },
-  {
-    "id": "xf-02",
-    "query": "incremental indexing git diff changed files pipeline",
-    "expectedFiles": [
-      "packages/indexer/src/incremental.ts",
-      "packages/indexer/src/pipeline.ts"
-    ],
-    "description": "Incremental pipeline"
-  },
-  {
-    "id": "xf-03",
-    "query": "ollama and openai embedding provider adapters",
-    "expectedFiles": [
-      "packages/embedding/src/providers/ollama.ts",
-      "packages/embedding/src/providers/openai.ts"
-    ],
-    "description": "Provider adapters"
-  },
-  {
-    "id": "xf-04",
-    "query": "benchmark run storage and retrieval from sqlite store",
-    "expectedFiles": [
-      "packages/benchmark/src/benchmark-store.ts",
-      "packages/benchmark/src/benchmark-runner.ts"
-    ],
-    "description": "Benchmark storage"
-  },
-  {
-    "id": "xf-05",
-    "query": "how dual named vectors are stored in qdrant for each chunk",
-    "expectedFiles": [
-      "packages/vector-store/src/qdrant.ts",
-      "packages/indexer/src/pipeline.ts"
-    ],
-    "description": "Dual-vector storage"
+    "description": "Cross-file query to understand data exchange between payment-gateway-core and adapters."
   },
   {
     "id": "cx-01",
-    "query": "how MCP server sends search results back to OpenCode caller",
-    "expectedFiles": ["packages/mcp-server/src/tools/search-codebase.ts"],
-    "description": "End-to-end MCP response"
-  },
-  {
-    "id": "cx-02",
-    "query": "walk files excluding gitignore patterns and node_modules",
-    "expectedFiles": ["packages/indexer/src/file-walker.ts"],
-    "description": "File discovery with exclusions"
-  },
-  {
-    "id": "cx-03",
-    "query": "project profile detection language framework package manager",
-    "expectedFiles": ["packages/project-detector/src/detector.ts"],
-    "description": "Project detection"
-  },
-  {
-    "id": "cx-04",
-    "query": "config not found error and unconfigured dashboard graceful mode",
-    "expectedFiles": ["packages/dashboard-api/src/config-watcher.ts"],
-    "description": "Graceful unconfigured mode"
-  },
-  {
-    "id": "cx-05",
-    "query": "AST chunk extraction at function class interface boundaries",
-    "expectedFiles": ["packages/ast-parser/src/chunker.ts"],
-    "description": "AST-aware chunking"
+    "query": "Where is error handling implemented across the payment-gateway-core module?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClientException.java",
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/client/UnexpectedApiException.java"
+    ],
+    "description": "Complex multi-concept query about error handling in payment-gateway-core."
   },
   {
     "id": "neg-01",
-    "query": "GraphQL schema type resolvers mutations subscriptions",
+    "query": "How does the system process cryptocurrency transactions?",
     "expectedFiles": [],
-    "description": "Negative: no GraphQL"
-  },
-  {
-    "id": "neg-02",
-    "query": "Kubernetes pod deployment YAML configuration ingress",
-    "expectedFiles": [],
-    "description": "Negative: no k8s"
-  },
-  {
-    "id": "neg-03",
-    "query": "Redis cache eviction TTL expiry pub sub",
-    "expectedFiles": [],
-    "description": "Negative: no Redis"
-  },
-  {
-    "id": "neg-04",
-    "query": "JWT authentication token validation middleware passport",
-    "expectedFiles": [],
-    "description": "Negative: no auth"
-  },
-  {
-    "id": "neg-05",
-    "query": "Next.js routing pages app directory server components",
-    "expectedFiles": [],
-    "description": "Negative: no Next.js"
+    "description": "Negative query for a topic not present in the codebase."
   },
   {
     "id": "edge-01",
-    "query": "abort signal cancellation during indexing pipeline",
-    "expectedFiles": ["packages/indexer/src/pipeline.ts"],
-    "description": "Cancellation support"
+    "query": "What happens when SftpClient receives an invalid or null input?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClient.java"
+    ],
+    "description": "Edge case query about handling invalid inputs in SftpClient."
+  },
+  {
+    "id": "sem-02",
+    "query": "How is the payment-gateway-server configured for different environments?",
+    "expectedFiles": [
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/infrastructure/jsch/JschSftpClientService.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/presentation/JobController.java"
+    ],
+    "description": "Semantic query about server configuration."
+  },
+  {
+    "id": "kw-02",
+    "query": "JsonHelper class methods",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/common/JsonHelper.java"
+    ],
+    "description": "Keyword query for methods in JsonHelper class."
+  },
+  {
+    "id": "xf-02",
+    "query": "How does payment-gateway-server interact with SFTP?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClient.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/infrastructure/jsch/JschSftpClientService.java"
+    ],
+    "description": "Cross-file query about server interaction with SFTP."
+  },
+  {
+    "id": "cx-02",
+    "query": "What is the workflow for processing entries in fifththird-rtp?",
+    "expectedFiles": [
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/core/process/ProcessEntriesHandler.java",
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/application/command/ProcessEntriesCommand.java"
+    ],
+    "description": "Complex multi-concept query about entry processing workflow."
+  },
+  {
+    "id": "neg-02",
+    "query": "How is blockchain integration handled in the payment system?",
+    "expectedFiles": [],
+    "description": "Negative query for a topic not present in the codebase."
   },
   {
     "id": "edge-02",
-    "query": "chunk ID sha256 UUID format conversion for qdrant point IDs",
-    "expectedFiles": ["packages/vector-store/src/qdrant.ts"],
-    "description": "ID hashing for Qdrant"
+    "query": "What happens if a network error occurs during SFTP transfer?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClient.java"
+    ],
+    "description": "Edge case query about handling network errors in SFTP."
+  },
+  {
+    "id": "sem-03",
+    "query": "How does payment-gateway-server handle database interactions?",
+    "expectedFiles": [
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/infrastructure/jdbc/mapper/EntryRowMapper.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/presentation/JobController.java"
+    ],
+    "description": "Semantic query about server database interactions."
+  },
+  {
+    "id": "kw-03",
+    "query": "InstantPaymentRequest class",
+    "expectedFiles": [
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/client/model/transfer/InstantPaymentRequest.java"
+    ],
+    "description": "Keyword query for InstantPaymentRequest class."
+  },
+  {
+    "id": "xf-03",
+    "query": "How does the payment system handle settings configuration?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/domain/settings/Settings.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/infrastructure/jdbc/repository/JdbcSettingsRepository.java"
+    ],
+    "description": "Cross-file query about settings configuration handling."
+  },
+  {
+    "id": "cx-03",
+    "query": "What is the role of EntryFilter in payment processing?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/EntryFilter.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/presentation/JobController.java"
+    ],
+    "description": "Complex multi-concept query about the role of EntryFilter."
+  },
+  {
+    "id": "neg-03",
+    "query": "How is real-time data synchronization handled in the payment system?",
+    "expectedFiles": [],
+    "description": "Negative query for a topic not present in the codebase."
   },
   {
     "id": "edge-03",
-    "query": "logger stderr output constraint MCP stdout JSON-RPC channel",
-    "expectedFiles": ["packages/core/src/logger/index.ts"],
-    "description": "Logger constraint"
+    "query": "What happens when an invalid JSON payload is received by JsonHelper?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/common/JsonHelper.java"
+    ],
+    "description": "Edge case query about handling invalid JSON payloads."
+  },
+  {
+    "id": "sem-04",
+    "query": "How does payment-gateway-server manage transaction logs?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/InternalReason.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/presentation/EntryController.java"
+    ],
+    "description": "Semantic query about server transaction log management."
+  },
+  {
+    "id": "kw-04",
+    "query": "ExchangeWindowV2 methods",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/domain/settings/ExchangeWindowV2.java"
+    ],
+    "description": "Keyword query for methods in ExchangeWindowV2 class."
+  },
+  {
+    "id": "xf-04",
+    "query": "How does the payment system handle authentication exceptions?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/client/UnexpectedApiException.java",
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/client/shared/AuthenticationException.java"
+    ],
+    "description": "Cross-file query about handling authentication exceptions."
+  },
+  {
+    "id": "cx-04",
+    "query": "What is the process for resuming failed entries in fifththird-rtp?",
+    "expectedFiles": [
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/application/command/resume/strategy/ResumeEntryFailover.java",
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/EntryFilter.java"
+    ],
+    "description": "Complex multi-concept query about resuming failed entries."
+  },
+  {
+    "id": "neg-04",
+    "query": "How does the system integrate with third-party payment gateways?",
+    "expectedFiles": [],
+    "description": "Negative query for a topic not present in the codebase."
   },
   {
     "id": "edge-04",
-    "query": "SQLite infinity rank storage workaround real column",
-    "expectedFiles": ["packages/benchmark/src/benchmark-store.ts"],
-    "description": "SQLite REAL Infinity bug"
+    "query": "What happens if there is a connection timeout during SFTP transfer?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClient.java"
+    ],
+    "description": "Edge case query about handling connection timeouts in SFTP."
+  },
+  {
+    "id": "sem-05",
+    "query": "How does payment-gateway-server handle job scheduling?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/EntryFilter.java",
+      "payment-gateway-server/src/main/java/com/paywithmybank/paypro/presentation/JobController.java"
+    ],
+    "description": "Semantic query about server job scheduling."
+  },
+  {
+    "id": "neg-06",
+    "query": "HttpClient methods",
+    "expectedFiles": [],
+    "description": "Keyword query for HttpClient class (not present in the provided file list)."
+  },
+  {
+    "id": "xf-05",
+    "query": "How does payment-gateway-core handle different types of transactions?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/entry/InternalReason.java",
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/client/model/transfer/CreateTransferResponse.java"
+    ],
+    "description": "Cross-file query about handling different types of transactions."
+  },
+  {
+    "id": "cx-05",
+    "query": "What is the process for submitting a new payment request in fifththird-rtp?",
+    "expectedFiles": [
+      "adapters/payment-gateway-fifththird-rtp/src/main/java/com/paywithmybank/paypro/fifththird/rtp/core/process/ProcessEntriesHandler.java",
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/application/command/ProcessEntriesCommand.java"
+    ],
+    "description": "Complex multi-concept query about submitting a new payment request."
+  },
+  {
+    "id": "neg-05",
+    "query": "How is mobile payment integration handled in the payment system?",
+    "expectedFiles": [],
+    "description": "Negative query for a topic not present in the codebase."
   },
   {
     "id": "edge-05",
-    "query": "dimension mismatch collection recreation embedding model switch",
-    "expectedFiles": ["packages/vector-store/src/qdrant.ts"],
-    "description": "Collection recreation on model change"
+    "query": "What happens when an unexpected exception occurs during SFTP transfer?",
+    "expectedFiles": [
+      "payment-gateway-core/src/main/java/com/paywithmybank/paypro/core/sftp/SftpClient.java"
+    ],
+    "description": "Edge case query about handling unexpected exceptions in SFTP."
   }
 ]

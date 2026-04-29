@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -17,7 +17,7 @@ vi.mock('@ia-framework/core', async (importOriginal) => {
   };
 });
 
-import { agentsCommand, RAG_MARKER_START, RAG_MARKER_END, RAG_CONTENT } from './agents.command.js';
+import { agentsCommand, RAG_MARKER_START, RAG_MARKER_END } from './agents.command.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

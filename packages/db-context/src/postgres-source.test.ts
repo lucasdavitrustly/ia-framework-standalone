@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PostgresSource } from './postgres-source.js';
 import { loadDbConfig, DbConfigNotFoundError } from './loader.js';
-import type { ContextSource, ChunkMetadata } from '@ia-framework/core';
-import { writeFile, rm, mkdir } from 'node:fs/promises';
+import type { ContextSource } from '@ia-framework/core';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -250,7 +250,7 @@ describe('PostgresSource', () => {
   });
 
   // Test: PostgresSource implements ContextSource
-  it('PostgresSource satisfies ContextSource interface', async () => {
+  it('PostgresSource satisfies ContextSource interface', () => {
     const pool = makeFullMockPool({ tables: [] });
     const source: ContextSource = new PostgresSource(baseConfig, pool as never);
     expect(source.name).toBe('postgres');

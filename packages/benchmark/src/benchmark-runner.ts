@@ -7,6 +7,7 @@ import type {
   ConfigSnapshot,
   QueryResult,
 } from './types.js';
+import { parseIdentityBlock, compareModelIdentity } from './identity-parser.js';
 
 /**
  * Runs a set of benchmark queries against a SearchEngine and computes retrieval quality metrics.
@@ -60,6 +61,25 @@ export class BenchmarkRunner {
         reciprocalRank,
         latencyMs,
       });
+
+      // Process model identity if rawResponse is provided
+      const qr = queryResults[queryResults.length - 1]!;
+      if (q.rawResponse !== undefined) {
+        const identity = parseIdentityBlock(q.rawResponse);
+        if (!identity || identity.model === null) {
+          qr.identityMissing = true;
+        } else {
+          qr.identityMissing = false;
+          if (this.config.configuredModel) {
+            qr.modelMismatch = !compareModelIdentity(identity.model, this.config.configuredModel);
+            if (qr.modelMismatch && this.config.strictModel) {
+              throw new Error(
+                `Model mismatch detected: expected "${this.config.configuredModel}", got "${identity.model}". Aborting (--strict-model).`,
+              );
+            }
+          }
+        }
+      }
     }
 
     const total = queryResults.length;
@@ -68,6 +88,20 @@ export class BenchmarkRunner {
       total > 0 ? queryResults.reduce((sum, qr) => sum + qr.reciprocalRank, 0) / total : 0;
     const avgLatencyMs =
       total > 0 ? queryResults.reduce((sum, qr) => sum + qr.latencyMs, 0) / total : 0;
+
+    // Compute run-level integrity only when model lock is configured
+    let runIntegrity: 'full' | 'partial' | 'unknown' | undefined;
+    if (this.config.configuredModel) {
+      const hasAnyIdentity = queryResults.some((qr) => qr.identityMissing === false);
+      const hasAnyMismatch = queryResults.some((qr) => qr.modelMismatch === true);
+      if (!hasAnyIdentity) {
+        runIntegrity = 'unknown';
+      } else if (hasAnyMismatch) {
+        runIntegrity = 'partial';
+      } else {
+        runIntegrity = 'full';
+      }
+    }
 
     const snapshotWithMeta: ConfigSnapshot = this.metadataProvider
       ? {
@@ -85,6 +119,7 @@ export class BenchmarkRunner {
       mrr,
       avgLatencyMs,
       timestamp: new Date().toISOString(),
+      runIntegrity,
     };
 
     if (this.config.label !== undefined) {

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { createEmbeddingProvider, discoverDimensions, DEFAULT_DIMENSIONS } from './factory.js';
+
+type FetchSpy = MockInstance<typeof globalThis.fetch>;
 
 describe('createEmbeddingProvider', () => {
   it('creates OpenAI provider with correct properties', () => {
@@ -59,7 +62,7 @@ describe('createEmbeddingProvider', () => {
   });
 
   describe('OpenAI provider', () => {
-    let fetchSpy: ReturnType<typeof vi.spyOn>;
+    let fetchSpy: FetchSpy;
 
     beforeEach(() => {
       fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -86,13 +89,13 @@ describe('createEmbeddingProvider', () => {
       });
 
       const result = await provider.embed('test text');
-      expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining('/v1/embeddings'),
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(url).toEqual(expect.stringContaining('/v1/embeddings'));
+      expect(init?.method).toBe('POST');
+      expect(init?.headers).toEqual(
         expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-key',
-          }),
+          Authorization: 'Bearer test-key',
         }),
       );
       expect(result).toEqual([0.1, 0.2, 0.3]);
@@ -129,7 +132,7 @@ describe('createEmbeddingProvider', () => {
   });
 
   describe('Ollama provider', () => {
-    let fetchSpy: ReturnType<typeof vi.spyOn>;
+    let fetchSpy: FetchSpy;
 
     beforeEach(() => {
       fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -166,7 +169,7 @@ describe('createEmbeddingProvider', () => {
 });
 
 describe('discoverDimensions', () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: FetchSpy;
 
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, 'fetch');
@@ -216,17 +219,11 @@ describe('discoverDimensions', () => {
   it('falls back to /api/embed probe when /api/show lacks embedding_length', async () => {
     // /api/show returns ok but no embedding_length
     fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ model_info: { 'some.other_field': 42 } }),
-        { status: 200 },
-      ),
+      new Response(JSON.stringify({ model_info: { 'some.other_field': 42 } }), { status: 200 }),
     );
     // /api/embed probe succeeds
     fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ embeddings: [[0.1, 0.2, 0.3]] }),
-        { status: 200 },
-      ),
+      new Response(JSON.stringify({ embeddings: [[0.1, 0.2, 0.3]] }), { status: 200 }),
     );
 
     const dims = await discoverDimensions('unknown-model', 'http://localhost:11434');
@@ -239,10 +236,7 @@ describe('discoverDimensions', () => {
     fetchSpy.mockRejectedValueOnce(new Error('connection refused'));
     // /api/embed probe succeeds
     fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ embeddings: [[0.1, 0.2, 0.3, 0.4, 0.5]] }),
-        { status: 200 },
-      ),
+      new Response(JSON.stringify({ embeddings: [[0.1, 0.2, 0.3, 0.4, 0.5]] }), { status: 200 }),
     );
 
     const dims = await discoverDimensions('unknown-model', 'http://localhost:11434');
@@ -254,13 +248,11 @@ describe('discoverDimensions', () => {
     // /api/show fails
     fetchSpy.mockRejectedValueOnce(new Error('connection refused'));
     // /api/embed also fails
-    fetchSpy.mockResolvedValueOnce(
-      new Response('Internal Server Error', { status: 500 }),
-    );
+    fetchSpy.mockResolvedValueOnce(new Response('Internal Server Error', { status: 500 }));
 
-    await expect(
-      discoverDimensions('broken-model', 'http://localhost:11434'),
-    ).rejects.toThrow(/Cannot determine dimensions/);
+    await expect(discoverDimensions('broken-model', 'http://localhost:11434')).rejects.toThrow(
+      /Cannot determine dimensions/,
+    );
   });
 
   it('exports DEFAULT_DIMENSIONS with known models', () => {

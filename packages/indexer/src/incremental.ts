@@ -9,6 +9,7 @@ interface IndexingState {
   lastIndexedCommit: string;
   indexedAt: string;
   embeddingModel?: string;
+  promptContentHash?: string;
 }
 
 /** New format: map of collection name → state */
@@ -72,11 +73,20 @@ export async function getLastEmbeddingModel(
   return map[collectionName]?.embeddingModel ?? null;
 }
 
+export async function getLastPromptContentHash(
+  frameworkDir: string,
+  collectionName: string,
+): Promise<string | null> {
+  const map = await readStateMap(frameworkDir);
+  return map[collectionName]?.promptContentHash ?? null;
+}
+
 export async function saveLastIndexedCommit(
   frameworkDir: string,
   commit: string,
   collectionName: string,
   embeddingModel?: string,
+  promptContentHash?: string,
 ): Promise<void> {
   await mkdir(frameworkDir, { recursive: true });
   const map = await readStateMap(frameworkDir);
@@ -84,6 +94,7 @@ export async function saveLastIndexedCommit(
     lastIndexedCommit: commit,
     indexedAt: new Date().toISOString(),
     ...(embeddingModel ? { embeddingModel } : {}),
+    ...(promptContentHash ? { promptContentHash } : {}),
   };
   await writeFile(getStatePath(frameworkDir), JSON.stringify(map, null, 2), 'utf-8');
 }

@@ -68,18 +68,22 @@ describe('SearchEngine score threshold behavior', () => {
       const engine = new SearchEngine(config);
       await engine.searchHybrid({ text: 'test query' });
 
-      expect(mockVectorStore.searchHybrid).toHaveBeenCalledWith(
-        expect.not.objectContaining({ scoreThreshold: expect.anything() }),
-      );
+      expect(mockVectorStore.searchHybrid).toHaveBeenCalledTimes(1);
+      const [options] = mockVectorStore.searchHybrid.mock.calls[0] as [
+        { scoreThreshold?: number | undefined },
+      ];
+      expect(options.scoreThreshold).toBeUndefined();
     });
 
     it('does not pass scoreThreshold even when query has one (RRF mode ignores it)', async () => {
       const engine = new SearchEngine(config);
       await engine.searchHybrid({ text: 'test query', scoreThreshold: 0.5 });
 
-      expect(mockVectorStore.searchHybrid).toHaveBeenCalledWith(
-        expect.not.objectContaining({ scoreThreshold: expect.anything() }),
-      );
+      expect(mockVectorStore.searchHybrid).toHaveBeenCalledTimes(1);
+      const [options] = mockVectorStore.searchHybrid.mock.calls[0] as [
+        { scoreThreshold?: number | undefined },
+      ];
+      expect(options.scoreThreshold).toBeUndefined();
     });
   });
 });

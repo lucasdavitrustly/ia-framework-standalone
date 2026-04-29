@@ -57,7 +57,8 @@ describe('searchCodebaseHybridHandler', () => {
 
     expect(output.content[0]!.type).toBe('text');
     const text = (output.content[0] as { type: 'text'; text: string }).text;
-    expect(text).toBe('No results found for query: "nope"');
+    expect(text).toContain('Conclusion: the indexed hybrid search did not return strong evidence');
+    expect(text).toContain('No results found for query: "nope"');
   });
 
   it('uses default limit of 10 when limit is not provided', async () => {
@@ -78,6 +79,7 @@ describe('registerSearchCodebaseHybridTool', () => {
 
     registerSearchCodebaseHybridTool(server, engine);
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(server.registerTool).toHaveBeenCalledTimes(1);
     const [toolName] = (server.registerTool as ReturnType<typeof vi.fn>).mock.calls[0] as [
       string,

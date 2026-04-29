@@ -90,7 +90,9 @@ function LlmChunkingSection({ config }: { config: ProjectConfig }) {
       <EditableField label="Ollama URL" value={ollamaUrl} onChange={setOllamaUrl} />
       <div className="mt-3 flex items-center gap-3">
         <button
-          onClick={handleSave}
+          onClick={() => {
+            void handleSave();
+          }}
           disabled={saving}
           className="text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded px-4 py-1.5"
         >

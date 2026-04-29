@@ -33,9 +33,7 @@ export async function parseFile(
     // Unsupported language — return single module chunk for the whole file
     const content = await readFile(filePath, 'utf-8');
     const lines = content.split('\n');
-    const id = createHash('sha1')
-      .update(`${filePath}:1:${lines.length}`)
-      .digest('hex');
+    const id = createHash('sha1').update(`${filePath}:1:${lines.length}`).digest('hex');
     return [
       {
         id,
@@ -58,7 +56,31 @@ export async function parseFile(
   let chunks: CodeChunk[];
 
   if (language === 'java') {
-    chunks = parseJava(content, filePath, relativePath);
+    try {
+      chunks = parseJava(content, filePath, relativePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[ast-parser] Java parse failed for ${filePath}, falling back to module chunk: ${message}`,
+      );
+      const lines = content.split('\n');
+      const id = createHash('sha1').update(`${filePath}:1:${lines.length}`).digest('hex');
+      chunks = [
+        {
+          id,
+          filePath,
+          relativePath,
+          language: 'java',
+          chunkType: 'module',
+          name: undefined,
+          content,
+          startLine: 1,
+          endLine: lines.length,
+          imports: [],
+          exports: [],
+        },
+      ];
+    }
   } else {
     chunks = parseTypeScript(content, filePath, relativePath, language);
   }

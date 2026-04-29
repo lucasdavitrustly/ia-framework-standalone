@@ -56,12 +56,12 @@ export function searchRouter(deps: SearchDeps): Hono {
   // POST / — execute a search query
   app.post('/', async (c) => {
     try {
-      const body = (await c.req.json()) as {
+      const body: {
         query?: string;
         limit?: number;
         scoreThreshold?: number;
         collections?: string[];
-      };
+      } = await c.req.json();
 
       // Validate query
       if (!body.query || typeof body.query !== 'string' || body.query.trim() === '') {

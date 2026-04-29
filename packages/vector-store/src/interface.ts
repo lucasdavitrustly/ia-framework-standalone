@@ -17,9 +17,17 @@ export interface ChunkPayload {
   exports: string[];
   /** Parent construct name when this is a sub-chunk */
   parentName?: string | undefined;
+  /** Best-effort module or package root used for retrieval/reranking */
+  modulePath?: string | undefined;
+  /** Best-effort package or namespace name */
+  packageName?: string | undefined;
+  /** Heuristic architectural role hints */
+  layerHints?: string[] | undefined;
   indexedAt: string;
   /** Heuristic quality score for chunk summary (0-100). Present only for LLM-chunked points. */
   qualityScore?: number | undefined;
+  /** Maven module coordinates, populated for files inside a Maven project */
+  mavenModule?: { groupId: string; artifactId: string; version: string } | undefined;
 }
 
 /**

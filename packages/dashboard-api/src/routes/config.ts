@@ -10,6 +10,9 @@ interface ConfigDeps {
 export function configRouter(deps: ConfigDeps): Hono {
   const app = new Hono();
 
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null;
+
   app.get('/', (c) => {
     const config = deps.configWatcher.getConfig();
     if (!config) {
@@ -20,7 +23,10 @@ export function configRouter(deps: ConfigDeps): Hono {
 
   app.patch('/', async (c) => {
     try {
-      const patch = await c.req.json();
+      const patch: unknown = await c.req.json();
+      if (!isRecord(patch)) {
+        return c.json({ error: 'Invalid config patch payload' }, 400);
+      }
 
       // Read current config from disk
       let current: Record<string, unknown> = {};
@@ -32,12 +38,13 @@ export function configRouter(deps: ConfigDeps): Hono {
       }
 
       // Deep merge patch into current (one level for indexing.llm)
-      if (patch.indexing?.llm) {
-        const existingIndexing = (current.indexing as Record<string, unknown>) ?? {};
+      if (isRecord(patch.indexing) && isRecord(patch.indexing.llm)) {
+        const existingIndexing = isRecord(current.indexing) ? current.indexing : {};
+        const existingLlm = isRecord(existingIndexing.llm) ? existingIndexing.llm : {};
         current.indexing = {
           ...existingIndexing,
           llm: {
-            ...((existingIndexing.llm as Record<string, unknown>) ?? {}),
+            ...existingLlm,
             ...patch.indexing.llm,
           },
         };

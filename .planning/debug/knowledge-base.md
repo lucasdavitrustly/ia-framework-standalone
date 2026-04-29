@@ -4,7 +4,15 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 
 ---
 
-## dashboard-module-not-found — ERR_MODULE_NOT_FOUND for workspace package in Docker container
+## indexer-prompt-hash-reindex — LLM prompt change not triggering re-index
+
+- **Date:** 2026-04-29
+- **Error patterns:** Indexed 0 chunks, 0 files, incremental skip, llm strategy, prompt change, promptContentHash, IndexingState
+- **Root cause:** IndexingState in incremental.ts didn't track promptContentHash. Pipeline incremental logic only checked git commit hash, so LLM prompt changes were invisible and all files were skipped.
+- **Fix:** Added promptContentHash to IndexingState, exported getLastPromptContentHash(), computed PROMPT_CONTENT_HASH constant via SHA-256 of prompt template in prompt.ts, pipeline checks hash mismatch when strategy is 'llm' and forces full re-index, saves hash after indexing.
+- **Files changed:** packages/indexer/src/incremental.ts, packages/indexer/src/pipeline.ts, packages/indexer/src/strategies/prompt.ts
+
+---
 
 - **Date:** 2026-04-06
 - **Error patterns:** ERR_MODULE_NOT_FOUND, Cannot find package, dist/server.js, workspace, Docker, container, pnpm, tsup, external

@@ -204,7 +204,7 @@ export async function getModelInfo(model: string, baseUrl?: string): Promise<Mod
   // Extract context length
   let contextLength = 32768; // default
   if (typeof modelinfo?.['llama.context_length'] === 'number') {
-    contextLength = modelinfo['llama.context_length'] as number;
+    contextLength = modelinfo['llama.context_length'];
   } else if (details?.['context_length'] !== undefined) {
     contextLength = Number(details['context_length']);
   }

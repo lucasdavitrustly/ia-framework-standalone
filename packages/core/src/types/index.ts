@@ -36,6 +36,12 @@ export interface ChunkMetadata {
   exports: string[];
   /** Parent construct name when this is a sub-chunk (e.g., method extracted from a class) */
   parentName?: string | undefined;
+  /** Best-effort module or package root used for cross-module retrieval/reranking */
+  modulePath?: string | undefined;
+  /** Best-effort language package/namespace (most useful for Java) */
+  packageName?: string | undefined;
+  /** Heuristic architectural roles inferred from path and content */
+  layerHints?: string[] | undefined;
   /** Git commit hash at time of indexing */
   indexedAt: string;
 }
@@ -82,6 +88,13 @@ export interface SearchResult {
   score: number;
   /** Which vector type matched ('text' or 'code') */
   vectorType: 'text' | 'code';
+}
+
+export interface CodeAnchor {
+  file: string;
+  symbol?: string | undefined;
+  lines: string;
+  anchor: string;
 }
 
 /**

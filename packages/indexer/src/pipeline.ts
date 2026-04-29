@@ -7,6 +7,7 @@ import PQueue from 'p-queue';
 import { walkFiles } from './file-walker.js';
 import {
   getLastIndexedCommit,
+  getLastPromptContentHash,
   saveLastIndexedCommit,
   getCurrentCommit,
   getChangedFiles,
@@ -15,6 +16,14 @@ import { chunkToDescription } from './chunk-description.js';
 import { computeTermFrequencySparseVector } from '@ia-framework/retrieval';
 import type { ChunkingStrategy } from './strategies/types.js';
 import { AstChunkingStrategy } from './strategies/ast-strategy.js';
+import { PROMPT_CONTENT_HASH } from './strategies/prompt.js';
+import {
+  inferLayerHints,
+  inferModulePath,
+  inferPackageName,
+  inferMavenModule,
+} from './retrieval-metadata.js';
+import type { ModuleGraph } from '@ia-framework/core';
 
 const logger = createLogger('indexer');
 
@@ -45,6 +54,8 @@ export interface IndexingConfig {
   embeddingConcurrency?: number | undefined;
   /** Chunking strategy (default: AstChunkingStrategy). Phase 14 will add LlmChunkingStrategy. */
   chunkingStrategy?: ChunkingStrategy | undefined;
+  /** Optional Maven module graph — if provided, chunks are enriched with maven_module metadata */
+  mavenModuleGraph?: ModuleGraph | undefined;
   /** Optional dependency graph for building file-level import adjacency */
   dependencyGraph?:
     | {
@@ -95,6 +106,7 @@ async function embedBatchWithRetry(
   provider: EmbeddingProvider,
   results: VectorPoint[],
   maxRetries = 1,
+  mavenModuleGraph?: ModuleGraph | undefined,
 ): Promise<void> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -122,8 +134,18 @@ async function embedBatchWithRetry(
           imports: chunk.imports,
           exports: chunk.exports,
           parentName: chunk.parentName,
+          modulePath: inferModulePath(chunk.relativePath),
+          packageName: inferPackageName(chunk.relativePath, chunk.content),
+          layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
           indexedAt: new Date().toISOString(),
         };
+        // Maven module enrichment (per D-05)
+        if (mavenModuleGraph) {
+          const mavenMod = inferMavenModule(chunk.relativePath, mavenModuleGraph);
+          if (mavenMod) {
+            payload.mavenModule = mavenMod;
+          }
+        }
         results.push({
           id: chunk.id,
           textVector: textVectors[j]!,
@@ -190,7 +212,29 @@ export class IndexingPipeline {
 
     if (incremental) {
       const lastCommit = await getLastIndexedCommit(frameworkDir, collectionName);
-      if (lastCommit) {
+
+      // Check if the LLM chunking prompt has changed — if so, force full re-index (D-20)
+      const isLlmStrategy = chunkingStrategy?.name === 'llm';
+      let promptChanged = false;
+      if (isLlmStrategy && lastCommit) {
+        const lastHash = await getLastPromptContentHash(frameworkDir, collectionName);
+        if (lastHash !== null && lastHash !== PROMPT_CONTENT_HASH) {
+          logger.info(
+            { lastHash, currentHash: PROMPT_CONTENT_HASH },
+            'LLM prompt changed — forcing full re-index',
+          );
+          promptChanged = true;
+        }
+      }
+
+      if (promptChanged) {
+        // Prompt changed — full re-index needed
+        filesToProcess = await walkFiles({
+          projectPath: targetProjectPath,
+          includePatterns,
+          excludePatterns,
+        });
+      } else if (lastCommit) {
         const changedFiles = await getChangedFiles(targetProjectPath, lastCommit);
         // Delete old chunks for changed files before re-indexing
         for (const filePath of changedFiles) {
@@ -294,7 +338,13 @@ export class IndexingPipeline {
           if (signal?.aborted) return; // Skip if already aborted
 
           try {
-            await embedBatchWithRetry(batch, embeddingProvider, vectorPoints);
+            await embedBatchWithRetry(
+              batch,
+              embeddingProvider,
+              vectorPoints,
+              1,
+              config.mavenModuleGraph,
+            );
           } catch {
             // Retry exhausted — skip batch
             skippedChunks += batch.length;
@@ -346,6 +396,9 @@ export class IndexingPipeline {
                 imports: chunk.imports,
                 exports: chunk.exports,
                 parentName: chunk.parentName,
+                modulePath: inferModulePath(chunk.relativePath),
+                packageName: inferPackageName(chunk.relativePath, chunk.content),
+                layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
                 indexedAt: chunk.indexedAt,
               };
               vectorPoints.push({
@@ -378,7 +431,14 @@ export class IndexingPipeline {
     // Save incremental state
     const currentCommit = await getCurrentCommit(targetProjectPath);
     if (currentCommit) {
-      await saveLastIndexedCommit(frameworkDir, currentCommit, collectionName);
+      const isLlmStrategy = chunkingStrategy?.name === 'llm';
+      await saveLastIndexedCommit(
+        frameworkDir,
+        currentCommit,
+        collectionName,
+        undefined,
+        isLlmStrategy ? PROMPT_CONTENT_HASH : undefined,
+      );
     }
 
     progress.stage = 'done';

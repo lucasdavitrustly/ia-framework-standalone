@@ -106,7 +106,7 @@ describe('BenchmarkStore', () => {
     expect(q2!.reciprocalRank).toBe(0);
   });
 
-  it('Test 4: listRuns() returns runs ordered by timestamp DESC, newest first', async () => {
+  it('Test 4: listRuns() returns runs ordered by timestamp DESC, newest first', () => {
     const run1 = makeRun({
       runId: crypto.randomUUID(),
       timestamp: '2026-01-01T00:00:00.000Z',
@@ -177,5 +177,50 @@ describe('BenchmarkStore', () => {
     const runs = store.listRuns();
     expect(runs).toHaveLength(1);
     expect(runs[0]!.runId).toBe(run2.runId);
+  });
+
+  it('Test 10: saveRun() persists modelMismatch and identityMissing; getRunById() returns them', () => {
+    const query = makeQueryResult({
+      queryId: 'q-mismatch',
+      modelMismatch: true,
+      identityMissing: false,
+    });
+    const run = makeRun({ queries: [query] });
+    store.saveRun(run);
+
+    const retrieved = store.getRunById(run.runId);
+    expect(retrieved).not.toBeNull();
+    const q = retrieved!.queries.find((q) => q.queryId === 'q-mismatch');
+    expect(q).toBeDefined();
+    expect(q!.modelMismatch).toBe(true);
+    expect(q!.identityMissing).toBe(false);
+  });
+
+  it('Test 11: saveRun() persists runIntegrity; getRunById() returns it', () => {
+    const run = makeRun({ runIntegrity: 'partial' });
+    store.saveRun(run);
+
+    const retrieved = store.getRunById(run.runId);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.runIntegrity).toBe('partial');
+  });
+
+  it('Test 12: modelMismatch and identityMissing are undefined (not null) when not set', () => {
+    const run = makeRun();
+    store.saveRun(run);
+
+    const retrieved = store.getRunById(run.runId);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.queries[0]!.modelMismatch).toBeUndefined();
+    expect(retrieved!.queries[0]!.identityMissing).toBeUndefined();
+  });
+
+  it('Test 13: runIntegrity is undefined when not set', () => {
+    const run = makeRun();
+    store.saveRun(run);
+
+    const retrieved = store.getRunById(run.runId);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.runIntegrity).toBeUndefined();
   });
 });

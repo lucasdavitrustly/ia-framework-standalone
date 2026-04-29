@@ -1,7 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { RetrievalResult } from './types.js';
 import type { SearchEngine } from './search-engine.js';
 import { MultiCollectionSearchEngine } from './multi-collection-search-engine.js';
+
+type MockSearchEngine = {
+  search: ReturnType<typeof vi.fn>;
+  searchHybrid: ReturnType<typeof vi.fn>;
+  searchWithExpansion: ReturnType<typeof vi.fn>;
+  getFile: ReturnType<typeof vi.fn>;
+};
 
 function makeResult(
   overrides: Partial<RetrievalResult> & { chunkId: string; score: number },
@@ -25,13 +32,13 @@ function createMockEngine(
   searchResults: RetrievalResult[] = [],
   hybridResults?: RetrievalResult[],
   getFileResults?: RetrievalResult[],
-): SearchEngine {
+): MockSearchEngine {
   return {
     search: vi.fn().mockResolvedValue(searchResults),
     searchHybrid: vi.fn().mockResolvedValue(hybridResults ?? searchResults),
     searchWithExpansion: vi.fn().mockResolvedValue(searchResults),
     getFile: vi.fn().mockResolvedValue(getFileResults ?? searchResults),
-  } as unknown as SearchEngine;
+  };
 }
 
 describe('MultiCollectionSearchEngine', () => {
@@ -50,8 +57,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -71,7 +78,7 @@ describe('MultiCollectionSearchEngine', () => {
       const astEngine = createMockEngine(astResults);
 
       const engine = new MultiCollectionSearchEngine({
-        engines: [{ name: 'ast', engine: astEngine }],
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
       });
 
       const results = await engine.search({ text: 'test query', limit: 10 });
@@ -87,8 +94,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -104,8 +111,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -126,8 +133,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -148,8 +155,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -168,7 +175,7 @@ describe('MultiCollectionSearchEngine', () => {
       const astEngine = createMockEngine([], astResults);
 
       const engine = new MultiCollectionSearchEngine({
-        engines: [{ name: 'ast', engine: astEngine }],
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
       });
 
       const results = await engine.searchHybrid({ text: 'test', limit: 10 });
@@ -184,8 +191,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -210,7 +217,7 @@ describe('MultiCollectionSearchEngine', () => {
       };
 
       const engine = new MultiCollectionSearchEngine({
-        engines: [{ name: 'ast', engine: astEngine }],
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
         dependencyGraph: depGraph,
       });
 
@@ -226,7 +233,7 @@ describe('MultiCollectionSearchEngine', () => {
       const astEngine = createMockEngine(baseResults);
 
       const engine = new MultiCollectionSearchEngine({
-        engines: [{ name: 'ast', engine: astEngine }],
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
         // no dependencyGraph
       });
 
@@ -244,7 +251,7 @@ describe('MultiCollectionSearchEngine', () => {
       };
 
       const engine = new MultiCollectionSearchEngine({
-        engines: [{ name: 'ast', engine: astEngine }],
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
         dependencyGraph: depGraph,
       });
 
@@ -268,8 +275,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -290,8 +297,8 @@ describe('MultiCollectionSearchEngine', () => {
 
       const engine = new MultiCollectionSearchEngine({
         engines: [
-          { name: 'ast', engine: astEngine },
-          { name: 'llm', engine: llmEngine },
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
         ],
       });
 
@@ -306,7 +313,7 @@ describe('MultiCollectionSearchEngine', () => {
       const astEngine = createMockEngine([], undefined, chunks);
 
       const engine = new MultiCollectionSearchEngine({
-        engines: [{ name: 'ast', engine: astEngine }],
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
       });
 
       const results = await engine.getFile('test/file.ts');

@@ -8,7 +8,6 @@ import type {
   CollectionInfo,
   ChunkPayload,
   HybridSearchOptions,
-  SparseVector,
 } from './interface.js';
 
 /**
@@ -25,6 +24,56 @@ function toQdrantId(chunkId: string): string {
     hash.slice(16, 20),
     hash.slice(20, 32),
   ].join('-');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function toChunkPayload(value: unknown): ChunkPayload {
+  const record = isRecord(value) ? value : {};
+
+  return {
+    chunkId: typeof record.chunkId === 'string' ? record.chunkId : '',
+    filePath: typeof record.filePath === 'string' ? record.filePath : '',
+    relativePath: typeof record.relativePath === 'string' ? record.relativePath : '',
+    language: typeof record.language === 'string' ? record.language : '',
+    chunkType: typeof record.chunkType === 'string' ? record.chunkType : '',
+    name: typeof record.name === 'string' ? record.name : undefined,
+    content: typeof record.content === 'string' ? record.content : '',
+    startLine: typeof record.startLine === 'number' ? record.startLine : 0,
+    endLine: typeof record.endLine === 'number' ? record.endLine : 0,
+    imports: Array.isArray(record.imports)
+      ? record.imports.filter((value): value is string => typeof value === 'string')
+      : [],
+    exports: Array.isArray(record.exports)
+      ? record.exports.filter((value): value is string => typeof value === 'string')
+      : [],
+    parentName: typeof record.parentName === 'string' ? record.parentName : undefined,
+    modulePath: typeof record.modulePath === 'string' ? record.modulePath : undefined,
+    packageName: typeof record.packageName === 'string' ? record.packageName : undefined,
+    layerHints: Array.isArray(record.layerHints)
+      ? record.layerHints.filter((value): value is string => typeof value === 'string')
+      : undefined,
+    indexedAt: typeof record.indexedAt === 'string' ? record.indexedAt : new Date(0).toISOString(),
+    qualityScore: typeof record.qualityScore === 'number' ? record.qualityScore : undefined,
+    mavenModule: isRecord(record.mavenModule)
+      ? {
+          groupId:
+            typeof (record.mavenModule as Record<string, unknown>).groupId === 'string'
+              ? ((record.mavenModule as Record<string, unknown>).groupId as string)
+              : '',
+          artifactId:
+            typeof (record.mavenModule as Record<string, unknown>).artifactId === 'string'
+              ? ((record.mavenModule as Record<string, unknown>).artifactId as string)
+              : '',
+          version:
+            typeof (record.mavenModule as Record<string, unknown>).version === 'string'
+              ? ((record.mavenModule as Record<string, unknown>).version as string)
+              : '',
+        }
+      : undefined,
+  };
 }
 
 export interface QdrantVectorStoreConfig {
@@ -113,17 +162,15 @@ export class QdrantVectorStore implements VectorStore {
     const results = await this.client.search(this.collectionName, {
       vector: { name: options.vectorName, vector: queryVector },
       limit: options.limit,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ...(options.scoreThreshold !== undefined ? { score_threshold: options.scoreThreshold } : {}),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...(options.filter !== undefined ? { filter: options.filter as any } : {}),
+      ...(options.filter !== undefined ? { filter: options.filter } : {}),
       with_payload: true,
     });
 
     return results.map((r) => ({
-      id: (r.payload as unknown as ChunkPayload).chunkId ?? String(r.id),
+      id: toChunkPayload(r.payload).chunkId || String(r.id),
       score: r.score,
-      payload: r.payload as unknown as ChunkPayload,
+      payload: toChunkPayload(r.payload),
       vectorName: options.vectorName,
     }));
   }
@@ -144,9 +191,7 @@ export class QdrantVectorStore implements VectorStore {
     const sparseVectors = (info.config?.params as Record<string, unknown> | undefined)
       ?.sparse_vectors;
     const hasSparseVector =
-      sparseVectors != null &&
-      typeof sparseVectors === 'object' &&
-      'sparse' in (sparseVectors as object);
+      sparseVectors != null && typeof sparseVectors === 'object' && 'sparse' in sparseVectors;
 
     return {
       name: this.collectionName,
@@ -158,8 +203,11 @@ export class QdrantVectorStore implements VectorStore {
   }
 
   async searchHybrid(options: HybridSearchOptions): Promise<SearchResult[]> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const results = await (this.client.query as any)(this.collectionName, {
+    const query = this.client.query.bind(this.client) as (
+      collectionName: string,
+      request: Record<string, unknown>,
+    ) => Promise<unknown>;
+    const results = await query(this.collectionName, {
       prefetch: [
         {
           query: { nearest: options.denseVector },
@@ -172,7 +220,7 @@ export class QdrantVectorStore implements VectorStore {
           limit: options.limit * 3,
         },
         {
-          query: { nearest: options.sparseVector as SparseVector },
+          query: { nearest: options.sparseVector },
           using: 'sparse',
           limit: options.limit * 3,
         },
@@ -184,14 +232,16 @@ export class QdrantVectorStore implements VectorStore {
     });
 
     // client.query() returns { points: ScoredPoint[] } (Schemas['QueryResponse'])
-    const points: Array<{ id: unknown; score: number; payload: unknown }> = Array.isArray(results)
+    const points = Array.isArray(results)
       ? results
-      : ((results as { points: unknown[] }).points ?? []);
+      : isRecord(results) && Array.isArray(results.points)
+        ? results.points
+        : [];
 
     return points.map((r) => ({
-      id: (r.payload as ChunkPayload).chunkId ?? String(r.id),
-      score: r.score,
-      payload: r.payload as ChunkPayload,
+      id: isRecord(r) ? toChunkPayload(r.payload).chunkId || String(r.id) : '',
+      score: isRecord(r) && typeof r.score === 'number' ? r.score : 0,
+      payload: isRecord(r) ? toChunkPayload(r.payload) : toChunkPayload(undefined),
       vectorName: 'text' as const, // RRF fusion — no single vector name
     }));
   }
@@ -239,15 +289,14 @@ export class QdrantVectorStore implements VectorStore {
     const result = await this.client.scroll(this.collectionName, {
       limit: options.limit,
       ...(options.offset !== undefined ? { offset: options.offset } : {}),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...(options.filter !== undefined ? { filter: options.filter as any } : {}),
+      ...(options.filter !== undefined ? { filter: options.filter } : {}),
       with_payload: true,
     });
 
     return {
       points: result.points.map((p) => ({
         id: String(p.id),
-        payload: p.payload as unknown as ChunkPayload,
+        payload: toChunkPayload(p.payload),
       })),
       nextOffset:
         typeof result.next_page_offset === 'string' || typeof result.next_page_offset === 'number'
@@ -258,8 +307,7 @@ export class QdrantVectorStore implements VectorStore {
 
   async countPoints(filter?: Record<string, unknown>): Promise<number> {
     const result = await this.client.count(this.collectionName, {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...(filter !== undefined ? { filter: filter as any } : {}),
+      ...(filter !== undefined ? { filter } : {}),
       exact: true,
     });
     return result.count;

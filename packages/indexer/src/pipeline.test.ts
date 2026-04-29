@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ChunkMetadata } from '@ia-framework/core';
@@ -12,11 +12,17 @@ const {
   mockGetChangedFiles,
   mockGetCurrentCommit,
   mockSaveLastIndexedCommit,
+  mockGetLastPromptContentHash,
 } = vi.hoisted(() => ({
   mockGetLastIndexedCommit: vi.fn(),
   mockGetChangedFiles: vi.fn(),
   mockGetCurrentCommit: vi.fn(),
   mockSaveLastIndexedCommit: vi.fn(),
+  mockGetLastPromptContentHash: vi.fn(),
+}));
+
+const { mockPromptContentHash } = vi.hoisted(() => ({
+  mockPromptContentHash: { value: 'test-hash-abc' },
 }));
 
 // ── Mock @ia-framework/ast-parser ───────────────────────────────────────────
@@ -30,12 +36,23 @@ vi.mock('./incremental.js', () => ({
   getChangedFiles: mockGetChangedFiles,
   getCurrentCommit: mockGetCurrentCommit,
   saveLastIndexedCommit: mockSaveLastIndexedCommit,
+  getLastPromptContentHash: mockGetLastPromptContentHash,
+}));
+
+// ── Mock prompt module ───────────────────────────────────────────────────────
+vi.mock('./strategies/prompt.js', () => ({
+  get PROMPT_CONTENT_HASH() {
+    return mockPromptContentHash.value;
+  },
+  buildPrompt: vi.fn(),
+  CHUNK_JSON_SCHEMA: {},
 }));
 
 // ── Import IndexingPipeline after mocks ────────────────────────────────────
 import { IndexingPipeline } from './pipeline.js';
 import type { IndexingConfig, IndexingProgress } from './pipeline.js';
 import { walkFiles } from './file-walker.js';
+import type { VectorStore } from '@ia-framework/vector-store';
 
 // ── Mock factory helpers ─────────────────────────────────────────────────────
 function makeMockEmbeddingProvider(dim = 3) {
@@ -65,8 +82,10 @@ function makeMockVectorStore() {
     }),
     deleteByFilter: vi.fn().mockResolvedValue(0),
     deleteByIds: vi.fn().mockResolvedValue(undefined),
+    scroll: vi.fn().mockResolvedValue({ points: [], nextOffset: undefined }),
+    countPoints: vi.fn().mockResolvedValue(0),
     deleteCollection: vi.fn().mockResolvedValue(undefined),
-  };
+  } satisfies VectorStore;
 }
 
 function makeChunk(id: string, filePath: string) {
@@ -106,6 +125,7 @@ describe('IndexingPipeline', () => {
     mockGetLastIndexedCommit.mockResolvedValue(null);
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
     mockParseFile.mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]);
   });
 
@@ -187,11 +207,13 @@ describe('IndexingPipeline', () => {
 
   it('Test 7: run() calls vectorStore.initialize() before upserting', async () => {
     const callOrder: string[] = [];
-    vectorStore.initialize.mockImplementation(async () => {
+    vectorStore.initialize.mockImplementation(() => {
       callOrder.push('initialize');
+      return Promise.resolve();
     });
-    vectorStore.upsertBatch.mockImplementation(async () => {
+    vectorStore.upsertBatch.mockImplementation(() => {
       callOrder.push('upsertBatch');
+      return Promise.resolve();
     });
 
     await pipeline.run(makeConfig());
@@ -265,6 +287,7 @@ describe('IndexingPipeline — contextSources', () => {
     mockGetLastIndexedCommit.mockResolvedValue(null);
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
     // No file chunks from parser — we focus on contextSources
     mockParseFile.mockResolvedValue([]);
   });
@@ -360,7 +383,7 @@ describe('IndexingPipeline — contextSources', () => {
 });
 
 // Cleanup after all tests
-afterAll(async () => {
+afterAll(() => {
   try {
     // tmpDir is scoped inside describe block — cleanup is handled by beforeEach per test
     // No-op cleanup needed here
@@ -389,6 +412,7 @@ describe('IndexingPipeline — parallel embedding', () => {
     mockGetLastIndexedCommit.mockResolvedValue(null);
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
   });
 
   const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
@@ -526,13 +550,13 @@ describe('IndexingPipeline — parallel embedding', () => {
     mockParseFile.mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]);
 
     let callCount = 0;
-    embeddingProvider.embedBatch.mockImplementation(async () => {
+    embeddingProvider.embedBatch.mockImplementation(() => {
       callCount++;
       // Fail on first call, succeed on all subsequent
       if (callCount === 1) {
         throw new Error('transient error');
       }
-      return [[0.1, 0.2, 0.3]];
+      return Promise.resolve([[0.1, 0.2, 0.3]]);
     });
 
     const result = await pipeline.run(makeConfig({ embeddingBatchSize: 1 }));
@@ -551,7 +575,7 @@ describe('IndexingPipeline — parallel embedding', () => {
     mockParseFile.mockResolvedValue(chunks);
 
     let batchAttempts = 0;
-    embeddingProvider.embedBatch.mockImplementation(async (texts: string[]) => {
+    embeddingProvider.embedBatch.mockImplementation((texts: string[]) => {
       batchAttempts++;
       // Fail the first 4 calls (2 attempts × 2 calls per batch for first batch)
       // Actually, the retry happens at batch level — if any embedBatch in the batch fails,
@@ -559,7 +583,7 @@ describe('IndexingPipeline — parallel embedding', () => {
       if (batchAttempts <= 4) {
         throw new Error('persistent error');
       }
-      return texts.map(() => [0.1, 0.2, 0.3]);
+      return Promise.resolve(texts.map(() => [0.1, 0.2, 0.3]));
     });
 
     const result = await pipeline.run(
@@ -680,6 +704,7 @@ describe('IndexingPipeline — dependencyGraph', () => {
     mockGetLastIndexedCommit.mockResolvedValue(null);
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
   });
 
   const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
@@ -823,6 +848,7 @@ describe('IndexingPipeline — description-aware text embedding', () => {
     mockGetLastIndexedCommit.mockResolvedValue(null);
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
   });
 
   const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
@@ -859,9 +885,9 @@ describe('IndexingPipeline — description-aware text embedding', () => {
 
     // The first embedBatch call should be for text descriptions
     // It should use chunkToDescription() output (contains file path, language, etc.)
-    const textEmbedCall = embeddingProvider.embedBatch.mock.calls[0];
-    expect(textEmbedCall![0][0]).toContain('typescript');
-    expect(textEmbedCall![0][0]).toContain('function');
+    const [textDescriptions] = embeddingProvider.embedBatch.mock.calls[0] as [string[]];
+    expect(textDescriptions[0]).toContain('typescript');
+    expect(textDescriptions[0]).toContain('function');
   });
 
   it('handles mixed batch with some chunks having description and some not', async () => {
@@ -883,5 +909,134 @@ describe('IndexingPipeline — description-aware text embedding', () => {
     // Second chunk should use chunkToDescription() fallback
     expect(textDescriptions[1]).toContain('typescript');
     expect(textDescriptions[1]).toContain('function');
+  });
+});
+
+// ── Prompt content hash re-index tests ────────────────────────────────────────
+describe('IndexingPipeline — prompt content hash change triggers re-index', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `indexer-prompt-hash-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'foo.ts'), 'export function foo() {}');
+
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockParseFile.mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  it('forces full re-index when prompt hash changed and strategy is llm', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue('abc123');
+    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetLastPromptContentHash.mockResolvedValue('old-hash-different');
+
+    const llmStrategy = {
+      name: 'llm',
+      chunk: vi.fn().mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]),
+    };
+
+    const result = await pipeline.run(
+      makeConfig({ incremental: true, chunkingStrategy: llmStrategy }),
+    );
+
+    expect(result.filesIndexed).toBeGreaterThan(0);
+    expect(llmStrategy.chunk).toHaveBeenCalled();
+  });
+
+  it('does not force re-index when prompt hash matches', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue('abc123');
+    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetLastPromptContentHash.mockResolvedValue('test-hash-abc');
+
+    const llmStrategy = {
+      name: 'llm',
+      chunk: vi.fn().mockResolvedValue([]),
+    };
+
+    const result = await pipeline.run(
+      makeConfig({ incremental: true, chunkingStrategy: llmStrategy }),
+    );
+
+    expect(result.filesIndexed).toBe(0);
+  });
+
+  it('does not check prompt hash for AST strategy', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue('abc123');
+    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+
+    const result = await pipeline.run(makeConfig({ incremental: true }));
+
+    expect(result.filesIndexed).toBe(0);
+  });
+
+  it('saves prompt hash when strategy is llm', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+
+    const llmStrategy = {
+      name: 'llm',
+      chunk: vi.fn().mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]),
+    };
+
+    await pipeline.run(makeConfig({ chunkingStrategy: llmStrategy }));
+
+    expect(mockSaveLastIndexedCommit).toHaveBeenCalledWith(
+      expect.any(String),
+      'abc123',
+      'test-collection',
+      undefined,
+      'test-hash-abc',
+    );
+  });
+
+  it('does not save prompt hash when strategy is ast', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+
+    await pipeline.run(makeConfig());
+
+    expect(mockSaveLastIndexedCommit).toHaveBeenCalledWith(
+      expect.any(String),
+      'abc123',
+      'test-collection',
+      undefined,
+      undefined,
+    );
+  });
+
+  it('treats null stored prompt hash as first-time (no force re-index)', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue('abc123');
+    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+
+    const llmStrategy = {
+      name: 'llm',
+      chunk: vi.fn().mockResolvedValue([]),
+    };
+
+    const result = await pipeline.run(
+      makeConfig({ incremental: true, chunkingStrategy: llmStrategy }),
+    );
+
+    expect(result.filesIndexed).toBe(0);
   });
 });

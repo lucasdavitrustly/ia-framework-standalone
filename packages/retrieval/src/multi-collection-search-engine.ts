@@ -107,7 +107,7 @@ export class MultiCollectionSearchEngine {
     const baseFilePaths = [...new Set(baseResults.map((r) => r.filePath))];
     const baseChunkIds = new Set(baseResults.map((r) => r.chunkId));
 
-    const neighborFiles = await this.dependencyGraph.getNeighborFiles(baseFilePaths, hops as 1 | 2);
+    const neighborFiles = await this.dependencyGraph.getNeighborFiles(baseFilePaths, hops);
 
     const baseFileSet = new Set(baseFilePaths);
     const newFiles = neighborFiles.filter((f) => !baseFileSet.has(f));

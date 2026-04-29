@@ -1,5 +1,13 @@
 import Database from 'better-sqlite3';
-import type { RagEvent, SessionStats, StrategyStats, TotalStats, DailyTokenUsage, EventsPage } from './types.js';
+import type {
+  RagEvent,
+  SessionStats,
+  StrategyStats,
+  TotalStats,
+  DailyTokenUsage,
+  EventsPage,
+  ModuleGraphJSON,
+} from './types.js';
 
 /**
  * SQLite-backed store for RAG interaction events.
@@ -30,6 +38,12 @@ export class MetricsStore {
       CREATE INDEX IF NOT EXISTS idx_session   ON rag_events(session_id);
       CREATE INDEX IF NOT EXISTS idx_strategy  ON rag_events(strategy);
       CREATE INDEX IF NOT EXISTS idx_timestamp ON rag_events(timestamp);
+
+      CREATE TABLE IF NOT EXISTS module_graph (
+        project_root TEXT PRIMARY KEY,
+        graph_json   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+      );
     `);
   }
 
@@ -57,7 +71,8 @@ export class MetricsStore {
   /** Get aggregated stats for a specific session */
   getSessionStats(sessionId: string): SessionStats | null {
     const row = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           session_id         AS sessionId,
           COUNT(*)           AS totalQueries,
@@ -69,7 +84,8 @@ export class MetricsStore {
         FROM rag_events
         WHERE session_id = ?
         GROUP BY session_id
-      `)
+      `,
+      )
       .get(sessionId) as
       | {
           sessionId: string;
@@ -98,7 +114,8 @@ export class MetricsStore {
   /** Get stats per retrieval strategy */
   getStrategyStats(): StrategyStats[] {
     const rows = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           strategy,
           COUNT(*)         AS totalQueries,
@@ -107,7 +124,8 @@ export class MetricsStore {
         FROM rag_events
         GROUP BY strategy
         ORDER BY strategy
-      `)
+      `,
+      )
       .all() as Array<{
       strategy: string;
       totalQueries: number;
@@ -126,14 +144,16 @@ export class MetricsStore {
   /** Get overall total stats across all sessions */
   getTotalStats(): TotalStats {
     const row = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           COUNT(*)                  AS totalEvents,
           COALESCE(SUM(token_count), 0) AS totalTokens,
           COUNT(DISTINCT session_id) AS totalSessions,
           COALESCE(AVG(token_count), 0) AS avgTokensPerQuery
         FROM rag_events
-      `)
+      `,
+      )
       .get() as {
       totalEvents: number;
       totalTokens: number;
@@ -149,6 +169,25 @@ export class MetricsStore {
     };
   }
 
+  /** Save a module graph JSON blob for a project root (upsert) */
+  saveModuleGraph(projectRoot: string, graphJson: ModuleGraphJSON): void {
+    this.db
+      .prepare(
+        `INSERT INTO module_graph (project_root, graph_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(project_root) DO UPDATE SET graph_json = excluded.graph_json, updated_at = excluded.updated_at`,
+      )
+      .run(projectRoot, JSON.stringify(graphJson), new Date().toISOString());
+  }
+
+  /** Retrieve a stored module graph for a project root, or null if not found */
+  getModuleGraph(projectRoot: string): ModuleGraphJSON | null {
+    const row = this.db
+      .prepare('SELECT graph_json FROM module_graph WHERE project_root = ?')
+      .get(projectRoot) as { graph_json: string } | undefined;
+    return row ? (JSON.parse(row.graph_json) as ModuleGraphJSON) : null;
+  }
+
   /** Close the database connection */
   close(): void {
     this.db.close();
@@ -157,7 +196,8 @@ export class MetricsStore {
   /** Get daily token usage grouped by date (for dashboard charts) */
   getEventsByDay(): DailyTokenUsage[] {
     const rows = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT
           DATE(timestamp) AS date,
           SUM(token_count) AS totalTokens,
@@ -165,7 +205,8 @@ export class MetricsStore {
         FROM rag_events
         GROUP BY DATE(timestamp)
         ORDER BY date ASC
-      `)
+      `,
+      )
       .all() as Array<{ date: string; totalTokens: number; totalQueries: number }>;
 
     return rows.map((r) => ({
@@ -178,9 +219,11 @@ export class MetricsStore {
   /** List paginated RAG events ordered by timestamp DESC */
   listEvents(limit: number, offset: number): EventsPage {
     const events = this.db
-      .prepare(`
+      .prepare(
+        `
         SELECT * FROM rag_events ORDER BY timestamp DESC LIMIT ? OFFSET ?
-      `)
+      `,
+      )
       .all(limit, offset) as Array<{
       id: string;
       session_id: string;
@@ -193,9 +236,9 @@ export class MetricsStore {
       latency_ms: number;
     }>;
 
-    const { total } = this.db
-      .prepare('SELECT COUNT(*) AS total FROM rag_events')
-      .get() as { total: number };
+    const { total } = this.db.prepare('SELECT COUNT(*) AS total FROM rag_events').get() as {
+      total: number;
+    };
 
     return {
       events: events.map((r) => ({

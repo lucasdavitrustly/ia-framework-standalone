@@ -58,22 +58,48 @@ export class BenchmarkStore {
       );
       CREATE INDEX IF NOT EXISTS idx_baseline_timestamp ON baseline_runs(timestamp);
     `);
+
+    // Migrations: add model lock columns if they don't exist yet (SQLite doesn't support IF NOT EXISTS for columns)
+    const queryResultCols = this.db
+      .prepare(`PRAGMA table_info(benchmark_query_results)`)
+      .all() as Array<{ name: string }>;
+    const queryResultColNames = new Set(queryResultCols.map((c) => c.name));
+
+    if (!queryResultColNames.has('model_mismatch')) {
+      this.db.exec(
+        `ALTER TABLE benchmark_query_results ADD COLUMN model_mismatch INTEGER DEFAULT NULL`,
+      );
+    }
+    if (!queryResultColNames.has('identity_missing')) {
+      this.db.exec(
+        `ALTER TABLE benchmark_query_results ADD COLUMN identity_missing INTEGER DEFAULT NULL`,
+      );
+    }
+
+    const runCols = this.db.prepare(`PRAGMA table_info(benchmark_runs)`).all() as Array<{
+      name: string;
+    }>;
+    const runColNames = new Set(runCols.map((c) => c.name));
+
+    if (!runColNames.has('run_integrity')) {
+      this.db.exec(`ALTER TABLE benchmark_runs ADD COLUMN run_integrity TEXT DEFAULT NULL`);
+    }
   }
 
   /** Save a benchmark run and all its query results in a single transaction. */
   saveRun(run: BenchmarkRun): void {
     const insertRun = this.db.prepare(`
       INSERT INTO benchmark_runs
-        (run_id, label, is_baseline, config_snapshot, hit_at_k, mrr, avg_latency_ms, timestamp)
+        (run_id, label, is_baseline, config_snapshot, hit_at_k, mrr, avg_latency_ms, timestamp, run_integrity)
       VALUES
-        (@runId, @label, @isBaseline, @configSnapshot, @hitAtK, @mrr, @avgLatencyMs, @timestamp)
+        (@runId, @label, @isBaseline, @configSnapshot, @hitAtK, @mrr, @avgLatencyMs, @timestamp, @runIntegrity)
     `);
 
     const insertQuery = this.db.prepare(`
       INSERT INTO benchmark_query_results
-        (id, run_id, query_id, query, expected_files, retrieved_files, hit, rank, reciprocal_rank, latency_ms)
+        (id, run_id, query_id, query, expected_files, retrieved_files, hit, rank, reciprocal_rank, latency_ms, model_mismatch, identity_missing)
       VALUES
-        (@id, @runId, @queryId, @query, @expectedFiles, @retrievedFiles, @hit, @rank, @reciprocalRank, @latencyMs)
+        (@id, @runId, @queryId, @query, @expectedFiles, @retrievedFiles, @hit, @rank, @reciprocalRank, @latencyMs, @modelMismatch, @identityMissing)
     `);
 
     const transaction = this.db.transaction(() => {
@@ -86,6 +112,7 @@ export class BenchmarkStore {
         mrr: run.mrr,
         avgLatencyMs: run.avgLatencyMs,
         timestamp: run.timestamp,
+        runIntegrity: run.runIntegrity ?? null,
       });
 
       for (const q of run.queries) {
@@ -101,6 +128,8 @@ export class BenchmarkStore {
           rank: q.rank === Infinity ? 1e308 : q.rank,
           reciprocalRank: q.reciprocalRank,
           latencyMs: q.latencyMs,
+          modelMismatch: q.modelMismatch === undefined ? null : q.modelMismatch ? 1 : 0,
+          identityMissing: q.identityMissing === undefined ? null : q.identityMissing ? 1 : 0,
         });
       }
     });
@@ -112,7 +141,7 @@ export class BenchmarkStore {
   getRunById(runId: string): BenchmarkRun | null {
     const runRow = this.db
       .prepare(
-        `SELECT run_id, label, is_baseline, config_snapshot, hit_at_k, mrr, avg_latency_ms, timestamp
+        `SELECT run_id, label, is_baseline, config_snapshot, hit_at_k, mrr, avg_latency_ms, timestamp, run_integrity
          FROM benchmark_runs WHERE run_id = ?`,
       )
       .get(runId) as RunRow | undefined;
@@ -121,7 +150,7 @@ export class BenchmarkStore {
 
     const queryRows = this.db
       .prepare(
-        `SELECT query_id, query, expected_files, retrieved_files, hit, rank, reciprocal_rank, latency_ms
+        `SELECT query_id, query, expected_files, retrieved_files, hit, rank, reciprocal_rank, latency_ms, model_mismatch, identity_missing
          FROM benchmark_query_results WHERE run_id = ? ORDER BY rowid`,
       )
       .all(runId) as QueryRow[];
@@ -133,18 +162,31 @@ export class BenchmarkStore {
   listRuns(limit = 20): BenchmarkRun[] {
     const runRows = this.db
       .prepare(
-        `SELECT run_id, label, is_baseline, config_snapshot, hit_at_k, mrr, avg_latency_ms, timestamp
-         FROM benchmark_runs ORDER BY timestamp DESC LIMIT ?`,
+        `SELECT run_id, label, is_baseline, config_snapshot, hit_at_k, mrr, avg_latency_ms, timestamp, run_integrity
+          FROM benchmark_runs ORDER BY timestamp DESC LIMIT ?`,
       )
       .all(limit) as RunRow[];
 
+    if (runRows.length === 0) return [];
+
+    const placeholders = runRows.map(() => '?').join(', ');
+    const runIds = runRows.map((r) => r.run_id);
+    const allQueryRows = this.db
+      .prepare(
+        `SELECT run_id, query_id, query, expected_files, retrieved_files, hit, rank, reciprocal_rank, latency_ms, model_mismatch, identity_missing
+         FROM benchmark_query_results WHERE run_id IN (${placeholders}) ORDER BY rowid`,
+      )
+      .all(...runIds) as (QueryRow & { run_id: string })[];
+
+    const queryRowsByRunId = new Map<string, (QueryRow & { run_id: string })[]>();
+    for (const qr of allQueryRows) {
+      const list = queryRowsByRunId.get(qr.run_id) ?? [];
+      list.push(qr);
+      queryRowsByRunId.set(qr.run_id, list);
+    }
+
     return runRows.map((runRow) => {
-      const queryRows = this.db
-        .prepare(
-          `SELECT query_id, query, expected_files, retrieved_files, hit, rank, reciprocal_rank, latency_ms
-           FROM benchmark_query_results WHERE run_id = ? ORDER BY rowid`,
-        )
-        .all(runRow.run_id) as QueryRow[];
+      const queryRows = (queryRowsByRunId.get(runRow.run_id) ?? []) as QueryRow[];
       return rowToRun(runRow, queryRows);
     });
   }
@@ -255,6 +297,7 @@ interface RunRow {
   mrr: number;
   avg_latency_ms: number;
   timestamp: string;
+  run_integrity: string | null;
 }
 
 interface QueryRow {
@@ -266,12 +309,14 @@ interface QueryRow {
   rank: number;
   reciprocal_rank: number;
   latency_ms: number;
+  model_mismatch: number | null;
+  identity_missing: number | null;
 }
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 
 function rowToQueryResult(row: QueryRow, runId: string): QueryResult {
-  return {
+  const result: QueryResult = {
     queryId: row.query_id,
     query: row.query,
     expectedFiles: JSON.parse(row.expected_files) as string[],
@@ -282,7 +327,14 @@ function rowToQueryResult(row: QueryRow, runId: string): QueryResult {
     reciprocalRank: row.reciprocal_rank,
     latencyMs: row.latency_ms,
   };
+  if (row.model_mismatch !== null) {
+    result.modelMismatch = row.model_mismatch === 1;
+  }
+  if (row.identity_missing !== null) {
+    result.identityMissing = row.identity_missing === 1;
+  }
   void runId; // runId not stored on QueryResult type but used for DB join
+  return result;
 }
 
 function rowToRun(runRow: RunRow, queryRows: QueryRow[]): BenchmarkRun {
@@ -299,6 +351,10 @@ function rowToRun(runRow: RunRow, queryRows: QueryRow[]): BenchmarkRun {
 
   if (runRow.label !== null) {
     run.label = runRow.label;
+  }
+
+  if (runRow.run_integrity !== null) {
+    run.runIntegrity = runRow.run_integrity as 'full' | 'partial' | 'unknown';
   }
 
   return run;

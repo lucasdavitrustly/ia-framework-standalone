@@ -53,7 +53,10 @@ describe('searchCodebaseHandler score threshold behavior', () => {
 
     await searchCodebaseHandler(engine, { query: 'test' });
 
-    const call = searchWithExpansion.mock.calls[0]!;
+    const call = searchWithExpansion.mock.calls[0] as [
+      { scoreThreshold?: number | undefined },
+      unknown,
+    ];
     expect(call[0].scoreThreshold).toBeUndefined();
   });
 });
