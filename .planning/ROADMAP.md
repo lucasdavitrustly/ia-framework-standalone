@@ -37,7 +37,7 @@
 
 Plans:
 
-- [ ] 02-01-PLAN.md — Extract hierarchy metadata (extends/implements) from Java and TypeScript AST
+- [x] 02-01-PLAN.md — Extract hierarchy metadata (extends/implements) from Java and TypeScript AST
 - [ ] 02-02-PLAN.md — Wire hierarchy to Qdrant payload and add hierarchy-aware retrieval expansion
 
 ### Phase 3: Documentation Indexing
