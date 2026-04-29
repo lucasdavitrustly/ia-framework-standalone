@@ -782,3 +782,70 @@ public class GenericService extends Base<String> {
     expect(cls!.superclass).toBe('Base');
   });
 });
+
+describe('parseFile — TypeScript hierarchy extraction', () => {
+  it('extracts superclass from class extends', async () => {
+    const filePath = await makeFile(
+      'UserService.ts',
+      `
+class UserService extends BaseService {
+  getUser(): string { return 'user'; }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'UserService');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('BaseService');
+  });
+
+  it('extracts superclass and interfaces from class extends + implements', async () => {
+    const filePath = await makeFile(
+      'UserService2.ts',
+      `
+class UserService extends BaseService implements Logger, Auditable {
+  getUser(): string { return 'user'; }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('BaseService');
+    expect(cls!.interfaces).toEqual(['Logger', 'Auditable']);
+  });
+
+  it('extracts interfaces from TypeScript interface extends', async () => {
+    const filePath = await makeFile(
+      'ExtendedUser.ts',
+      `
+interface ExtendedUser extends BaseUser, Timestamped {
+  extraField: string;
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const iface = chunks.find((c) => c.chunkType === 'interface' && c.name === 'ExtendedUser');
+    expect(iface).toBeDefined();
+    expect(iface!.interfaces).toEqual(expect.arrayContaining(['BaseUser', 'Timestamped']));
+  });
+
+  it('strips generic parameters from TypeScript superclass', async () => {
+    const filePath = await makeFile(
+      'Repo.ts',
+      `
+class Repo extends Base<Entity> {
+  find(): Entity | null { return null; }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('Base');
+  });
+});
