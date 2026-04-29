@@ -78,7 +78,7 @@ AI that actually understands the codebase — better context means better code o
 <!-- v1.4 scope — RAG Quality Improvements (Benchmark-Driven) -->
 
 - [ ] Relevance threshold with empty-result signaling (REL-01, REL-02, REL-03)
-- [ ] Hierarchy-aware chunking for class trees (HIER-01, HIER-02, HIER-03, HIER-04)
+- [x] Hierarchy-aware chunking for class trees (HIER-01, HIER-02, HIER-03, HIER-04) — Validated in Phase 02: hierarchy-aware-chunking
 - [ ] Index architecture docs with boosted weight (DOC-01, DOC-02, DOC-03)
 - [ ] Query intent classification (QCLS-01, QCLS-02, QCLS-03, QCLS-04, QCLS-05)
 - [ ] Adaptive retrieval depth (ADAPT-01, ADAPT-02, ADAPT-03, ADAPT-04, ADAPT-05)
