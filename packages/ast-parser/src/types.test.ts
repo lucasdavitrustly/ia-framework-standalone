@@ -54,3 +54,79 @@ describe('CodeChunk type — description and semantic chunkType', () => {
     expect(chunk.description).toBeUndefined();
   });
 });
+
+describe('CodeChunk type — hierarchy fields', () => {
+  it('accepts CodeChunk with superclass field as string', () => {
+    const chunk: CodeChunk = {
+      id: 'hier-1',
+      filePath: '/tmp/service.ts',
+      relativePath: 'service.ts',
+      language: 'typescript',
+      chunkType: 'class',
+      name: 'PaymentService',
+      content: 'class PaymentService extends BaseService {}',
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: ['PaymentService'],
+      superclass: 'BaseService',
+    };
+    expect(chunk.superclass).toBe('BaseService');
+  });
+
+  it('accepts CodeChunk with interfaces field as string[]', () => {
+    const chunk: CodeChunk = {
+      id: 'hier-2',
+      filePath: '/tmp/service.ts',
+      relativePath: 'service.ts',
+      language: 'typescript',
+      chunkType: 'class',
+      name: 'OrderService',
+      content: 'class OrderService implements Serializable, Auditable {}',
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: ['OrderService'],
+      interfaces: ['Serializable', 'Auditable'],
+    };
+    expect(chunk.interfaces).toEqual(['Serializable', 'Auditable']);
+  });
+
+  it('accepts CodeChunk with isInnerClass=true', () => {
+    const chunk: CodeChunk = {
+      id: 'hier-3',
+      filePath: '/tmp/service.ts',
+      relativePath: 'service.ts',
+      language: 'typescript',
+      chunkType: 'class',
+      name: 'Inner',
+      content: 'class Inner {}',
+      startLine: 5,
+      endLine: 7,
+      imports: [],
+      exports: [],
+      isInnerClass: true,
+      parentName: 'Outer',
+    };
+    expect(chunk.isInnerClass).toBe(true);
+  });
+
+  it('all hierarchy fields are optional (existing chunks remain valid)', () => {
+    const chunk: CodeChunk = {
+      id: 'hier-4',
+      filePath: '/tmp/service.ts',
+      relativePath: 'service.ts',
+      language: 'typescript',
+      chunkType: 'class',
+      name: 'SimpleClass',
+      content: 'class SimpleClass {}',
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: ['SimpleClass'],
+    };
+    expect(chunk.superclass).toBeUndefined();
+    expect(chunk.interfaces).toBeUndefined();
+    expect(chunk.isInnerClass).toBeUndefined();
+  });
+});
