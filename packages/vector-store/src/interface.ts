@@ -17,6 +17,12 @@ export interface ChunkPayload {
   exports: string[];
   /** Parent construct name when this is a sub-chunk */
   parentName?: string | undefined;
+  /** Direct superclass name from extends clause */
+  superclass?: string | undefined;
+  /** Interfaces/traits this class implements */
+  interfaces?: string[] | undefined;
+  /** True if this is an inner/nested class */
+  isInnerClass?: boolean | undefined;
   /** Best-effort module or package root used for retrieval/reranking */
   modulePath?: string | undefined;
   /** Best-effort package or namespace name */

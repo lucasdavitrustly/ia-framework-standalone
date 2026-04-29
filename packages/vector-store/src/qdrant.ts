@@ -50,6 +50,11 @@ function toChunkPayload(value: unknown): ChunkPayload {
       ? record.exports.filter((value): value is string => typeof value === 'string')
       : [],
     parentName: typeof record.parentName === 'string' ? record.parentName : undefined,
+    superclass: typeof record.superclass === 'string' ? record.superclass : undefined,
+    interfaces: Array.isArray(record.interfaces)
+      ? record.interfaces.filter((i: unknown) => typeof i === 'string')
+      : undefined,
+    isInnerClass: typeof record.isInnerClass === 'boolean' ? record.isInnerClass : undefined,
     modulePath: typeof record.modulePath === 'string' ? record.modulePath : undefined,
     packageName: typeof record.packageName === 'string' ? record.packageName : undefined,
     layerHints: Array.isArray(record.layerHints)
