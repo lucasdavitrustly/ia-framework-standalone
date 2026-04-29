@@ -8,16 +8,16 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current Milestone: v1.2 — Chunking Tuning & Retrieval Quality
+## Current Milestone: v1.3 — RAG Quality Improvements (SHIPPED 2026-04-29)
 
-**Goal:** Push MRR past 0.7 through LLM chunking prompt engineering (better boundaries + summaries), smarter score-based result filtering (noise reduction), and dashboard tuning visibility — all benchmark-driven.
+**What shipped:**
 
-**Target features:**
-
-- LLM chunking prompt engineering — improve chunk boundary detection and prose summary quality
-- Score-based result filtering — smarter filtering to reduce irrelevant results in search output
-- Benchmark-driven validation — before/after MRR measurement on every tuning change
-- Dashboard tuning views — new visualizations for chunking quality and filtering effectiveness
+- Java AST-aware chunking at class/method boundaries with class preamble headers
+- Zero-result fallback search: semantic → hybrid → BM25 keyword chain with "did you mean?" suggestions
+- Maven multi-module dependency graph with `get_module_dependencies` MCP tool
+- RAG-to-action prompt templates for impact/change-analysis query patterns
+- Hallucination penalty calibration in benchmark judge (Hallucination Check dimension)
+- Benchmark model lock enforcement with `--strict-model` flag and `validate-models` CLI
 
 ## Requirements
 
@@ -52,18 +52,26 @@ AI that actually understands the codebase — better context means better code o
 - [x] Dashboard search page with A/B comparison, per-query metrics — v1.1
 - [x] Dashboard search history with replay, filtering, comparison — v1.1
 - [x] Dashboard analytics suite: strategy comparison, quality trends, token breakdowns — v1.1
+- [x] Mode-aware score filtering (RRF/hybrid use rank-based ~0.0 threshold, not cosine 0.3) — v1.2
+- [x] Reproducible MRR baseline with 3-run averaging and stddev reporting — v1.2
+- [x] Prompt version tracking with hash-based cache keys and `ia-framework prompt bump` CLI — v1.2
+- [x] Chunk overlap/gap detection auto-wired into LLM chunking pipeline — v1.2
+- [x] LLM chunking prompt with few-shot examples, class grouping rules, 5-line minimum — v1.2
+- [x] Chunk summary quality scoring (0-100 heuristic stored as Qdrant metadata) — v1.2
+- [x] `ia-framework prompt compare` CLI for side-by-side MRR delta across prompt versions — v1.2
+- [x] Dashboard Tuning page: ChunkInspector, PromptVersionChart, Score Distribution histogram — v1.2
+- [x] Java AST-aware chunking at class/method boundaries with class preamble context — v1.3
+- [x] Zero-result fallback search: semantic → hybrid → BM25 keyword chain with suggestions — v1.3
+- [x] Maven multi-module dependency graph with `get_module_dependencies` MCP tool — v1.3
+- [x] RAG-to-action prompt templates for impact/change-analysis query patterns — v1.3
+- [x] Hallucination Check dimension in benchmark judge (penalizes fabricated entities) — v1.3
+- [x] Benchmark model lock enforcement with `--strict-model` and `validate-models` CLI — v1.3
 
 ### Active
 
-<!-- v1.2 scope — building toward these. -->
+<!-- Next milestone scope — TBD. -->
 
-- [ ] LLM chunking prompt engineering for better chunk boundary detection
-- [ ] LLM chunking prompt engineering for higher-quality prose summaries
-- [ ] Score-based result filtering improvements to reduce search noise
-- [ ] Benchmark-driven validation of every tuning change (before/after MRR)
-- [ ] Dashboard tuning views for chunking quality visibility
-- [ ] Dashboard tuning views for filtering effectiveness visibility
-- [ ] RAG quality target: MRR > 0.7 through systematic optimization
+- [ ] Planning next milestone
 
 ### Out of Scope
 
@@ -81,13 +89,15 @@ AI that actually understands the codebase — better context means better code o
 
 The problem: developers using AI to build features in large codebases get poor results because the AI lacks context about the project's architecture, patterns, and conventions. Developers compensate by manually feeding context, which is tedious and still produces code that doesn't fit the project's style.
 
-This framework solves the context problem through local RAG — the codebase is indexed with AST-aware parsing, stored in Qdrant, and retrieved automatically when the developer prompts for features. The retrieval uses semantic search first, then expands to dependency graph to ensure the AI sees not just relevant code but also the types, interfaces, and utilities it depends on.
+This framework solves the context problem through local RAG — the codebase is indexed with AST-aware parsing (TypeScript, Python, Java), stored in Qdrant, and retrieved automatically when the developer prompts for features. The retrieval uses semantic search first, then expands to dependency graph, and now includes zero-result fallback (semantic → hybrid → BM25 keyword chain) and RAG-to-action prompt templates for impact analysis queries.
 
 The framework is distributed as a git repo. Developers clone it anywhere and run `./install.sh`, which asks for the target project path, detects the project profile (language, framework, test runner, commands), sets up Qdrant in Docker, indexes the codebase, and configures OpenCode integration. The framework lives outside the target project — it points at codebases but never installs itself inside them. GSD workflows run in the target project's working directory, and all GSD artifacts (.planning/, AGENTS.md) are committed to the target project's repo.
 
-The monitoring dashboard (also Docker) provides visibility into indexing health, token consumption, and — critically — RAG quality benchmarks. When developers change the embedding model or chunking strategy, they can run end-to-end benchmarks that measure whether AI output actually compiles and passes tests, then see the score trend over time.
+The monitoring dashboard (also Docker) provides visibility into indexing health, token consumption, and RAG quality benchmarks. v1.2 added a dedicated Tuning page with ChunkInspector, score distribution histograms, and prompt version comparison charts. The benchmark system now supports model lock enforcement (`--strict-model`) to prevent contaminated benchmark results.
 
-**Target:** Internal tool for one specific large project. Built to be reusable but not generalized yet.
+**Current state (v1.3 complete):** 27 phases, 74 plans shipped across 4 milestones. Java/Spring Boot target projects now supported with AST-aware Java chunking, Maven dependency graphs, and Maven module-aware search filtering.
+
+**Target:** Internal tool for one specific large project (Java/Spring Boot payment gateway). Built to be reusable but not generalized yet.
 
 **Primary interface:** OpenCode — the framework provides infrastructure (RAG, MCP servers), OpenCode provides the AI interaction layer.
 
@@ -126,6 +136,14 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 | LLM chunking: opt-in enhancement, not AST replacement       | Mean latency ~24.6s/file → 205+ min for 500 files; AST remains the fast default path                                                                                | ✅ Validated — Phase 12 spike                  |
 | clampedPow2 numCtx auto-sizing                              | Fixed 32K KV cache wastes VRAM on small files; dynamic sizing = 4-5x memory efficiency                                                                              | ✅ Validated — Phase 12 spike                  |
 | DependencyGraph.getNeighborFiles sync/async mismatch        | DependencyGraph returns sync string[]; SearchEngineConfig expects async — wrapped with Promise.resolve() adapter in server.ts rather than modifying DependencyGraph | ✅ Validated — Phase 16: dashboard-search      |
+| Mode-aware score thresholds (P0 fix)                        | RRF/hybrid return rank-based scores (0.01-0.03) — applying cosine threshold 0.3 silently dropped ALL results; fixed with mode-specific defaults (0.0 for RRF)       | ✅ Validated — Phase 19                        |
+| Prompt version in cache key                                 | hash:model format couldn't distinguish prompt changes; extended to hash:model:version to enable controlled A/B experiments                                          | ✅ Validated — Phase 19                        |
+| Few-shot examples via configurable file loader              | Hardcoded examples in prompt string = uneditable; separate JSON file loaded at runtime = user-configurable without forking                                          | ✅ Validated — Phase 20                        |
+| Java class preamble in each method chunk                    | Method chunks without class context are meaningless in isolation; prepending package+imports+class signature makes each chunk self-contained                        | ✅ Validated — Phase 22                        |
+| Semantic → hybrid → BM25 fallback chain                     | Zero results from semantic = confusing blank response; cascading fallback with keyword suggestions degrades gracefully                                              | ✅ Validated — Phase 23                        |
+| fast-xml-parser for POM parsing                             | DOMParser unavailable in Node.js; fast-xml-parser is zero-dependency, handles Maven namespace quirks                                                                | ✅ Validated — Phase 24                        |
+| Hallucination Check as 0/5 binary dimension                 | Partial credit for hallucinations muddies the signal; binary zero for any fabricated entity makes the penalty unambiguous                                           | ✅ Validated — Phase 26                        |
+| Model lock enforcement as opt-in `--strict-model` flag      | Always-abort would break iterative workflows; opt-in flag serves CI use case without disrupting normal development                                                  | ✅ Validated — Phase 27                        |
 
 ## Evolution
 
@@ -148,4 +166,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-28 — Phase 24 complete: Maven multi-module dependency graph traversal with MCP tool_
+_Last updated: 2026-04-29 after v1.2 + v1.3 milestones_

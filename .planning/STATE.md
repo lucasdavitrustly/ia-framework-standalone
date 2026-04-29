@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Chunking Tuning & Retrieval Quality
-status: unknown
-stopped_at: Completed 27-03-PLAN.md
-last_updated: "2026-04-29T14:08:37.511Z"
+milestone: v1.3
+milestone_name: RAG Quality Improvements
+status: complete
+stopped_at: Milestone v1.3 complete
+last_updated: '2026-04-29'
 last_activity: 2026-04-29
 progress:
   total_phases: 27
@@ -17,46 +17,29 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-22)
+See: .planning/PROJECT.md (updated 2026-04-29)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 27 — benchmark-model-lock-enforcement
+**Current focus:** Planning next milestone (v1.4)
 
 ## Current Position
 
-Phase: 27
-Plan: Not started
+Milestone v1.3 complete. All 27 phases, 74 plans shipped across 4 milestones (v1.0–v1.3).
 
-## v1.0 Performance Summary
+Next step: `/gsd-new-milestone` to plan v1.4.
 
-**Velocity (v1.0):**
+## Velocity Summary
 
-- Total phases: 11
-- Total plans completed: 34
-- Average duration: ~14 min/plan
-- Total execution time: ~7 hours
-
-## v1.1 Performance Summary
-
-**Velocity (v1.1):**
-
-- Total phases: 7
-- Total plans completed: 17 (+ 2 context/summary files)
-- Phases: 12 → 13 → 14 → 15 → 16 → 17 → 18
+**v1.0:** 11 phases, 34 plans, ~14 min/plan, ~7 hours total
+**v1.1:** 7 phases, 17 plans
+**v1.2:** 3 phases (phases 19–21)
+**v1.3:** 6 phases (phases 22–27), 13 plans, ~6 min/plan avg
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-
-**Carried from v1.1 (still relevant for v1.2):**
-
-- [Phase 11]: MCP default scoreThreshold 0.3 — THIS IS THE BUG (cosine threshold applied to RRF rank scores)
-- [Phase 14]: Content-hash cache key is SHA-256(fileContent):modelName for per-model cache isolation
-- [Phase 14]: Collection routing uses suffix pattern ({project}-llm)
-- [Phase 15]: Over-fetch with limit\*2 per engine before RRF
-- [Phase 18]: Score bucketing uses floor(rr \* 10) with rr >= 1.0 clamped to bucket 9
+All decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
@@ -64,8 +47,7 @@ None.
 
 ### Blockers/Concerns
 
-- RRF score threshold bug (BASE-01/FILT-01) is actively harming search — P0 fix in Phase 19
-- Risk of overfitting to 30-query corpus — consider holdout validation set
+None.
 
 ### Quick Tasks Completed
 
@@ -76,5 +58,5 @@ None.
 ## Session Continuity
 
 Last activity: 2026-04-29
-Stopped at: Completed 27-03-PLAN.md
+Stopped at: Milestone v1.3 complete — ready for v1.4 planning
 Resume file: None
