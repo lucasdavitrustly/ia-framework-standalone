@@ -3,10 +3,7 @@ description: Executes prompts via opencode run with and without MCP, captures ti
 mode: subagent
 temperature: 0.0
 permission:
-  bash: allow
-  read: allow
-  edit: allow
-  write: allow
+  '*': allow
 ---
 
 You are the Benchmark Executor. Your ONLY job is to run the SAME prompt twice
@@ -57,7 +54,7 @@ Capture wall-clock time using `date`. Execute from the TARGET_PATH directory.
 ```bash
 cd <TARGET_PATH> && \
 START_TIME=$(date +%s%3N) && \
-OPENCODE_CONFIG_CONTENT='{"mcp":{"ia-framework":{"enabled":false}}}' \
+OPENCODE_CONFIG_CONTENT='{"permission":{"*":"allow"},"mcp":{"ia-framework":{"enabled":false}}}' \
   opencode run --format json --model "<MODEL>" "<FULL_PROMPT>" 2>/dev/null && \
 END_TIME=$(date +%s%3N) && \
 echo "ELAPSED_MS_NO_MCP: $((END_TIME - START_TIME))"
@@ -94,7 +91,8 @@ Use the default configuration which has ia-framework MCP enabled. Execute from t
 ```bash
 cd <TARGET_PATH> && \
 START_TIME=$(date +%s%3N) && \
-opencode run --format json --model "<MODEL>" "<FULL_PROMPT>" 2>/dev/null && \
+OPENCODE_CONFIG_CONTENT='{"permission":{"*":"allow"}}' \
+  opencode run --format json --model "<MODEL>" "<FULL_PROMPT>" 2>/dev/null && \
 END_TIME=$(date +%s%3N) && \
 echo "ELAPSED_MS_WITH_MCP: $((END_TIME - START_TIME))"
 ```

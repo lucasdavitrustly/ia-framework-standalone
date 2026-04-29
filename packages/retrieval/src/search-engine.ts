@@ -430,10 +430,17 @@ export class SearchEngine {
       filter: query.filter,
     });
 
-    return rerankResults(
+    const reranked = rerankResults(
       results.map((raw) => toRetrievalResult(raw, 'both')),
       query,
     );
+
+    // Post-retrieval RRF threshold: filter out low-relevance results.
+    // RRF scores are rank-based (~0.01–0.03), not cosine (~0–1).
+    // query.scoreThreshold overrides config, which defaults to 0.015.
+    const rrfThreshold = query.scoreThreshold ?? this.config.defaultRrfScoreThreshold ?? 0.015;
+
+    return reranked.filter((r) => r.score >= rrfThreshold);
   }
 }
 
