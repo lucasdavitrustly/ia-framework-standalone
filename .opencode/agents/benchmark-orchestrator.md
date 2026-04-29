@@ -3,13 +3,7 @@ description: Orchestrates RAG benchmark - coordinates executor, judge, and repor
 mode: primary
 temperature: 0.1
 permission:
-  bash: allow
-  read: allow
-  edit: allow
-  write: allow
-  task: allow
-  skill: allow
-  question: allow
+  '*': allow
 ---
 
 You are the RAG Benchmark Orchestrator. You coordinate a rigorous A/B comparison

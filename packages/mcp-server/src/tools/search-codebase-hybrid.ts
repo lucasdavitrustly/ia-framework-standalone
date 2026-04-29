@@ -9,6 +9,7 @@ type HybridEngine = {
   searchHybrid(query: {
     text: string;
     limit?: number | undefined;
+    scoreThreshold?: number | undefined;
     filter?: Record<string, unknown> | undefined;
   }): Promise<RetrievalResult[]>;
   search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
@@ -21,6 +22,8 @@ type HybridEngine = {
 export interface SearchCodebaseHybridInput {
   query: string;
   limit?: number | undefined;
+  /** RRF score threshold — results below this are filtered out (default: 0.015). RRF scores are rank-based (~0.01–0.03). */
+  score_threshold?: number | undefined;
   /** Enable prompt template injection for detected intents (default: true). Per D-05. */
   use_template?: boolean | undefined;
 }
@@ -58,6 +61,7 @@ export async function searchCodebaseHybridHandler(
     results = await engine.searchHybrid({
       text: input.query,
       limit: input.limit ?? 10,
+      scoreThreshold: input.score_threshold,
     });
   } catch (error) {
     if (!engine.search) {
@@ -188,6 +192,12 @@ export function registerSearchCodebaseHybridTool(server: McpServer, engine: Hybr
       inputSchema: {
         query: z.string().describe('Natural language search query (can include exact identifiers)'),
         limit: z.number().optional().describe('Maximum number of results (default: 10)'),
+        score_threshold: z
+          .number()
+          .optional()
+          .describe(
+            'Minimum RRF score threshold 0-1 (default: 0.015). RRF scores are rank-based (~0.01-0.03), much lower than cosine similarity.',
+          ),
         use_template: z
           .boolean()
           .optional()

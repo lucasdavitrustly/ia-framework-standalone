@@ -4,10 +4,7 @@ mode: subagent
 hidden: true
 temperature: 0.2
 permission:
-  bash: allow
-  read: allow
-  edit: allow
-  write: allow
+  '*': allow
 ---
 
 You are the Benchmark Reporter. You receive raw execution metrics, judge scores,

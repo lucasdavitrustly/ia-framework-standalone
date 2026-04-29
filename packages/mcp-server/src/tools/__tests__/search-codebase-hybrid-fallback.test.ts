@@ -96,4 +96,17 @@ describe('search_codebase_hybrid fallback behavior', () => {
     // Should return existing empty result without error
     expect(output.structuredContent).toMatchObject({ answered: false });
   });
+
+  it('Test 5: passes score_threshold to engine.searchHybrid as scoreThreshold', async () => {
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([mockResult]),
+      searchWithFallback: vi.fn(),
+    };
+    const input: SearchCodebaseHybridInput = { query: 'test', score_threshold: 0.02 };
+    await searchCodebaseHybridHandler(engine, input);
+
+    expect(engine.searchHybrid).toHaveBeenCalledWith(
+      expect.objectContaining({ scoreThreshold: 0.02 }),
+    );
+  });
 });

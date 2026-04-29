@@ -162,6 +162,8 @@ export interface SearchEngineConfig {
   defaultLimit?: number | undefined;
   /** Default score threshold (default: 0.5) */
   defaultScoreThreshold?: number | undefined;
+  /** Default RRF score threshold for hybrid search (default: 0.015). RRF scores are rank-based (~0.01–0.03), not cosine. */
+  defaultRrfScoreThreshold?: number | undefined;
   /** Optional dependency graph for expanding results along import edges */
   dependencyGraph?:
     | {

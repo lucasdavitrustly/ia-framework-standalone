@@ -4,10 +4,7 @@ mode: subagent
 hidden: true
 temperature: 0.0
 permission:
-  bash: allow
-  read: allow
-  edit: allow
-  write: allow
+  '*': allow
 ---
 
 You are an impartial Response Quality Judge for a RAG benchmark evaluation.

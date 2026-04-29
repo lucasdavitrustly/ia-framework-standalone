@@ -8,7 +8,13 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current Milestone: v1.3 — RAG Quality Improvements (SHIPPED 2026-04-29)
+## Current Milestone: v1.4 — RAG Quality Improvements, Benchmark-Driven
+
+**Goal:** Eliminate benchmark regressions and amplify MCP quality wins through smarter retrieval.
+
+**Phases:** 5 (Relevance Threshold → Hierarchy Chunking → Doc Indexing → Query Classification → Adaptive Depth)
+
+## Previous Milestone: v1.3 — RAG Quality Improvements (SHIPPED 2026-04-29)
 
 **What shipped:**
 
@@ -69,9 +75,13 @@ AI that actually understands the codebase — better context means better code o
 
 ### Active
 
-<!-- Next milestone scope — TBD. -->
+<!-- v1.4 scope — RAG Quality Improvements (Benchmark-Driven) -->
 
-- [ ] Planning next milestone
+- [ ] Relevance threshold with empty-result signaling (REL-01, REL-02, REL-03)
+- [ ] Hierarchy-aware chunking for class trees (HIER-01, HIER-02, HIER-03, HIER-04)
+- [ ] Index architecture docs with boosted weight (DOC-01, DOC-02, DOC-03)
+- [ ] Query intent classification (QCLS-01, QCLS-02, QCLS-03, QCLS-04, QCLS-05)
+- [ ] Adaptive retrieval depth (ADAPT-01, ADAPT-02, ADAPT-03, ADAPT-04, ADAPT-05)
 
 ### Out of Scope
 
