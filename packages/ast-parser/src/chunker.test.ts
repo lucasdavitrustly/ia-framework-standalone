@@ -680,3 +680,105 @@ public class OrderController {
     expect(allContent).toContain('@PostMapping');
   });
 });
+
+describe('parseFile — Java hierarchy extraction', () => {
+  it('extracts superclass from class extends', async () => {
+    const filePath = await makeFile(
+      'PaymentService.java',
+      `
+public class PaymentService extends BaseService {
+    public void process() {}
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'PaymentService');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('BaseService');
+  });
+
+  it('extracts superclass and interfaces from class extends + implements', async () => {
+    const filePath = await makeFile(
+      'OrderService.java',
+      `
+public class OrderService extends BaseService implements Serializable, Auditable {
+    public void process() {}
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'OrderService');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('BaseService');
+    expect(cls!.interfaces).toEqual(['Serializable', 'Auditable']);
+  });
+
+  it('marks nested inner class with isInnerClass=true and parentName of outer class', async () => {
+    const filePath = await makeFile(
+      'Outer.java',
+      `
+public class Outer {
+    public class Inner {
+        public void doThing() {}
+    }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const inner = chunks.find((c) => c.chunkType === 'class' && c.name === 'Inner');
+    expect(inner).toBeDefined();
+    expect(inner!.isInnerClass).toBe(true);
+    expect(inner!.parentName).toBe('Outer');
+  });
+
+  it('extracts superclass for exception class', async () => {
+    const filePath = await makeFile(
+      'PaymentException.java',
+      `
+public class PaymentException extends DomainException {
+    public PaymentException(String msg) { super(msg); }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('DomainException');
+  });
+
+  it('extracts interfaces from interface extends clause', async () => {
+    const filePath = await makeFile(
+      'Foo.java',
+      `
+public interface Foo extends Bar, Baz {
+    void doFoo();
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const iface = chunks.find((c) => c.chunkType === 'interface' && c.name === 'Foo');
+    expect(iface).toBeDefined();
+    expect(iface!.interfaces).toEqual(expect.arrayContaining(['Bar', 'Baz']));
+  });
+
+  it('strips generic parameters from superclass name', async () => {
+    const filePath = await makeFile(
+      'GenericService.java',
+      `
+public class GenericService extends Base<String> {
+    public void process() {}
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.superclass).toBe('Base');
+  });
+});
