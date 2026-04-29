@@ -34,6 +34,44 @@ function getNodeName(node: Parser.SyntaxNode): string | undefined {
   return nameNode?.text;
 }
 
+/**
+ * Extract the superclass name from a class_declaration node.
+ * Handles both simple type_identifier and generic_type (strips type params).
+ */
+function extractSuperclass(node: Parser.SyntaxNode): string | undefined {
+  const superclassField = node.childForFieldName('superclass');
+  if (!superclassField) return undefined;
+  // superclass field child is either type_identifier or generic_type
+  for (const child of superclassField.children) {
+    if (child.type === 'type_identifier') return child.text;
+    if (child.type === 'generic_type') {
+      // generic_type has type_identifier as first child
+      const typeId = child.children.find((c) => c.type === 'type_identifier');
+      if (typeId) return typeId.text;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Extract implemented interfaces from a class_declaration (super_interfaces field)
+ * or extended interfaces from an interface_declaration (extends_interfaces field).
+ */
+function extractInterfaces(node: Parser.SyntaxNode): string[] | undefined {
+  // class_declaration: super_interfaces field
+  // interface_declaration: extends_interfaces field
+  const fieldNode =
+    node.childForFieldName('interfaces') ?? // super_interfaces uses field 'interfaces'
+    node.children.find((c) => c.type === 'super_interfaces' || c.type === 'extends_interfaces');
+  if (!fieldNode) return undefined;
+
+  const typeList = fieldNode.children.find((c) => c.type === 'type_list');
+  if (!typeList) return undefined;
+
+  const names = typeList.children.filter((c) => c.type === 'type_identifier').map((c) => c.text);
+  return names.length > 0 ? names : undefined;
+}
+
 function extractImports(rootNode: Parser.SyntaxNode): string[] {
   const imports: string[] = [];
   for (const child of rootNode.children) {
@@ -177,6 +215,11 @@ function collectDeclarations(
       parentName = enclosingName;
     }
 
+    // Inner class (top-level declaration inside another class) gets parentName from enclosing
+    if (isTopLevel && enclosingName) {
+      parentName = enclosingName;
+    }
+
     chunks.push({
       id: makeChunkId(filePath, startLine, endLine),
       filePath,
@@ -190,6 +233,20 @@ function collectDeclarations(
       imports: allImports,
       exports: name ? [name] : [],
       parentName,
+      ...(isTopLevel &&
+      (targetNode.type === 'class_declaration' || targetNode.type === 'record_declaration')
+        ? {
+            superclass: extractSuperclass(targetNode),
+            interfaces: extractInterfaces(targetNode),
+            isInnerClass: enclosingName != null ? true : undefined,
+          }
+        : {}),
+      ...(isTopLevel && targetNode.type === 'interface_declaration'
+        ? {
+            interfaces: extractInterfaces(targetNode),
+            isInnerClass: enclosingName != null ? true : undefined,
+          }
+        : {}),
     });
 
     // Recurse into class/interface bodies for inner declarations — pass enclosing context
