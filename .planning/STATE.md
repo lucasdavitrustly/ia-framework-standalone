@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-04-29T18:50:38.228Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-04-29T18:59:55.991Z"
 last_activity: 2026-04-29
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 17
-  completed_plans: 16
+  completed_plans: 17
 ---
 
 # Project State
@@ -43,6 +43,8 @@ All decisions are logged in PROJECT.md Key Decisions table.
 
 - RRF threshold default 0.015 — post-retrieval filtering (Qdrant doesn't support server-side RRF threshold)
 - Rerank bonuses apply before threshold — boosted chunks survive
+- [Phase 02]: Engine.scrollForHierarchy is optional to avoid breaking existing Engine implementations
+- [Phase 02]: expandHierarchy uses BFS deduplication by chunkId to prevent cycles and duplicate results
 
 ### Pending Todos
 
@@ -61,5 +63,5 @@ None.
 ## Session Continuity
 
 Last activity: 2026-04-29
-Stopped at: Completed 02-01-PLAN.md
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None

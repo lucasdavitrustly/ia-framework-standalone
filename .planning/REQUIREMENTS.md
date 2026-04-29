@@ -49,9 +49,9 @@ Benchmark A/B analysis (MCP vs without-MCP) showed +5% quality gain with +21% to
 | REL-02      | Phase 1 | Pending |
 | REL-03      | Phase 1 | Pending |
 | HIER-01     | Phase 2 | Complete |
-| HIER-02     | Phase 2 | Pending |
+| HIER-02     | Phase 2 | Complete |
 | HIER-03     | Phase 2 | Complete |
-| HIER-04     | Phase 2 | Pending |
+| HIER-04     | Phase 2 | Complete |
 | DOC-01      | Phase 3 | Pending |
 | DOC-02      | Phase 3 | Pending |
 | DOC-03      | Phase 3 | Pending |
