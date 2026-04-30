@@ -145,26 +145,37 @@ function extractClassMembers(
 
   const members: CodeChunk[] = [];
 
-  for (const member of classBody.children) {
+  for (let i = 0; i < classBody.children.length; i++) {
+    const member = classBody.children[i]!;
     if (!CLASS_MEMBER_TYPES.has(member.type)) continue;
 
-    const startLine = member.startPosition.row + 1;
     const endLine = member.endPosition.row + 1;
-    const content = sourceLines.slice(startLine - 1, endLine).join('\n');
+
+    // Decorators appear as sibling nodes immediately preceding the method in the class body
+    let effectiveStart = member.startPosition.row + 1;
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = classBody.children[j]!;
+      if (prev.type === 'decorator') {
+        effectiveStart = prev.startPosition.row + 1;
+      } else if (prev.type !== '{') {
+        break;
+      }
+    }
+    const content = sourceLines.slice(effectiveStart - 1, endLine).join('\n');
 
     const memberName = getNodeName(member);
     const chunkType: CodeChunk['chunkType'] =
       member.type === 'method_definition' ? 'function' : 'other';
 
     members.push({
-      id: makeChunkId(filePath, startLine, endLine),
+      id: makeChunkId(filePath, effectiveStart, endLine),
       filePath,
       relativePath,
       language,
       chunkType,
       name: memberName,
       content,
-      startLine,
+      startLine: effectiveStart,
       endLine,
       imports: allImports,
       exports: [],
@@ -214,7 +225,18 @@ export function parseTypeScript(
     hasDeclarations = true;
     const startLine = child.startPosition.row + 1; // 1-indexed
     const endLine = child.endPosition.row + 1; // 1-indexed
-    const content = lines.slice(startLine - 1, endLine).join('\n');
+
+    // Include decorators: in tree-sitter-typescript, decorators are children of the
+    // export_statement wrapper or the declaration node itself
+    let effectiveStartLine = startLine;
+    const exportDecorators = child.children.filter((c) => c.type === 'decorator');
+    const targetDecorators = targetNode.children.filter((c) => c.type === 'decorator');
+    const allDecorators = [...exportDecorators, ...targetDecorators];
+    if (allDecorators.length > 0) {
+      const firstDecoratorLine = Math.min(...allDecorators.map((d) => d.startPosition.row + 1));
+      effectiveStartLine = Math.min(effectiveStartLine, firstDecoratorLine);
+    }
+    const content = lines.slice(effectiveStartLine - 1, endLine).join('\n');
 
     const chunkType: CodeChunk['chunkType'] = CHUNK_TYPE_MAP[targetNode.type] ?? 'other';
     const name = getNodeName(targetNode);
@@ -228,14 +250,14 @@ export function parseTypeScript(
     const heritage = isClassOrInterface ? extractHeritage(targetNode) : {};
 
     chunks.push({
-      id: makeChunkId(filePath, startLine, endLine),
+      id: makeChunkId(filePath, effectiveStartLine, endLine),
       filePath,
       relativePath,
       language,
       chunkType,
       name,
       content,
-      startLine,
+      startLine: effectiveStartLine,
       endLine,
       imports: allImports,
       exports: chunkExports,

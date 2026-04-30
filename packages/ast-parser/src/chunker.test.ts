@@ -816,7 +816,80 @@ class UserService extends BaseService implements Logger, Auditable {
     expect(cls!.superclass).toBe('BaseService');
     expect(cls!.interfaces).toEqual(['Logger', 'Auditable']);
   });
+});
 
+describe('parseFile - TypeScript decorator inclusion', () => {
+  it('class with @Injectable() decorator produces a chunk containing the decorator text', async () => {
+    const filePath = await makeFile(
+      'user-service.ts',
+      `
+@Injectable()
+export class UserService {
+  constructor(private readonly repo: UserRepository) {}
+
+  findAll(): User[] {
+    return this.repo.findAll();
+  }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.content).toContain('@Injectable()');
+  });
+
+  it('class with @Controller and @Injectable decorators produces a chunk containing both', async () => {
+    const filePath = await makeFile(
+      'api-controller.ts',
+      `
+@Controller('/api')
+@Injectable()
+export class ApiController {
+  getHealth(): string { return 'ok'; }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class');
+    expect(cls).toBeDefined();
+    expect(cls!.content).toContain('@Controller');
+    expect(cls!.content).toContain('@Injectable()');
+  });
+
+  it('method with @Get() decorator produces a sub-chunk containing the decorator text', async () => {
+    const filePath = await makeFile(
+      'users-controller.ts',
+      `
+@Controller('/users')
+export class UsersController {
+  @Get('/all')
+  async getAll(): Promise<User[]> {
+    return [];
+  }
+
+  @Post('/create')
+  async create(@Body() dto: CreateUserDto): Promise<User> {
+    return {} as User;
+  }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const getChunk = chunks.find((c) => c.name === 'getAll');
+    expect(getChunk).toBeDefined();
+    expect(getChunk!.content).toContain('@Get');
+
+    const postChunk = chunks.find((c) => c.name === 'create');
+    expect(postChunk).toBeDefined();
+    expect(postChunk!.content).toContain('@Post');
+  });
+});
+
+describe('parseFile — TypeScript hierarchy extraction (extended)', () => {
   it('extracts interfaces from TypeScript interface extends', async () => {
     const filePath = await makeFile(
       'ExtendedUser.ts',

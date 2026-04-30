@@ -50,3 +50,44 @@ Correct chunking output:
 ```
 
 Why this is correct: The entire `OrderService` class — constructor, `createOrder`, `updateStatus`, and the private helper `validateCart` — forms a single cohesive unit. Splitting it would orphan methods from their class context.
+
+## GOOD boundary example: Spring AOP @Aspect class kept as single chunk
+
+Input source (lines 1-18):
+
+```java
+ 1: @Aspect
+ 2: @Component
+ 3: public class AuditAspect {
+ 4:
+ 5:     @Around("execution(* com.example.service.*.*(..))")
+ 6:     public Object auditServiceCall(ProceedingJoinPoint jp) throws Throwable {
+ 7:         long start = System.currentTimeMillis();
+ 8:         Object result = jp.proceed();
+ 9:         long elapsed = System.currentTimeMillis() - start;
+10:         log.info("Method {} took {}ms", jp.getSignature().getName(), elapsed);
+11:         return result;
+12:     }
+13:
+14:     @Before("@annotation(com.example.Auditable)")
+15:     public void beforeAuditable(JoinPoint jp) {
+16:         log.info("Entering auditable method: {}", jp.getSignature());
+17:     }
+18: }
+```
+
+Correct chunking output:
+
+```json
+{
+  "chunks": [
+    {
+      "startLine": 1,
+      "endLine": 18,
+      "summary": "Implements AOP audit aspect that logs execution time for all service methods and records entry for @Auditable-annotated methods via Spring pointcut expressions"
+    }
+  ]
+}
+```
+
+Why: The @Aspect class, its @Around and @Before advice, and the pointcut expressions form a single cross-cutting concern. Splitting advice methods into separate chunks loses the relationship between the aspect declaration and the join point interception logic.

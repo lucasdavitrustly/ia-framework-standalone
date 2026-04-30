@@ -109,6 +109,7 @@ BAD summaries (DO NOT write these):
 - A class and all its methods MUST be a single chunk. Never split a class across chunks.
 - If a class exceeds 200 lines, split into logical method groups (e.g., command handlers vs query handlers, lifecycle methods vs business logic, public API vs private helpers). Always prefix each sub-chunk summary with the class name.
 - Minimum chunk size: 5 lines. Do not create chunks smaller than 5 lines — merge them with adjacent context.
+- Never split a decorator or annotation from the method or class it annotates. If a method has @Transactional @CacheEvict, the annotations MUST appear in the same chunk as the method signature and body. If a class has @Aspect @Component, those annotations MUST be in the class chunk.
 - Summaries MUST use domain terminology: payment, transfer, settlement, processor, adapter, command, query, event, routing, validation, reconciliation, batch, callback, etc.
 - Summaries MUST describe PURPOSE and BEHAVIOR, not syntax structure.
 - Do NOT include import/export analysis — only semantic boundaries and prose summaries.
