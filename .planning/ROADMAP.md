@@ -115,7 +115,7 @@ Plans:
 Plans:
 
 - [x] 31-01-PLAN.md — Token cap utility + config schema (TDD)
-- [ ] 31-02-PLAN.md — Wire into search handlers with budget sharing
+- [x] 31-02-PLAN.md — Wire into search handlers with budget sharing
 
 ## Progress
 
