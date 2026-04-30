@@ -519,3 +519,141 @@ describe('computeTermFrequencySparseVector', () => {
     expect(uniqueIndices.size).toBe(result.indices.length);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MMR integration tests
+// ---------------------------------------------------------------------------
+
+describe('MMR integration', () => {
+  // Shared near-identical content for order.ts chunks (high Jaccard similarity)
+  const ORDER_CONTENT = 'function processOrder orderService emit OrderEvent orderId total status';
+
+  // Distinct content for other files (low Jaccard with order.ts chunks)
+  const REPO_CONTENT = 'class OrderRepository database findById sql query fetch rows';
+  const DTO_CONTENT = 'interface OrderDTO transfer amount createdAt validation schema';
+
+  function makeMMRResult(
+    chunkId: string,
+    score: number,
+    relativePath: string,
+    content: string,
+    name: string,
+  ) {
+    return {
+      id: `uuid-${chunkId}`,
+      score,
+      vectorName: 'text' as const,
+      payload: {
+        chunkId,
+        filePath: `/project/${relativePath}`,
+        relativePath,
+        language: 'typescript',
+        chunkType: 'function',
+        name,
+        content,
+        startLine: 1,
+        endLine: 5,
+        imports: [] as string[],
+        exports: [] as string[],
+        modulePath: 'order-module',
+        packageName: undefined as string | undefined,
+        layerHints: [] as string[],
+        indexedAt: '2026-04-01T00:00:00Z',
+      },
+    };
+  }
+
+  // 4 near-identical chunks from order.ts + 2 distinct chunks from other files
+  const candidates = [
+    makeMMRResult('order-a', 0.95, 'src/services/order.ts', ORDER_CONTENT, 'processOrderA'),
+    makeMMRResult('order-b', 0.93, 'src/services/order.ts', ORDER_CONTENT, 'processOrderB'),
+    makeMMRResult('order-c', 0.91, 'src/services/order.ts', ORDER_CONTENT, 'processOrderC'),
+    makeMMRResult('order-d', 0.89, 'src/services/order.ts', ORDER_CONTENT, 'processOrderD'),
+    makeMMRResult('repo-a', 0.85, 'src/repositories/order-repo.ts', REPO_CONTENT, 'findById'),
+    makeMMRResult('dto-a', 0.82, 'src/dto/order-dto.ts', DTO_CONTENT, 'OrderDTO'),
+  ];
+
+  function makeMMRConfig(mmrEnabled: boolean | undefined): SearchEngineConfig {
+    const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+    const mockSearch = vi
+      .fn()
+      .mockResolvedValueOnce(candidates) // text vector
+      .mockResolvedValueOnce([]); // code vector (empty — no dedup needed)
+    return {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch },
+      mmrEnabled,
+      defaultLimit: 4,
+    };
+  }
+
+  function makeMMRHybridConfig(): SearchEngineConfig {
+    const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+    const mockSearchHybrid = vi.fn().mockResolvedValue(candidates);
+    const mockSearch = vi.fn().mockResolvedValue([]);
+    return {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch, searchHybrid: mockSearchHybrid },
+      mmrEnabled: true,
+      defaultLimit: 4,
+    };
+  }
+
+  test('MMR: search() with architecture query diversifies results across distinct files', async () => {
+    const cfg = makeMMRConfig(true);
+    const eng = new SearchEngine(cfg);
+
+    // "how do order services interact" → classifyQueryLambda → λ=0.5 (architecture)
+    const results = await eng.search({
+      text: 'how do order services interact',
+      limit: 4,
+    });
+
+    const uniquePaths = new Set(results.map((r) => r.relativePath));
+    // With λ=0.5, MMR penalises near-duplicate order.ts chunks → ≥2 distinct files
+    expect(uniquePaths.size).toBeGreaterThanOrEqual(2);
+    expect(results.length).toBe(4);
+  });
+
+  test('MMR disabled: search() returns results in score-descending order', async () => {
+    const cfg = makeMMRConfig(false);
+    const eng = new SearchEngine(cfg);
+
+    const results = await eng.search({ text: 'order processing', limit: 4 });
+
+    // Without MMR, rerankResults sorts by effectiveScore (≈ raw score for generic query)
+    // All order.ts chunks dominate by raw score
+    expect(results[0]!.score).toBe(0.95);
+    expect(results[1]!.score).toBe(0.93);
+    expect(results[2]!.score).toBe(0.91);
+    expect(results[3]!.score).toBe(0.89);
+    expect(results.length).toBe(4);
+  });
+
+  test('MMR: searchHybrid() with architecture query diversifies results', async () => {
+    const cfg = makeMMRHybridConfig();
+    const eng = new SearchEngine(cfg);
+
+    const results = await eng.searchHybrid({
+      text: 'how do order services interact',
+      limit: 4,
+      scoreThreshold: 0, // disable RRF threshold to include all candidates
+    });
+
+    const uniquePaths = new Set(results.map((r) => r.relativePath));
+    // MMR with λ=0.5 should pull in non-order.ts chunks
+    expect(uniquePaths.size).toBeGreaterThanOrEqual(2);
+    expect(results.length).toBe(4);
+  });
+
+  test('MMR: specific-lookup query uses λ=0.8, top result is highest-score chunk', async () => {
+    const cfg = makeMMRConfig(true);
+    const eng = new SearchEngine(cfg);
+
+    // "find OrderService class" → no architecture keywords → λ=0.8 (lookup)
+    const results = await eng.search({ text: 'find OrderService class', limit: 4 });
+
+    // With λ=0.8 (relevance dominates), the highest-score chunk (0.95) should be first
+    expect(results[0]!.score).toBe(0.95);
+  });
+});
