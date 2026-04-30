@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
-import { DependencyGraph } from './dependency-graph.js';
+import { DependencyGraph, resolveJavaImport } from './dependency-graph.js';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -164,5 +164,126 @@ describe('DependencyGraph', () => {
     const neighbors = graph.getNeighborFiles([middleware, types], 1);
     expect(neighbors).toContain(helpers);
     expect(neighbors).toContain(user);
+  });
+
+  // --- Task 1+2: edge_type, collection, nullable target_file ---
+
+  test('stores external imports with null target_file', () => {
+    const sourceFile = join(projectRoot, 'src', 'auth', 'middleware.ts');
+    // 'express' is external; './types' is local
+    graph.upsertEdges(sourceFile, ['express', '@nestjs/common', './types'], projectRoot);
+
+    const neighbors = graph.getNeighborFiles([sourceFile], 1);
+    // Only local imports appear in BFS (external are null target)
+    expect(neighbors).toHaveLength(1);
+    expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'types.ts'));
+  });
+
+  test('collection isolates edges between collections', () => {
+    const file = join(projectRoot, 'src', 'auth', 'middleware.ts');
+    const types = join(projectRoot, 'src', 'auth', 'types.ts');
+    const helpers = join(projectRoot, 'src', 'utils', 'helpers.ts');
+
+    graph.upsertEdges(file, ['./types'], projectRoot, 'col-a');
+    graph.upsertEdges(file, ['../utils/helpers'], projectRoot, 'col-b');
+
+    const neighborsA = graph.getNeighborFiles([file], 1, 'col-a');
+    expect(neighborsA).toContain(types);
+    expect(neighborsA).not.toContain(helpers);
+
+    const neighborsB = graph.getNeighborFiles([file], 1, 'col-b');
+    expect(neighborsB).toContain(helpers);
+    expect(neighborsB).not.toContain(types);
+  });
+
+  test('getDensityStats returns accurate counts', () => {
+    const middleware = join(projectRoot, 'src', 'auth', 'middleware.ts');
+    const types = join(projectRoot, 'src', 'auth', 'types.ts');
+
+    graph.upsertEdges(middleware, ['./types', 'express', 'lodash'], projectRoot, 'test-col');
+    graph.upsertEdges(types, ['../utils/helpers'], projectRoot, 'test-col');
+
+    const stats = graph.getDensityStats('test-col');
+    expect(stats.total_edges).toBe(4); // 3 from middleware + 1 from types
+    expect(stats.files_with_imports).toBe(2);
+    expect(stats.external_edges).toBe(2); // express + lodash
+  });
+
+  test('schema migration: re-initialize with old schema works', () => {
+    // This tests that initialize() is idempotent on the new schema
+    graph.initialize(); // second call — should be a no-op
+    const middleware = join(projectRoot, 'src', 'auth', 'middleware.ts');
+    graph.upsertEdges(middleware, ['./types'], projectRoot);
+    const neighbors = graph.getNeighborFiles([middleware], 1);
+    expect(neighbors).toHaveLength(1);
+  });
+});
+
+// --- Task 3: Java import resolution ---
+
+describe('resolveJavaImport', () => {
+  const manifest = [
+    '/project/src/main/java/com/example/Foo.java',
+    '/project/src/main/java/com/example/Bar.java',
+    '/project/src/main/java/org/utils/Helper.java',
+  ];
+
+  test('resolves Java package import to file path', () => {
+    const result = resolveJavaImport('com.example.Foo', manifest);
+    expect(result).toBe('/project/src/main/java/com/example/Foo.java');
+  });
+
+  test('resolves nested package import', () => {
+    const result = resolveJavaImport('org.utils.Helper', manifest);
+    expect(result).toBe('/project/src/main/java/org/utils/Helper.java');
+  });
+
+  test('returns null for unknown Java import', () => {
+    const result = resolveJavaImport('com.example.Unknown', manifest);
+    expect(result).toBeNull();
+  });
+
+  test('returns null for relative imports', () => {
+    expect(resolveJavaImport('./Foo', manifest)).toBeNull();
+  });
+
+  test('returns null for non-package strings (no dot)', () => {
+    expect(resolveJavaImport('Foo', manifest)).toBeNull();
+  });
+
+  test('upsertEdgesWithJava resolves Java imports', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'java-graph-'));
+    const dbPath = join(tmpDir, 'graph.sqlite');
+    const projectRoot = join(tmpDir, 'project');
+
+    mkdirSync(join(projectRoot, 'src', 'main', 'java', 'com', 'example'), { recursive: true });
+    writeFileSync(join(projectRoot, 'src', 'main', 'java', 'com', 'example', 'Foo.java'), '');
+    writeFileSync(join(projectRoot, 'src', 'main', 'java', 'com', 'example', 'Bar.java'), '');
+
+    const g = new DependencyGraph({ dbPath });
+    g.initialize();
+
+    const sourceFile = join(projectRoot, 'src', 'main', 'java', 'com', 'example', 'Main.java');
+    writeFileSync(sourceFile, '');
+
+    const fooPath = join(projectRoot, 'src', 'main', 'java', 'com', 'example', 'Foo.java');
+    const barPath = join(projectRoot, 'src', 'main', 'java', 'com', 'example', 'Bar.java');
+    const fileManifest = [fooPath, barPath];
+
+    g.upsertEdgesWithJava(
+      sourceFile,
+      ['com.example.Foo', 'com.example.Bar', 'java.util.List'],
+      projectRoot,
+      fileManifest,
+    );
+
+    const neighbors = g.getNeighborFiles([sourceFile], 1);
+    expect(neighbors).toContain(fooPath);
+    expect(neighbors).toContain(barPath);
+    // java.util.List is unresolvable → external (null target), not in BFS
+    expect(neighbors).toHaveLength(2);
+
+    g.close();
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });
