@@ -98,6 +98,25 @@ Plans:
 - [x] 30-02-PLAN.md — TypeScript decorators + LLM prompt rules
 - [x] 30-03-PLAN.md — Integration tests for decorator/aspect chunking
 
+### Phase 31: Dynamic Retrieval Cost Cap
+
+**Goal**: Prevent over-retrieval by adding a soft token budget cap to search tool calls
+**Depends on**: Phase 30
+**Requirements**: None (internal improvement)
+**Success Criteria** (what must be TRUE):
+
+1. Search tool calls return at most ~6000 tokens of chunk content by default
+2. Lowest-ranked results are trimmed when budget exceeded
+3. Response metadata indicates when trimming occurred
+4. expand_hops hierarchy results share budget at 70/30 split
+5. Cap is configurable via `retrieval.maxTokensPerCall` in project config
+   **Plans**: 2 plans
+
+Plans:
+
+- [ ] 31-01-PLAN.md — Token cap utility + config schema (TDD)
+- [ ] 31-02-PLAN.md — Wire into search handlers with budget sharing
+
 ## Progress
 
 | Phase                          | Plans Complete | Status      | Completed  |
