@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { IndexingConfigSchema, LlmConfigSchema } from './schema.js';
+import { IndexingConfigSchema, LlmConfigSchema, RetrievalConfigSchema } from './schema.js';
 
 describe('IndexingConfigSchema — embeddingConcurrency', () => {
   const validBase = {
@@ -81,5 +81,25 @@ describe('IndexingConfigSchema — llm section', () => {
   it('accepts IndexingConfigSchema without llm section (backward compatible)', () => {
     const result = IndexingConfigSchema.parse(validBase);
     expect(result.llm).toBeUndefined();
+  });
+});
+
+describe('RetrievalConfigSchema — maxTokensPerCall', () => {
+  it('accepts maxTokensPerCall as optional positive integer', () => {
+    const result = RetrievalConfigSchema.parse({ maxTokensPerCall: 8000 });
+    expect(result.maxTokensPerCall).toBe(8000);
+  });
+
+  it('returns undefined for maxTokensPerCall when field is omitted', () => {
+    const result = RetrievalConfigSchema.parse({});
+    expect(result.maxTokensPerCall).toBeUndefined();
+  });
+
+  it('rejects maxTokensPerCall: -1 (must be positive)', () => {
+    expect(() => RetrievalConfigSchema.parse({ maxTokensPerCall: -1 })).toThrow();
+  });
+
+  it('rejects maxTokensPerCall: 0 (must be positive)', () => {
+    expect(() => RetrievalConfigSchema.parse({ maxTokensPerCall: 0 })).toThrow();
   });
 });
