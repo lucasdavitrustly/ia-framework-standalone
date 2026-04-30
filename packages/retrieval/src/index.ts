@@ -15,3 +15,5 @@ export type {
   CollectionEngine,
   MultiCollectionSearchEngineConfig,
 } from './multi-collection-search-engine.js';
+export { mmrRerank, classifyQueryLambda, jaccardSimilarity, cosineSimilarity } from './mmr.js';
+export type { MmrOptions } from './mmr.js';

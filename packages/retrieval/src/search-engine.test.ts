@@ -389,7 +389,7 @@ describe('SearchEngine.searchHybrid', () => {
     expect(args.denseVector).toEqual([0.1, 0.2, 0.3]);
     expect(args.sparseVector.indices.length).toBeGreaterThan(0);
     expect(args.sparseVector.values.length).toBeGreaterThan(0);
-    expect(args.limit).toBe(5);
+    expect(args.limit).toBe(15); // limit(5) * mmrCandidateMultiplier(3) = 15 (over-fetch for MMR per D-06)
   });
 
   test('searchHybrid() falls back to search() when vectorStore.searchHybrid is undefined', async () => {

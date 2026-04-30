@@ -6,6 +6,7 @@ import type {
   FallbackSuggestion,
 } from './types.js';
 import { analyzeRetrievalQuery } from './query-intelligence.js';
+import { mmrRerank, classifyQueryLambda } from './mmr.js';
 
 type VectorSearchResult = {
   id: string;
@@ -154,7 +155,7 @@ export class SearchEngine {
     const { embeddingProvider, vectorStore } = this.config;
     const limit = query.limit ?? this.config.defaultLimit ?? 10;
     const scoreThreshold = query.scoreThreshold ?? this.config.defaultScoreThreshold ?? 0.3;
-    const searchLimit = limit * 2; // fetch extra to allow dedup
+    const searchLimit = limit * (this.config.mmrCandidateMultiplier ?? 3); // over-fetch for MMR (per D-06)
 
     // Embed the query once (same vector for both searches)
     const queryVector = await embeddingProvider.embed(query.text);
@@ -198,8 +199,18 @@ export class SearchEngine {
       }
     }
 
-    // Sort by score descending, cap at limit
-    return rerankResults(Array.from(merged.values()), query).slice(0, limit);
+    // Apply MMR for diversity first (uses raw .score), then domain-aware reranking — per D-04, D-08
+    const rawCandidates = [...merged.values()].sort((a, b) => b.score - a.score);
+
+    if (this.config.mmrEnabled !== false) {
+      const lambda = this.config.mmrLambda ?? classifyQueryLambda(query.text);
+      // TODO: Add pino debug log: MMR: {rawCandidates.length} candidates → {limit} results
+      const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit });
+      // Apply domain bonuses after MMR so diversity is not overridden by rerankResults
+      return rerankResults(mmrResult, query);
+    }
+
+    return rerankResults(rawCandidates, query).slice(0, limit);
   }
 
   /**
@@ -432,21 +443,26 @@ export class SearchEngine {
     const results = await vectorStore.searchHybrid({
       denseVector,
       sparseVector,
-      limit,
+      limit: limit * (this.config.mmrCandidateMultiplier ?? 3), // over-fetch for MMR (per D-06)
       filter: query.filter,
     });
 
-    const reranked = rerankResults(
-      results.map((raw) => toRetrievalResult(raw, 'both')),
-      query,
-    );
+    const rawResults = results.map((raw) => toRetrievalResult(raw, 'both'));
 
     // Post-retrieval RRF threshold: filter out low-relevance results.
     // RRF scores are rank-based (~0.01–0.03), not cosine (~0–1).
     // query.scoreThreshold overrides config, which defaults to 0.015.
     const rrfThreshold = query.scoreThreshold ?? this.config.defaultRrfScoreThreshold ?? 0.015;
+    const thresholded = rawResults.filter((r) => r.score >= rrfThreshold);
 
-    return reranked.filter((r) => r.score >= rrfThreshold);
+    // Apply MMR for diversity first (uses raw .score), then domain-aware reranking — per D-04, D-08
+    if (this.config.mmrEnabled !== false) {
+      const lambda = this.config.mmrLambda ?? classifyQueryLambda(query.text);
+      const mmrResult = mmrRerank({ candidates: thresholded, lambda, limit });
+      return rerankResults(mmrResult, query);
+    }
+
+    return rerankResults(thresholded, query);
   }
 }
 

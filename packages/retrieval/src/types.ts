@@ -172,6 +172,12 @@ export interface SearchEngineConfig {
   defaultScoreThreshold?: number | undefined;
   /** Default RRF score threshold for hybrid search (default: 0.015). RRF scores are rank-based (~0.01–0.03), not cosine. */
   defaultRrfScoreThreshold?: number | undefined;
+  /** Enable MMR diversity re-ranking (default: true). Per D-05. */
+  mmrEnabled?: boolean | undefined;
+  /** Override MMR lambda (0=max diversity, 1=relevance only). If unset, query-type-aware. Per D-02. */
+  mmrLambda?: number | undefined;
+  /** Candidate multiplier for over-fetching before MMR (default: 3). Per D-06. */
+  mmrCandidateMultiplier?: number | undefined;
   /** Optional dependency graph for expanding results along import edges */
   dependencyGraph?:
     | {
