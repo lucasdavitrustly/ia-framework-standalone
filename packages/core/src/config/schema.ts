@@ -51,6 +51,8 @@ export const RetrievalConfigSchema = z.object({
   expansionHops: z.union([z.literal(0), z.literal(1), z.literal(2)]).default(1),
   /** Top-K results for auto-context injection (v2) */
   autoContextTopK: z.number().int().min(1).max(20).default(5),
+  /** Soft token budget cap per search tool call. Results trimmed from bottom when exceeded. */
+  maxTokensPerCall: z.number().int().positive().optional(),
 });
 
 export const ProjectConfigSchema = z.object({
