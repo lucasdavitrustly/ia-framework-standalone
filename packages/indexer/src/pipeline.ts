@@ -60,8 +60,18 @@ export interface IndexingConfig {
   dependencyGraph?:
     | {
         initialize(): void;
-        upsertEdges(sourceFilePath: string, imports: string[], projectRoot: string): void;
-        deleteEdgesForFile(filePath: string): void;
+        upsertEdges(
+          sourceFilePath: string,
+          imports: string[],
+          projectRoot: string,
+          collection?: string,
+        ): void;
+        deleteEdgesForFile(filePath: string, collection?: string): void;
+        getDensityStats?(collection?: string): {
+          total_edges: number;
+          files_with_imports: number;
+          external_edges: number;
+        };
       }
     | undefined;
 }
@@ -447,6 +457,20 @@ export class IndexingPipeline {
     progress.stage = 'done';
     progress.currentFile = undefined;
     onProgress?.({ ...progress });
+
+    // Emit graph density stats if dependency graph is available
+    if (dependencyGraph?.getDensityStats) {
+      const stats = dependencyGraph.getDensityStats(collectionName);
+      logger.info(
+        {
+          collection: collectionName,
+          total_edges: stats.total_edges,
+          files_with_imports: stats.files_with_imports,
+          external_edges: stats.external_edges,
+        },
+        'Graph density stats after indexing',
+      );
+    }
 
     return {
       filesIndexed: progress.filesProcessed,
