@@ -1,5 +1,34 @@
 # Milestones
 
+## v1.4 RAG Quality Improvements (Shipped: 2026-04-30)
+
+**Phases completed:** 8 phases, 22 plans, 19 tasks
+
+**Key accomplishments:**
+
+- One-liner:
+- @ia-framework/core: shared TypeScript types, Zod-validated config loader with ConfigNotFoundError, and pino logger factory writing JSON to stderr
+- Qdrant vector database via Docker Compose with named volume persistence, health checks, and dev/prod environment split
+- Class inheritance metadata (extends/implements) extracted from Java and TypeScript ASTs into CodeChunk fields — superclass, interfaces, isInnerClass
+- Found during:
+- @ia-framework/project-detector: detectProject(path) → ProjectProfile scanning languages, frameworks, package manager, test runner, and build commands from filesystem signals
+- confirmProfile() + persistProfile() enabling developer override of detected profile and durable storage in .ia-framework/project.json with full loadConfig() round-trip
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- One-liner:
+- Task 1 — TypeScript decorator chunks:
+- Token cap utility `applyTokenCap` + `estimateTokens` implemented via TDD, with `RetrievalConfigSchema` extended to accept optional `maxTokensPerCall` positive integer
+- Both search tool handlers enforce a 6000-token soft cap with 70/30 hierarchy/direct budget split and response metadata
+
+---
+
 ## v1.4 RAG Retrieval Quality Improvements (Planned)
 
 **Goal:** Close the two regression gaps from the v1.3 benchmark run (arch-semantic, deps-cross-file) and raise overall quality score by ~10–15 pts through structural indexing improvements, smarter retrieval, and token budget discipline.

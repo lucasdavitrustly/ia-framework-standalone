@@ -2,6 +2,54 @@
 
 ---
 
+## v1.4 — RAG Quality & Token Control (2026-04-30)
+
+**Phases:** 30–31 (2 phases, 5 plans)
+**Duration:** ~1 day (2026-04-30)
+
+### What Was Built
+
+| Phase | Feature                                                                                                                                                                                                                                                          | Plans |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| 30    | Adaptive Decorator Chunking — annotation/decorator co-location in Java and TypeScript AST chunker; `@Aspect` class detection emitting single `aspect` chunks; LLM prompt anti-split rule and AOP few-shot example                                                | 3     |
+| 31    | Dynamic Retrieval Cost Cap — `estimateTokens`/`applyTokenCap` utility with minimum-1 guarantee; `maxTokensPerCall` config schema field; 70/30 direct/hierarchy budget split wired into both search handlers; `token_cap_applied` metadata in structured response | 2     |
+
+### What Worked Well
+
+**Both phases shipped fast and clean.** Phase 30 was 3 plans across the Java parser, TypeScript parser, and integration tests — each focused and atomic. Phase 31 was 2 plans: utility first, wiring second. No deviations from plan in either phase.
+
+**TDD RED-GREEN discipline on Phase 31 paid off immediately.** The token cap utility was committed as failing tests before any implementation. Because the interface was locked by tests before writing `applyTokenCap`, the wiring plan (31-02) integrated with zero surprises.
+
+**70/30 budget split was a clean design.** Separating direct result budget from hierarchy expansion budget made the token accounting straightforward and the tests easy to reason about. A flat cap would have required more test cases to cover hierarchy edge cases.
+
+**The `minimum-1` guarantee simplified callers.** `applyTokenCap` never returns an empty array — the first result always passes through even if it alone exceeds the cap. This meant the handler code needed no empty-result guard after capping.
+
+**Decorator co-location was already partially correct for TypeScript.** The `export_statement` node in tree-sitter-typescript naturally starts at the decorator line for exported classes. The Phase 30 fix only needed to handle non-exported classes, which kept the patch small.
+
+### What Was Inefficient
+
+**Phase 30 had a pre-existing test bug discovered mid-plan.** `toBe('Base')` → `toBe('BaseService')` in `chunker.test.ts` was a leftover from an earlier refactor. It didn't block the plan but added a small fix commit outside the plan scope.
+
+**`@Aspect` detection required understanding tree-sitter node shape before writing tests.** The modifiers/children traversal pattern for detecting `marker_annotation` under `class_declaration` was not obvious from the grammar. A quick WASM grammar probe step would save ~5 minutes in future phases adding new Java node type handling.
+
+### Key Lessons
+
+1. **Two-plan phase structure works well for utility + wiring patterns.** Build the utility with full tests in plan 01, wire it in plan 02. The interface contract is locked before integration begins.
+
+2. **Token estimation heuristics should be documented as decisions.** The `ceil(length/4)` heuristic (D-01) was chosen for simplicity and zero dependencies. This is the kind of decision that looks arbitrary later without a written rationale. Add to key decisions at plan time, not retro time.
+
+3. **Metadata should be emitted conditionally.** Adding `token_cap_applied` and `results_trimmed` only when trimming actually occurs keeps structured content clean for the common case (cap not hit). This pattern is worth repeating for future observability fields.
+
+### Stats
+
+- Total plans: 5
+- Total test files modified: 5
+- Total tests added: ~24 (9 token-cap unit, 4 schema, 5 integration, 6 handler)
+- Deviations from plan: 0
+- Average plan duration: ~4 minutes
+
+---
+
 ## v1.3 — RAG Quality Improvements (2026-04-29)
 
 **Phases:** 22–27 (6 phases, 13 plans)

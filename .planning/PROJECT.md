@@ -8,22 +8,28 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current Milestone: v1.4 — RAG Quality Improvements, Benchmark-Driven
-
-**Goal:** Eliminate benchmark regressions and amplify MCP quality wins through smarter retrieval.
-
-**Phases:** 5 (Relevance Threshold → Hierarchy Chunking → Doc Indexing → Query Classification → Adaptive Depth)
-
-## Previous Milestone: v1.3 — RAG Quality Improvements (SHIPPED 2026-04-29)
+## Current State: v1.4 SHIPPED (2026-04-30)
 
 **What shipped:**
 
-- Java AST-aware chunking at class/method boundaries with class preamble headers
-- Zero-result fallback search: semantic → hybrid → BM25 keyword chain with "did you mean?" suggestions
-- Maven multi-module dependency graph with `get_module_dependencies` MCP tool
-- RAG-to-action prompt templates for impact/change-analysis query patterns
-- Hallucination penalty calibration in benchmark judge (Hallucination Check dimension)
-- Benchmark model lock enforcement with `--strict-model` flag and `validate-models` CLI
+- Relevance threshold with configurable score filtering and empty-result signaling
+- Hierarchy-aware chunking — class inheritance/decorator metadata in AST chunks
+- Query intent classification with MMR reranking and query-type-aware λ
+- Adaptive retrieval depth — zero-result fallback chain (semantic → hybrid → BM25 keyword)
+- Adaptive decorator chunking — decorators/annotations preserved with their annotated elements
+- Dynamic retrieval cost cap — 6000-token soft budget with 70/30 split for hierarchy expansion
+
+**Status:** 35 phases, 86 plans shipped across 5 milestones (v1.0–v1.4). 29,703 LOC TypeScript.
+
+## Previous Milestones
+
+**v1.3 — RAG Quality Improvements (SHIPPED 2026-04-29):** Java AST-aware chunking, zero-result fallback search, Maven multi-module dependency graph, RAG-to-action prompt templates, hallucination penalty calibration, benchmark model lock enforcement.
+
+**v1.2 — Tuning & Observability (SHIPPED 2026-04-29):** Mode-aware score filtering, reproducible MRR baseline, prompt version tracking, LLM chunking prompt engineering, chunk quality scoring, dashboard Tuning page.
+
+**v1.1 — LLM Chunking (SHIPPED):** LLM-based chunking strategy via Ollama, parallel embedding, multi-collection search, dashboard search/history/analytics pages.
+
+**v1.0 — MVP (SHIPPED):** Full RAG pipeline, installer, MCP server, dashboard, benchmark system.
 
 ## Requirements
 
@@ -72,16 +78,16 @@ AI that actually understands the codebase — better context means better code o
 - [x] RAG-to-action prompt templates for impact/change-analysis query patterns — v1.3
 - [x] Hallucination Check dimension in benchmark judge (penalizes fabricated entities) — v1.3
 - [x] Benchmark model lock enforcement with `--strict-model` and `validate-models` CLI — v1.3
+- [x] Relevance threshold with configurable score filtering and empty-result signaling — v1.4
+- [x] Hierarchy-aware chunking for class trees with inheritance/decorator metadata — v1.4
+- [x] Query intent classification with MMR reranking and query-type-aware λ — v1.4
+- [x] Adaptive retrieval depth via semantic → hybrid → BM25 fallback chain — v1.4
+- [x] Adaptive decorator chunking — decorators/annotations co-chunked with annotated elements — v1.4
+- [x] Dynamic retrieval cost cap — 6000-token soft budget with 70/30 hierarchy/direct split — v1.4
 
 ### Active
 
-<!-- v1.4 scope — RAG Quality Improvements (Benchmark-Driven) -->
-
-- [ ] Relevance threshold with empty-result signaling (REL-01, REL-02, REL-03)
-- [x] Hierarchy-aware chunking for class trees (HIER-01, HIER-02, HIER-03, HIER-04) — Validated in Phase 02: hierarchy-aware-chunking
-- [ ] Index architecture docs with boosted weight (DOC-01, DOC-02, DOC-03)
-- [ ] Query intent classification (QCLS-01, QCLS-02, QCLS-03, QCLS-04, QCLS-05)
-- [ ] Adaptive retrieval depth (ADAPT-01, ADAPT-02, ADAPT-03, ADAPT-04, ADAPT-05)
+<!-- v1.5 scope — to be defined in next milestone planning -->
 
 ### Out of Scope
 
@@ -105,7 +111,7 @@ The framework is distributed as a git repo. Developers clone it anywhere and run
 
 The monitoring dashboard (also Docker) provides visibility into indexing health, token consumption, and RAG quality benchmarks. v1.2 added a dedicated Tuning page with ChunkInspector, score distribution histograms, and prompt version comparison charts. The benchmark system now supports model lock enforcement (`--strict-model`) to prevent contaminated benchmark results.
 
-**Current state (v1.3 complete):** 27 phases, 74 plans shipped across 4 milestones. Java/Spring Boot target projects now supported with AST-aware Java chunking, Maven dependency graphs, and Maven module-aware search filtering.
+**Current state (v1.4 complete):** 35 phases, 86 plans shipped across 5 milestones. 29,703 LOC TypeScript. Retrieval stack now includes: relevance threshold filtering, hierarchy-aware chunking, query intent classification (MMR + query-type λ), adaptive fallback depth, decorator-aware chunking, and per-call token budget cap.
 
 **Target:** Internal tool for one specific large project (Java/Spring Boot payment gateway). Built to be reusable but not generalized yet.
 
@@ -154,6 +160,10 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 | fast-xml-parser for POM parsing                             | DOMParser unavailable in Node.js; fast-xml-parser is zero-dependency, handles Maven namespace quirks                                                                | ✅ Validated — Phase 24                        |
 | Hallucination Check as 0/5 binary dimension                 | Partial credit for hallucinations muddies the signal; binary zero for any fabricated entity makes the penalty unambiguous                                           | ✅ Validated — Phase 26                        |
 | Model lock enforcement as opt-in `--strict-model` flag      | Always-abort would break iterative workflows; opt-in flag serves CI use case without disrupting normal development                                                  | ✅ Validated — Phase 27                        |
+| MMR λ tuned by query type                                   | Broad/exploratory queries need diversity (low λ), navigational/specific queries need precision (high λ); classifier routes automatically                            | ✅ Validated — Phase 28                        |
+| Synonym expansion for zero-result path                      | Users query for concepts not in codebase; expanding to related terms surfaces real indexed content rather than empty results                                        | ✅ Validated — Phase 29                        |
+| Decorator chunks co-located with annotated element          | Decorators in isolation are meaningless; fusing @Controller + method into single chunk preserves semantic unit for retrieval                                        | ✅ Validated — Phase 30                        |
+| 6000-token default cap with 70/30 budget split              | Unbounded retrieval wastes LLM context; 70% to direct results, 30% to hierarchy expansion prevents hierarchy expansion from crowding out primary results            | ✅ Validated — Phase 31                        |
 
 ## Evolution
 
@@ -176,4 +186,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-29 after v1.2 + v1.3 milestones_
+_Last updated: 2026-04-30 after v1.4 milestone_
