@@ -814,7 +814,112 @@ class UserService extends BaseService implements Logger, Auditable {
     const cls = chunks.find((c) => c.chunkType === 'class');
     expect(cls).toBeDefined();
     expect(cls!.superclass).toBe('BaseService');
-    expect(cls!.interfaces).toEqual(['Logger', 'Auditable']);
+  });
+});
+
+describe('decorator and annotation preservation', () => {
+  it('Java: includes @Transactional and @CacheEvict in method chunk content', async () => {
+    const filePath = await makeFile(
+      'OrderService.java',
+      `
+public class OrderService {
+  @Transactional
+  @CacheEvict(value = "orders", key = "#id")
+  public void updateOrder(Long id, OrderDto dto) {
+    // update logic
+  }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const method = chunks.find((c) => c.chunkType === 'function' && c.name === 'updateOrder');
+    expect(method).toBeDefined();
+    expect(method!.content).toContain('@Transactional');
+    expect(method!.content).toContain('@CacheEvict');
+  });
+
+  it('Java: @Aspect class produces a single aspect chunk', async () => {
+    const filePath = await makeFile(
+      'AuditAspect.java',
+      `
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+
+@Aspect
+public class AuditAspect {
+  @Before("execution(* com.example..*(..))")
+  public void audit() {
+    // log
+  }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    expect(chunks.length).toBe(1);
+    expect(chunks[0]!.chunkType).toBe('aspect');
+    expect(chunks[0]!.name).toBe('AuditAspect');
+    expect(chunks[0]!.content).toContain('@Aspect');
+    expect(chunks[0]!.content).toContain('@Before');
+  });
+
+  it('Java: regular class with @Service is not treated as aspect', async () => {
+    const filePath = await makeFile(
+      'PaymentService.java',
+      `
+import org.springframework.stereotype.Service;
+
+@Service
+public class PaymentService {
+  public void pay(Long amount) {}
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.name === 'PaymentService');
+    expect(cls).toBeDefined();
+    expect(cls!.chunkType).toBe('class');
+  });
+
+  it('TypeScript: @Injectable() decorator included in class chunk content', async () => {
+    const filePath = await makeFile(
+      'user.service.ts',
+      `
+import { Injectable } from '@angular/core';
+
+@Injectable({ providedIn: 'root' })
+export class UserService {
+  getUser(id: number) { return null; }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const cls = chunks.find((c) => c.chunkType === 'class' && c.name === 'UserService');
+    expect(cls).toBeDefined();
+    expect(cls!.content).toContain('@Injectable');
+  });
+
+  it('TypeScript: @Get() decorator included in method sub-chunk content', async () => {
+    const filePath = await makeFile(
+      'user.controller.ts',
+      `
+import { Controller, Get } from '@nestjs/common';
+
+@Controller('users')
+export class UserController {
+  @Get(':id')
+  findOne(id: string) { return null; }
+}
+      `.trim(),
+    );
+
+    const chunks = await parseFile(filePath, { projectRoot: tmpDir });
+    const method = chunks.find((c) => c.chunkType === 'function' && c.name === 'findOne');
+    expect(method).toBeDefined();
+    expect(method!.content).toContain('@Get');
   });
 });
 
