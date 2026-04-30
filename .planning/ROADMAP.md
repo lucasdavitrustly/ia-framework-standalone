@@ -94,9 +94,9 @@ Plans:
 
 Plans:
 
-- [ ] 30-01-PLAN.md — Java annotation inclusion + aspect chunk type
-- [ ] 30-02-PLAN.md — TypeScript decorators + LLM prompt rules
-- [ ] 30-03-PLAN.md — Integration tests for decorator/aspect chunking
+- [x] 30-01-PLAN.md — Java annotation inclusion + aspect chunk type
+- [x] 30-02-PLAN.md — TypeScript decorators + LLM prompt rules
+- [x] 30-03-PLAN.md — Integration tests for decorator/aspect chunking
 
 ## Progress
 
