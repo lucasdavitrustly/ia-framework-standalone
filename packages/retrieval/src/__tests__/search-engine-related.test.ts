@@ -74,9 +74,14 @@ describe('SearchEngine.searchWithFallback() related-concept expansion', () => {
   });
 
   it('returns relatedResults when all fallbacks return zero results but synonym match exists', async () => {
-    // Primary, hybrid, keyword all return empty for "websocket"
-    mockSearch.mockImplementation(async ({ text }: { text: string }) => {
-      if (text === 'message') return [makeRaw('msg-handler'), makeRaw('msg-queue')];
+    // mockEmbed returns different vectors per query text so mockSearch can distinguish
+    mockEmbed.mockImplementation(async (text: string) => {
+      if (text === 'message') return new Array(384).fill(0.2);
+      return new Array(384).fill(0.1);
+    });
+    // Primary search for "websocket" (vector 0.1) returns empty; "message" (vector 0.2) returns results
+    mockSearch.mockImplementation(async (vector: number[]) => {
+      if (vector[0] === 0.2) return [makeRaw('msg-handler'), makeRaw('msg-queue')];
       return [];
     });
     mockSearchHybrid.mockResolvedValue([]);
@@ -114,8 +119,12 @@ describe('SearchEngine.searchWithFallback() related-concept expansion', () => {
   });
 
   it('caps relatedResults at 3', async () => {
-    mockSearch.mockImplementation(async ({ text }: { text: string }) => {
-      if (text === 'message')
+    mockEmbed.mockImplementation(async (text: string) => {
+      if (text === 'message') return new Array(384).fill(0.2);
+      return new Array(384).fill(0.1);
+    });
+    mockSearch.mockImplementation(async (vector: number[]) => {
+      if (vector[0] === 0.2)
         return [makeRaw('r1'), makeRaw('r2'), makeRaw('r3'), makeRaw('r4'), makeRaw('r5')];
       return [];
     });

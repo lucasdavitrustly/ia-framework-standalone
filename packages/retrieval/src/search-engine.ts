@@ -7,6 +7,7 @@ import type {
 } from './types.js';
 import { analyzeRetrievalQuery } from './query-intelligence.js';
 import { mmrRerank, classifyQueryLambda } from './mmr.js';
+import { getRelatedTerms } from './search-synonyms.js';
 
 type VectorSearchResult = {
   id: string;
@@ -369,6 +370,32 @@ export class SearchEngine {
         name: r.payload.name ?? r.payload.chunkType,
         snippet: r.payload.content.slice(0, 200),
       }));
+
+      // Step 4: Related-concept expansion when keyword also returns nothing
+      if (suggestions.length === 0) {
+        const relatedTerms = getRelatedTerms(query.text);
+        if (relatedTerms.length > 0) {
+          for (const term of relatedTerms) {
+            const relatedResults = await this.search({
+              ...query,
+              text: term,
+              scoreThreshold: undefined,
+            });
+            if (relatedResults.length > 0) {
+              return {
+                found: false,
+                fallback_used: true,
+                fallback_mode: 'keyword',
+                results: [],
+                suggestions: [],
+                relatedResults: relatedResults.slice(0, 3),
+                related_query: term,
+              };
+            }
+          }
+        }
+      }
+
       return {
         found: false,
         fallback_used: true,
@@ -379,6 +406,29 @@ export class SearchEngine {
     }
 
     // All fallbacks exhausted (keyword not supported)
+    // Step 4: Related-concept expansion
+    const relatedTerms = getRelatedTerms(query.text);
+    if (relatedTerms.length > 0) {
+      for (const term of relatedTerms) {
+        const relatedResults = await this.search({
+          ...query,
+          text: term,
+          scoreThreshold: undefined,
+        });
+        if (relatedResults.length > 0) {
+          return {
+            found: false,
+            fallback_used: true,
+            fallback_mode: 'keyword',
+            results: [],
+            suggestions: [],
+            relatedResults: relatedResults.slice(0, 3),
+            related_query: term,
+          };
+        }
+      }
+    }
+
     return {
       found: false,
       fallback_used: true,
