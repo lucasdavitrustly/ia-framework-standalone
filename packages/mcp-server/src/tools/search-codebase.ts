@@ -207,7 +207,7 @@ export async function searchCodebaseHandler(
   const startTime = Date.now();
 
   // Determine expansion hops: input overrides config default
-  const hops = input.expand_hops ?? observability?.defaultExpansionHops ?? 1;
+  const hops = input.expand_hops ?? observability?.defaultExpansionHops ?? 2;
   const clampedHops = Math.min(Math.max(Math.round(hops), 0), 2) as 0 | 1 | 2;
 
   let results: RetrievalResult[];
@@ -300,7 +300,7 @@ export function registerSearchCodebaseTool(
       description:
         'Search the indexed codebase using a natural language query. Returns relevant code chunks ranked by similarity. ' +
         'Results can be expanded along the dependency graph to include related files (imports/dependencies). ' +
-        'Use expand_hops=0 to disable expansion, 1 for direct imports (default), or 2 for transitive dependencies.',
+        'Use expand_hops=0 to disable expansion, 1 for direct imports, or 2 for transitive dependencies (default).',
       inputSchema: {
         query: z.string().describe('Natural language search query'),
         limit: z.number().optional().describe('Maximum number of results (default: 10)'),
@@ -312,7 +312,7 @@ export function registerSearchCodebaseTool(
           .number()
           .optional()
           .describe(
-            'Dependency graph expansion hops: 0 = no expansion, 1 = direct imports (default), 2 = transitive',
+            'Dependency graph expansion hops: 0 = no expansion, 1 = direct imports, 2 = transitive (default)',
           ),
         fallback: z
           .boolean()
