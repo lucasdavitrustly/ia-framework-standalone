@@ -172,13 +172,26 @@ Options:
   2. "No, not now"
 ```
 
-- If "Yes": Run `/gsd:new-milestone` passing the full list of prioritized improvements
-  from the reporter's "RAG Improvement Insights > Proposed Improvements" section.
-  Each improvement becomes a phase in the milestone, ordered by the priority assigned
-  by the reporter (highest impact first).
+- If "Yes": Use the Task tool to invoke the `/gsd-new-milestone` command. This
+  delegates to the GSD workflow which handles `.planning/` file creation, questioning,
+  research, requirements, and roadmap generation — do NOT create those files yourself.
 
-  IMPORTANT: Your job ends after creating the milestone. Do NOT start discuss, plan,
-  or execute phases. The user will drive those workflows themselves.
+  Pass the full list of prioritized improvements from the reporter's
+  "RAG Improvement Insights > Proposed Improvements" section as the milestone context.
+
+  Example Task invocation:
+
+  ```
+  Task(
+    description="Create GSD milestone for RAG improvements",
+    prompt="/gsd-new-milestone RAG Improvements — <summary of prioritized improvements>",
+    subagent_type="general"
+  )
+  ```
+
+  IMPORTANT: Your job ends after delegating to `/gsd-new-milestone`. Do NOT create
+  `.planning/` files directly. Do NOT start discuss, plan, or execute phases.
+  The GSD workflow and the user will drive those steps.
 
 - If "No": End the benchmark session.
 
