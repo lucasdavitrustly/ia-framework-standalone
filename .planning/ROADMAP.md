@@ -78,6 +78,26 @@ Plans:
 4. Default chunk counts per intent category are configurable without code changes
    **Plans**: TBD
 
+### Phase 30: Adaptive Decorator Chunking
+
+**Goal**: Decorators and annotations are preserved as cohesive units with the methods/classes they annotate
+**Depends on**: Phase 2
+**Requirements**: DEC-01, DEC-02, DEC-03, DEC-04, DEC-05
+**Success Criteria** (what must be TRUE):
+
+1. A Java method annotated with `@Transactional @CacheEvict` produces a chunk containing both annotations and the method body
+2. An `@Aspect` class is kept as a single chunk with `chunkType: 'aspect'`
+3. TypeScript decorators (`@Injectable()`, `@Controller()`) are included in the class/method chunk
+4. The LLM chunking prompt forbids splitting annotations from their targets
+5. `buildPreamble()` includes aspect-class annotations for method chunks within `@Aspect` classes
+   **Plans**: 3 plans
+
+Plans:
+
+- [ ] 30-01-PLAN.md — Java annotation inclusion + aspect chunk type
+- [ ] 30-02-PLAN.md — TypeScript decorators + LLM prompt rules
+- [ ] 30-03-PLAN.md — Integration tests for decorator/aspect chunking
+
 ## Progress
 
 | Phase                          | Plans Complete | Status      | Completed  |
