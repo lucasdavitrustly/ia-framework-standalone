@@ -1,5 +1,25 @@
 # Milestones
 
+## v1.4 RAG Retrieval Quality Improvements (Planned)
+
+**Goal:** Close the two regression gaps from the v1.3 benchmark run (arch-semantic, deps-cross-file) and raise overall quality score by ~10–15 pts through structural indexing improvements, smarter retrieval, and token budget discipline.
+
+**Benchmark baseline:** MCP +7% quality gain vs no-MCP, 4/6 prompts won. Two regressions on arch-semantic and deps-cross-file prompts.
+
+**Phases:**
+
+| Phase                                 | Priority    | Scope                                                        | Package                               | Expected Impact                                                                      |
+| ------------------------------------- | ----------- | ------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------ |
+| ✅ 27 — cross-file-relationship-graph | P1 (Large)  | Cross-file import/export relationship graph indexing         | `packages/core` (indexer)             | +10 pts — fixes arch-semantic and deps-cross-file regressions (completed 2026-04-30) |
+| 28 — query-aware-mmr-reranking        | P2 (Medium) | MMR re-ranking in retrieval to reduce redundant chunks       | `packages/mcp-server` (retrieval)     | +4 pts — Technical Depth and Completeness on arch/synthesis queries                  |
+| 29 — negative-result-citation         | P3 (Small)  | Surface present alternatives on negative-result queries      | `packages/mcp-server` (tool response) | +1 pt Code References, trust win                                                     |
+| 30 — adaptive-decorator-chunking      | P4 (Medium) | Preserve decorator/aspect chains across chunk boundaries     | `packages/core` (chunker)             | +3 pts — AOP/annotation-heavy Java codebases                                         |
+| 31 — dynamic-retrieval-cost-cap       | P5 (Small)  | Soft token budget cap + cost awareness in retrieval pipeline | `packages/mcp-server` (retrieval)     | Prevents 9× token spikes on over-retrieved queries                                   |
+
+**Key accomplishments:** _(to be filled on ship)_
+
+---
+
 ## v1.3 RAG Quality Improvements (Shipped: 2026-04-29)
 
 **Phases completed:** 27 phases, 74 plans, 79 tasks
