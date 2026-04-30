@@ -103,6 +103,34 @@ export async function searchCodebaseHybridHandler(
         { enableFallback: true, maxSuggestions: 3 },
       );
 
+      // Related-concept results (per D-05)
+      if (fallbackResult.relatedResults && fallbackResult.relatedResults.length > 0) {
+        const relatedLines = fallbackResult.relatedResults
+          .map(
+            (r, i) =>
+              `${i + 1}. ${r.relativePath}${r.name ? ` (${r.name})` : ''}: ${r.content.slice(0, 150)}`,
+          )
+          .join('\n');
+        const text = fallbackNote
+          ? `${conclusion}\n\n${fallbackNote}\n\nNo results for '${input.query}'. Related communication mechanisms found:\n\n${relatedLines}`
+          : `${conclusion}\n\nNo results for '${input.query}'. Related communication mechanisms found:\n\n${relatedLines}`;
+        return {
+          content: [{ type: 'text', text }],
+          structuredContent: {
+            found: false,
+            fallback_used: true,
+            fallback_mode: fallbackResult.fallback_mode,
+            related_query: fallbackResult.related_query,
+            related_results: fallbackResult.relatedResults.map((r) => ({
+              file: r.relativePath,
+              name: r.name,
+              snippet: r.content.slice(0, 200),
+            })),
+            answered: false,
+          },
+        };
+      }
+
       if (fallbackResult.suggestions.length > 0) {
         const suggestionLines = fallbackResult.suggestions
           .map((s) => `- ${s.file} (${s.name}): ${s.snippet}`)
