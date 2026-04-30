@@ -74,6 +74,34 @@ function buildSearchResponse(
       : 'Conclusion: the indexed search did not return strong evidence for this query.';
 
   if (results.length === 0) {
+    // Related-concept results (per D-05)
+    if (
+      fallbackResult &&
+      fallbackResult.relatedResults &&
+      fallbackResult.relatedResults.length > 0
+    ) {
+      const relatedLines = fallbackResult.relatedResults
+        .map(
+          (r, i) =>
+            `${i + 1}. ${r.relativePath}${r.name ? ` (${r.name})` : ''}: ${r.content.slice(0, 150)}`,
+        )
+        .join('\n');
+      const text = `${guardrailLead}\n\nNo results for '${input.query}'. Related communication mechanisms found:\n\n${relatedLines}`;
+
+      return toTextResult(text, {
+        found: false,
+        fallback_used: true,
+        fallback_mode: fallbackResult.fallback_mode,
+        related_query: fallbackResult.related_query,
+        related_results: fallbackResult.relatedResults.map((r) => ({
+          file: r.relativePath,
+          name: r.name,
+          snippet: r.content.slice(0, 200),
+        })),
+        answered: false,
+      });
+    }
+
     // Fallback envelope with suggestions
     if (fallbackResult && fallbackResult.suggestions.length > 0) {
       const suggestionLines = fallbackResult.suggestions
