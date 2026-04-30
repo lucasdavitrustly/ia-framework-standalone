@@ -102,6 +102,19 @@ function extractPackage(rootNode: Parser.SyntaxNode): string {
 }
 
 /**
+ * Check whether a class_declaration node has an @Aspect annotation in its modifiers.
+ */
+function hasAspectAnnotation(classNode: Parser.SyntaxNode): boolean {
+  const modifiers =
+    classNode.childForFieldName('modifiers') ??
+    classNode.children.find((c) => c.type === 'modifiers');
+  if (!modifiers) return false;
+  return modifiers.children.some(
+    (c) => (c.type === 'marker_annotation' || c.type === 'annotation') && c.text.includes('Aspect'),
+  );
+}
+
+/**
  * Build preamble string for method chunks: package + import lines + class/interface signature.
  * The preamble gives each method chunk enough context to be independently comprehensible.
  */
@@ -109,6 +122,7 @@ function buildPreamble(
   rootNode: Parser.SyntaxNode,
   enclosingNode: Parser.SyntaxNode,
   sourceLines: string[],
+  includeClassAnnotations = false,
 ): string {
   const parts: string[] = [];
 
@@ -125,7 +139,21 @@ function buildPreamble(
     }
   }
 
-  // 3. Enclosing class/interface signature line — search for the line containing `class` or
+  // 3. Optionally include class-level annotations (for @Aspect methods)
+  if (includeClassAnnotations) {
+    const modifiers =
+      enclosingNode.childForFieldName('modifiers') ??
+      enclosingNode.children.find((c) => c.type === 'modifiers');
+    if (modifiers) {
+      for (const c of modifiers.children) {
+        if (c.type === 'marker_annotation' || c.type === 'annotation') {
+          parts.push(c.text);
+        }
+      }
+    }
+  }
+
+  // 4. Enclosing class/interface signature line — search for the line containing `class` or
   //    `interface` keyword within the declaration node, since annotations may precede it.
   const declStartRow = enclosingNode.startPosition.row; // 0-indexed
   const declEndRow = enclosingNode.endPosition.row;
@@ -200,7 +228,52 @@ function collectDeclarations(
 
     const startLine = child.startPosition.row + 1;
     const endLine = child.endPosition.row + 1;
-    const rawContent = sourceLines.slice(startLine - 1, endLine).join('\n');
+
+    // For top-level class declarations, check for @Aspect annotation
+    if (isTopLevel && targetNode.type === 'class_declaration' && hasAspectAnnotation(targetNode)) {
+      // Determine if class node itself has preceding annotation siblings
+      const rawContent = sourceLines.slice(startLine - 1, endLine).join('\n');
+      const name = getNodeName(targetNode);
+      chunks.push({
+        id: makeChunkId(filePath, startLine, endLine),
+        filePath,
+        relativePath,
+        language: 'java',
+        chunkType: 'aspect',
+        name,
+        content: rawContent,
+        startLine,
+        endLine,
+        imports: allImports,
+        exports: name ? [name] : [],
+        parentName: enclosingName,
+        superclass: extractSuperclass(targetNode),
+        interfaces: extractInterfaces(targetNode),
+        isInnerClass: enclosingName != null ? true : undefined,
+      });
+      // Do NOT recurse — entire @Aspect class is emitted as one chunk
+      continue;
+    }
+
+    // For member declarations (methods, constructors, fields), include preceding annotations
+    let effectiveStartLine = startLine;
+    if (isMember) {
+      const siblings = node.children;
+      const siblingIndex = siblings.indexOf(child);
+      for (let i = siblingIndex - 1; i >= 0; i--) {
+        const prev = siblings[i]!;
+        if (prev.type === 'marker_annotation' || prev.type === 'annotation') {
+          effectiveStartLine = prev.startPosition.row + 1;
+        } else if (prev.type === 'modifiers') {
+          effectiveStartLine = prev.startPosition.row + 1;
+          break;
+        } else {
+          break;
+        }
+      }
+    }
+
+    const rawContent = sourceLines.slice(effectiveStartLine - 1, endLine).join('\n');
 
     const chunkType: CodeChunk['chunkType'] = CHUNK_TYPE_MAP[targetNode.type] ?? 'other';
     const name = getNodeName(targetNode);
@@ -210,7 +283,8 @@ function collectDeclarations(
 
     // Method/constructor members inside a class/interface get preamble + parentName
     if (isMember && enclosingNode && rootNode && enclosingName) {
-      const preamble = buildPreamble(rootNode, enclosingNode, sourceLines);
+      const isInsideAspect = hasAspectAnnotation(enclosingNode);
+      const preamble = buildPreamble(rootNode, enclosingNode, sourceLines, isInsideAspect);
       content = preamble + '\n\n' + rawContent;
       parentName = enclosingName;
     }
@@ -221,14 +295,14 @@ function collectDeclarations(
     }
 
     chunks.push({
-      id: makeChunkId(filePath, startLine, endLine),
+      id: makeChunkId(filePath, effectiveStartLine, endLine),
       filePath,
       relativePath,
       language: 'java',
       chunkType,
       name,
       content,
-      startLine,
+      startLine: effectiveStartLine,
       endLine,
       imports: allImports,
       exports: name ? [name] : [],

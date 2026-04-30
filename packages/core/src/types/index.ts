@@ -21,7 +21,8 @@ export interface ChunkMetadata {
     | 'module'
     | 'other'
     | 'table'
-    | 'view';
+    | 'view'
+    | 'aspect';
   /** Name of the construct (function name, class name, etc.) */
   name?: string | undefined;
   /** The actual source code text */

@@ -12,7 +12,16 @@ export interface CodeChunk {
   /** Programming language */
   language: string;
   /** Type of code construct */
-  chunkType: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'module' | 'other' | 'semantic';
+  chunkType:
+    | 'function'
+    | 'class'
+    | 'interface'
+    | 'type'
+    | 'enum'
+    | 'module'
+    | 'other'
+    | 'semantic'
+    | 'aspect';
   /** Name of the construct (function/class/type name), if applicable */
   name?: string | undefined;
   /** Raw source code text of this chunk */
