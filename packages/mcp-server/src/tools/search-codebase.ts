@@ -5,6 +5,7 @@ import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrie
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
+import { applyTokenCap } from './token-cap.js';
 
 type Engine = {
   search(query: {
@@ -43,6 +44,8 @@ export interface ObservabilityConfig {
   sessionId?: string | undefined;
   /** Default expansion hops from project config (0=off, 1=direct, 2=transitive) */
   defaultExpansionHops?: 0 | 1 | 2 | undefined;
+  /** Soft token cap per search call (default: 6000) */
+  maxTokensPerCall?: number | undefined;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -62,6 +65,7 @@ function buildSearchResponse(
   note?: string,
   fallbackResult?: FallbackSearchResult,
   useTemplate?: boolean,
+  capMeta?: { token_cap_applied: true; results_trimmed: number },
 ): ToolOutput {
   const intent = analyzeRetrievalQuery(input.query);
   const guardrailLead =
@@ -160,6 +164,7 @@ function buildSearchResponse(
   return toTextResult(text, {
     ...(note ? { fallbackUsed: true } : {}),
     ...(intentDetected ? { intent_detected: intentDetected } : {}),
+    ...(capMeta ? capMeta : {}),
     answered: true,
   });
 }
@@ -291,6 +296,46 @@ export async function searchCodebaseHandler(
     }
   }
 
+  // Token budget cap (per D-02, D-05, D-06)
+  const maxTokens = observability?.maxTokensPerCall ?? 6000;
+
+  // D-06: 70/30 budget split when hierarchy expansion produced results
+  const hierarchyCount = results.filter((r) => r.expansionSource === 'hierarchy').length;
+  let cappedResults: RetrievalResult[];
+  let tokenCapApplied = false;
+  let resultsTrimmed = 0;
+
+  if (hierarchyCount > 0 && clampedHops > 0) {
+    const directResults = results.filter((r) => r.expansionSource !== 'hierarchy');
+    const hierarchyResults = results.filter((r) => r.expansionSource === 'hierarchy');
+    const directBudget = Math.floor(maxTokens * 0.7);
+    const hierarchyBudget = maxTokens - directBudget;
+
+    const directCap = applyTokenCap(directResults, directBudget);
+    const hierarchyCap = applyTokenCap(hierarchyResults, hierarchyBudget);
+
+    cappedResults = [...directCap.results, ...hierarchyCap.results];
+    tokenCapApplied = directCap.tokenCapApplied || hierarchyCap.tokenCapApplied;
+    resultsTrimmed = directCap.resultsTrimmed + hierarchyCap.resultsTrimmed;
+  } else {
+    const cap = applyTokenCap(results, maxTokens);
+    cappedResults = cap.results;
+    tokenCapApplied = cap.tokenCapApplied;
+    resultsTrimmed = cap.resultsTrimmed;
+  }
+
+  results = cappedResults;
+
+  if (tokenCapApplied) {
+    console.info(
+      `token cap: ${results.length + resultsTrimmed} results → ${results.length} results`,
+    );
+  }
+
+  const capMeta = tokenCapApplied
+    ? { token_cap_applied: true as const, results_trimmed: resultsTrimmed }
+    : undefined;
+
   // Zero-result fallback: if primary search returned nothing and fallback not disabled,
   // call searchWithFallback for keyword-based suggestions
   if (results.length === 0 && input.fallback !== false && engine.searchWithFallback) {
@@ -311,7 +356,7 @@ export async function searchCodebaseHandler(
     );
   }
 
-  return buildSearchResponse(input, results, fallbackNote, undefined, input.use_template);
+  return buildSearchResponse(input, results, fallbackNote, undefined, input.use_template, capMeta);
 }
 
 /**

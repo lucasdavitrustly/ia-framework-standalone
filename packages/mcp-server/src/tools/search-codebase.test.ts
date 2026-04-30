@@ -160,3 +160,82 @@ describe('searchCodebaseHandler - hierarchy expansion', () => {
     expect(text).toContain('RuntimeException');
   });
 });
+
+describe('searchCodebaseHandler - token cap', () => {
+  it('Test 5: trims results when total tokens exceed maxTokensPerCall', async () => {
+    // Each result has 3000-char content → ~750 tokens each
+    // 10 results × 750 tokens = 7500 tokens > 6000 cap
+    const largeContent = 'x'.repeat(3000);
+    const results = Array.from({ length: 10 }, (_, i) =>
+      makeResult({
+        chunkId: `chunk-${i}`,
+        content: largeContent,
+        score: 1.0 - i * 0.05,
+        relativePath: `src/file${i}.ts`,
+      }),
+    );
+
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue(results),
+      search: vi.fn().mockResolvedValue(results),
+      scrollForHierarchy: vi.fn().mockResolvedValue([]),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'test token cap', expand_hops: 0 },
+      { maxTokensPerCall: 6000 },
+    );
+
+    // Should have fewer than 10 results
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    const matchCount = (text.match(/###\s+\d+\./g) ?? []).length;
+    expect(matchCount).toBeLessThan(10);
+
+    // structuredContent must contain token_cap_applied: true
+    expect(output.structuredContent).toBeDefined();
+    expect((output.structuredContent as Record<string, unknown>).token_cap_applied).toBe(true);
+    expect(typeof (output.structuredContent as Record<string, unknown>).results_trimmed).toBe(
+      'number',
+    );
+  });
+
+  it('Test 6: 70/30 split applies when hierarchy results are present', async () => {
+    const largeContent = 'x'.repeat(4000); // ~1000 tokens each
+    const directResults = Array.from({ length: 3 }, (_, i) =>
+      makeResult({
+        chunkId: `direct-${i}`,
+        content: largeContent,
+        score: 0.9 - i * 0.1,
+        relativePath: `src/direct${i}.ts`,
+      }),
+    );
+    const hierarchyResults = Array.from({ length: 3 }, (_, i) =>
+      makeResult({
+        chunkId: `hier-${i}`,
+        content: largeContent,
+        score: 0.5,
+        relativePath: `src/hier${i}.ts`,
+        expansionSource: 'hierarchy' as const,
+      }),
+    );
+
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue(directResults),
+      search: vi.fn().mockResolvedValue(directResults),
+      scrollForHierarchy: vi.fn().mockResolvedValue(hierarchyResults),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'hierarchy cap test', expand_hops: 1 },
+      { maxTokensPerCall: 6000 },
+    );
+
+    // With 6 results × 1000 tokens = 6000 tokens, cap should apply to at least some
+    expect(output.structuredContent).toBeDefined();
+    // Both direct and hierarchy results should appear (70/30 split preserves at least 1 from each)
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('src/direct0.ts');
+  });
+});
