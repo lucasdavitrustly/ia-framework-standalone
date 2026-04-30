@@ -68,7 +68,60 @@ describe('searchCodebaseHybridHandler', () => {
 
     await searchCodebaseHybridHandler(engine, { query: 'test' });
 
-    expect(engine.searchHybrid).toHaveBeenCalledWith({ text: 'test', limit: 10 });
+    expect(engine.searchHybrid).toHaveBeenCalledWith({
+      text: 'test',
+      limit: 10,
+      scoreThreshold: undefined,
+    });
+  });
+});
+
+describe('searchCodebaseHybridHandler — expand_hops', () => {
+  it('calls searchWithExpansion with hops=2 by default when available', async () => {
+    const mockResults = [
+      {
+        id: '1',
+        content: 'code',
+        relativePath: 'src/foo.ts',
+        score: 0.9,
+        language: 'typescript',
+        chunkType: 'function',
+        startLine: 1,
+        endLine: 10,
+      },
+    ];
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([]),
+      searchWithExpansion: vi.fn().mockResolvedValue(mockResults),
+    };
+
+    const result = await searchCodebaseHybridHandler(engine, { query: 'find auth' });
+
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      { text: 'find auth', limit: 10, scoreThreshold: undefined },
+      { hops: 2 },
+    );
+    const item = result.content[0];
+    const text = item && item.type === 'text' ? (item as { type: 'text'; text: string }).text : '';
+    expect(text).toContain('src/foo.ts');
+  });
+
+  it('uses searchHybrid directly when expand_hops=0', async () => {
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([]),
+      searchWithExpansion: vi.fn().mockResolvedValue([]),
+    };
+
+    await searchCodebaseHybridHandler(engine, { query: 'test', expand_hops: 0 });
+
+    expect(engine.searchHybrid).toHaveBeenCalled();
+    expect(engine.searchWithExpansion).not.toHaveBeenCalled();
+  });
+
+  it('falls back to searchHybrid when searchWithExpansion is not available', async () => {
+    const engine = { searchHybrid: vi.fn().mockResolvedValue([]) };
+    await searchCodebaseHybridHandler(engine, { query: 'test' });
+    expect(engine.searchHybrid).toHaveBeenCalled();
   });
 });
 

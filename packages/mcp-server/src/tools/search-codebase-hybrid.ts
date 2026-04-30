@@ -13,6 +13,10 @@ type HybridEngine = {
     filter?: Record<string, unknown> | undefined;
   }): Promise<RetrievalResult[]>;
   search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
+  searchWithExpansion?(
+    query: { text: string; limit?: number | undefined; scoreThreshold?: number | undefined },
+    options?: { hops?: 0 | 1 | 2 },
+  ): Promise<RetrievalResult[]>;
   searchWithFallback?(
     query: { text: string; limit?: number | undefined },
     options?: { enableFallback?: boolean; maxSuggestions?: number },
@@ -24,6 +28,8 @@ export interface SearchCodebaseHybridInput {
   limit?: number | undefined;
   /** RRF score threshold — results below this are filtered out (default: 0.015). RRF scores are rank-based (~0.01–0.03). */
   score_threshold?: number | undefined;
+  /** Dependency graph expansion hops: 0 = off, 1 = direct imports, 2 = transitive (default). */
+  expand_hops?: number | undefined;
   /** Enable prompt template injection for detected intents (default: true). Per D-05. */
   use_template?: boolean | undefined;
 }
@@ -54,15 +60,24 @@ export async function searchCodebaseHybridHandler(
   input: SearchCodebaseHybridInput,
 ): Promise<ToolOutput> {
   const intent = analyzeRetrievalQuery(input.query);
+  const hops = Math.min(Math.max(Math.round(input.expand_hops ?? 2), 0), 2) as 0 | 1 | 2;
   let results: RetrievalResult[];
   let fallbackNote: string | undefined;
 
   try {
-    results = await engine.searchHybrid({
-      text: input.query,
-      limit: input.limit ?? 10,
-      scoreThreshold: input.score_threshold,
-    });
+    // Use searchWithExpansion if hops > 0 and available, otherwise fall back to searchHybrid
+    if (hops > 0 && engine.searchWithExpansion) {
+      results = await engine.searchWithExpansion(
+        { text: input.query, limit: input.limit ?? 10, scoreThreshold: input.score_threshold },
+        { hops },
+      );
+    } else {
+      results = await engine.searchHybrid({
+        text: input.query,
+        limit: input.limit ?? 10,
+        scoreThreshold: input.score_threshold,
+      });
+    }
   } catch (error) {
     if (!engine.search) {
       throw error;
@@ -197,6 +212,12 @@ export function registerSearchCodebaseHybridTool(server: McpServer, engine: Hybr
           .optional()
           .describe(
             'Minimum RRF score threshold 0-1 (default: 0.015). RRF scores are rank-based (~0.01-0.03), much lower than cosine similarity.',
+          ),
+        expand_hops: z
+          .number()
+          .optional()
+          .describe(
+            'Dependency graph expansion hops: 0 = no expansion, 1 = direct imports, 2 = transitive (default)',
           ),
         use_template: z
           .boolean()
