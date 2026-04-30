@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
+import { applyTokenCap } from './token-cap.js';
 
 type HybridEngine = {
   searchHybrid(query: {
@@ -58,6 +59,7 @@ function formatResult(result: RetrievalResult, index: number): string {
 export async function searchCodebaseHybridHandler(
   engine: HybridEngine,
   input: SearchCodebaseHybridInput,
+  options?: { maxTokensPerCall?: number | undefined },
 ): Promise<ToolOutput> {
   const intent = analyzeRetrievalQuery(input.query);
   const hops = Math.min(Math.max(Math.round(input.expand_hops ?? 2), 0), 2) as 0 | 1 | 2;
@@ -92,11 +94,16 @@ export async function searchCodebaseHybridHandler(
       'Returning indexed semantic search results instead.';
   }
 
+  // Token budget cap (per D-02) — no 70/30 split for hybrid (no separate hierarchy step)
+  const maxTokens = options?.maxTokensPerCall ?? 6000;
+  const cap = applyTokenCap(results, maxTokens);
+  results = cap.results;
+  const tokenCapApplied = cap.tokenCapApplied;
+  const resultsTrimmed = cap.resultsTrimmed;
+
   if (results.length === 0) {
     const conclusion =
       'Conclusion: the indexed hybrid search did not return strong evidence for this query.';
-
-    // Zero-result fallback: call searchWithFallback for keyword suggestions
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
         { text: input.query, limit: input.limit ?? 10 },
@@ -215,6 +222,7 @@ export async function searchCodebaseHybridHandler(
     structuredContent: {
       ...(fallbackNote ? { fallbackUsed: true } : {}),
       ...(intentDetected ? { intent_detected: intentDetected } : {}),
+      ...(tokenCapApplied ? { token_cap_applied: true, results_trimmed: resultsTrimmed } : {}),
       answered: true,
     },
   };

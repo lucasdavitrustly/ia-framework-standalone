@@ -141,3 +141,40 @@ describe('registerSearchCodebaseHybridTool', () => {
     expect(toolName).toBe('search_codebase_hybrid');
   });
 });
+
+describe('searchCodebaseHybridHandler - token cap', () => {
+  it('trims results and includes token_cap_applied metadata when budget exceeded', async () => {
+    // 10 results × 3000 chars / 4 ≈ 750 tokens each = 7500 total > 6000 cap
+    const largeContent = 'x'.repeat(3000);
+    const results = Array.from({ length: 10 }, (_, i) =>
+      makeResult({
+        chunkId: `chunk-${i}`,
+        content: largeContent,
+        score: 1.0 - i * 0.05,
+        relativePath: `src/file${i}.ts`,
+      }),
+    );
+
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue(results),
+    };
+
+    const output = await searchCodebaseHybridHandler(
+      engine,
+      { query: 'hybrid token cap test', expand_hops: 0 },
+      { maxTokensPerCall: 6000 },
+    );
+
+    // Should have fewer than 10 result sections in the text
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    const matchCount = (text.match(/###\s+\d+\./g) ?? []).length;
+    expect(matchCount).toBeLessThan(10);
+
+    // structuredContent must contain token_cap_applied: true
+    expect(output.structuredContent).toBeDefined();
+    expect((output.structuredContent as Record<string, unknown>).token_cap_applied).toBe(true);
+    expect(typeof (output.structuredContent as Record<string, unknown>).results_trimmed).toBe(
+      'number',
+    );
+  });
+});
