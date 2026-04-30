@@ -212,4 +212,8 @@ export interface FallbackSearchResult {
   results: RetrievalResult[];
   /** BM25 keyword suggestions (non-empty only when fallback_mode='keyword' and results found) */
   suggestions: FallbackSuggestion[];
+  /** Related-concept results when all fallbacks return zero (absent when found=true) */
+  relatedResults?: RetrievalResult[];
+  /** The expanded synonym term that produced relatedResults */
+  related_query?: string;
 }
