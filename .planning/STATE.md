@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: RAG Quality & Token Control
-status: complete
-stopped_at: Milestone v1.4 complete
-last_updated: '2026-04-30T18:27:03.641Z'
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+stopped_at: Phase 32 context gathered
+last_updated: "2026-05-05T15:09:29.372Z"
 last_activity: 2026-04-30
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 22
-  completed_plans: 22
+  total_phases: 34
+  completed_phases: 33
+  total_plans: 86
+  completed_plans: 86
 ---
 
 # Project State
@@ -20,13 +20,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Milestone v1.4 complete — ready for v1.5 planning
+**Current focus:** Milestone v1.5 — RAG Retrieval Quality Improvements (eliminate context pollution)
 
 ## Current Position
 
-Milestone v1.4 shipped. No active phase.
+Milestone v1.5 active. Next phase: 32 — relevance-score-threshold.
 
 ## Velocity Summary
+
+**v1.5 Phases:**
+
+| Phase | Name                      | Priority | Size | Package             | Status  |
+| ----- | ------------------------- | -------- | ---- | ------------------- | ------- |
+| 32    | relevance-score-threshold | P0       | S    | packages/mcp-server | pending |
+| 33    | reranking-layer           | P1       | M    | packages/core       | pending |
+| 34    | context-budget-caps       | P2       | S    | packages/mcp-server | pending |
+| 35    | index-code-patterns       | P3       | M    | packages/core       | pending |
+| 36    | query-type-classification | P4       | L    | packages/mcp-server | pending |
 
 **v1.0:** 11 phases, 34 plans, ~14 min/plan, ~7 hours total
 **v1.1:** 7 phases, 17 plans
@@ -62,5 +72,5 @@ None.
 ## Session Continuity
 
 Last activity: 2026-04-30
-Stopped at: Milestone v1.4 complete
-Resume file: None
+Stopped at: Phase 32 context gathered
+Resume file: .planning/phases/32-relevance-score-threshold/32-CONTEXT.md
