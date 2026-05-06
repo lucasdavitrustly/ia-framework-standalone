@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 32 context gathered
-last_updated: "2026-05-05T15:09:29.372Z"
-last_activity: 2026-04-30
+stopped_at: Completed 32-01-PLAN.md
+last_updated: "2026-05-06T16:45:56.676Z"
+last_activity: 2026-05-06
 progress:
   total_phases: 34
-  completed_phases: 33
-  total_plans: 86
-  completed_plans: 86
+  completed_phases: 34
+  total_plans: 87
+  completed_plans: 87
 ---
 
 # Project State
@@ -20,11 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Milestone v1.5 — RAG Retrieval Quality Improvements (eliminate context pollution)
+**Current focus:** Phase 32 — relevance-score-threshold
 
 ## Current Position
 
-Milestone v1.5 active. Next phase: 32 — relevance-score-threshold.
+Phase: 32 (relevance-score-threshold) — EXECUTING
+Plan: 1 of 1
 
 ## Velocity Summary
 
@@ -54,6 +55,7 @@ All decisions are logged in PROJECT.md Key Decisions table.
 - Rerank bonuses apply before threshold — boosted chunks survive
 - [Phase 02]: Engine.scrollForHierarchy is optional to avoid breaking existing Engine implementations
 - [Phase 02]: expandHierarchy uses BFS deduplication by chunkId to prevent cycles and duplicate results
+- [Phase 32-relevance-score-threshold]: Client-side score filtering with 0.5 default; hybrid has no default (RRF scores are rank-based); hierarchy-expanded results exempted from threshold
 
 ### Pending Todos
 
@@ -71,6 +73,6 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-04-30
-Stopped at: Phase 32 context gathered
-Resume file: .planning/phases/32-relevance-score-threshold/32-CONTEXT.md
+Last activity: 2026-05-06
+Stopped at: Completed 32-01-PLAN.md
+Resume file: None
