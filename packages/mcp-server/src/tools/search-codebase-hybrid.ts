@@ -193,13 +193,16 @@ export async function searchCodebaseHybridHandler(
       content: [
         {
           type: 'text',
-          text: fallbackNote
-            ? `${conclusion}\n\n${fallbackNote}\n\nNo results found for query: "${input.query}"`
-            : `${conclusion}\n\nNo results found for query: "${input.query}"`,
+          text: hybridThresholdFiltered
+            ? `${conclusion}\n\nNo relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`
+            : fallbackNote
+              ? `${conclusion}\n\n${fallbackNote}\n\nNo results found for query: "${input.query}"`
+              : `${conclusion}\n\nNo results found for query: "${input.query}"`,
         },
       ],
       structuredContent: {
         ...(fallbackNote ? { fallbackUsed: true } : {}),
+        ...(hybridThresholdFiltered ? { threshold_filtered: true } : {}),
         answered: false,
       },
     };

@@ -68,6 +68,7 @@ function buildSearchResponse(
   fallbackResult?: FallbackSearchResult,
   useTemplate?: boolean,
   capMeta?: { token_cap_applied: true; results_trimmed: number },
+  thresholdFiltered?: boolean,
 ): ToolOutput {
   const intent = analyzeRetrievalQuery(input.query);
   const guardrailLead =
@@ -128,12 +129,15 @@ function buildSearchResponse(
       });
     }
 
-    const text = note
-      ? `${guardrailLead}\n\n${note}\n\nNo results found for query: "${input.query}"`
-      : `${guardrailLead}\n\nNo results found for query: "${input.query}"`;
+    const noResultText = thresholdFiltered
+      ? `${guardrailLead}\n\nNo relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`
+      : note
+        ? `${guardrailLead}\n\n${note}\n\nNo results found for query: "${input.query}"`
+        : `${guardrailLead}\n\nNo results found for query: "${input.query}"`;
 
-    return toTextResult(text, {
+    return toTextResult(noResultText, {
       ...(note ? { fallbackUsed: true } : {}),
+      ...(thresholdFiltered ? { threshold_filtered: true } : {}),
       ...(fallbackResult
         ? {
             found: false,
@@ -364,10 +368,25 @@ export async function searchCodebaseHandler(
       fallbackNote,
       fallbackResult,
       input.use_template,
+      undefined,
+      // Pass thresholdFiltered only when fallback itself returns no results
+      fallbackResult.results.length === 0 &&
+        (!fallbackResult.suggestions || fallbackResult.suggestions.length === 0) &&
+        (!fallbackResult.relatedResults || fallbackResult.relatedResults.length === 0)
+        ? thresholdFiltered
+        : false,
     );
   }
 
-  return buildSearchResponse(input, results, fallbackNote, undefined, input.use_template, capMeta);
+  return buildSearchResponse(
+    input,
+    results,
+    fallbackNote,
+    undefined,
+    input.use_template,
+    capMeta,
+    thresholdFiltered,
+  );
 }
 
 /**
