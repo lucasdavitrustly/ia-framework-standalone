@@ -103,3 +103,33 @@ describe('RetrievalConfigSchema — maxTokensPerCall', () => {
     expect(() => RetrievalConfigSchema.parse({ maxTokensPerCall: 0 })).toThrow();
   });
 });
+
+describe('RetrievalConfigSchema — scoreThreshold', () => {
+  it('accepts scoreThreshold as optional number between 0 and 1', () => {
+    const result = RetrievalConfigSchema.parse({ scoreThreshold: 0.5 });
+    expect(result.scoreThreshold).toBe(0.5);
+  });
+
+  it('returns undefined for scoreThreshold when field is omitted', () => {
+    const result = RetrievalConfigSchema.parse({});
+    expect(result.scoreThreshold).toBeUndefined();
+  });
+
+  it('accepts scoreThreshold: 0 (disables filtering)', () => {
+    const result = RetrievalConfigSchema.parse({ scoreThreshold: 0 });
+    expect(result.scoreThreshold).toBe(0);
+  });
+
+  it('accepts scoreThreshold: 1 (maximum strictness)', () => {
+    const result = RetrievalConfigSchema.parse({ scoreThreshold: 1 });
+    expect(result.scoreThreshold).toBe(1);
+  });
+
+  it('rejects scoreThreshold > 1', () => {
+    expect(() => RetrievalConfigSchema.parse({ scoreThreshold: 1.5 })).toThrow();
+  });
+
+  it('rejects scoreThreshold < 0', () => {
+    expect(() => RetrievalConfigSchema.parse({ scoreThreshold: -0.1 })).toThrow();
+  });
+});
