@@ -200,3 +200,78 @@ describe('searchCodebaseHybridHandler — client-side score filtering', () => {
     expect(text).toContain('src/rrf-result.ts');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anti-hallucination instructional message (Task 2)
+// ---------------------------------------------------------------------------
+
+describe('searchCodebaseHandler — anti-hallucination message when threshold filters all results', () => {
+  it('shows instructional anti-hallucination message when threshold removes all results and no fallback', async () => {
+    const results = [makeResult(0.2, 'low1'), makeResult(0.3, 'low2')];
+    const searchWithExpansion = vi.fn().mockResolvedValue(results);
+    const engine = { search: vi.fn(), searchWithExpansion };
+
+    // Default 0.5 threshold removes all; no searchWithFallback on engine
+    const output = await searchCodebaseHandler(engine, { query: 'find auth handler' });
+    const text = (output.content[0] as { type: string; text: string }).text;
+
+    expect(text).toContain('Do not guess or hallucinate');
+    expect(output.structuredContent).toMatchObject({ answered: false, threshold_filtered: true });
+  });
+
+  it('still attempts fallback when threshold filters all results (D-05 preserved)', async () => {
+    const lowResults = [makeResult(0.2, 'low1')];
+    const searchWithExpansion = vi.fn().mockResolvedValue(lowResults);
+    const fallbackSuggestions = [
+      { file: 'src/auth.ts', name: 'authenticate', snippet: 'function authenticate(token) {' },
+    ];
+    const fallbackResult = {
+      found: false,
+      fallback_used: true,
+      fallback_mode: 'keyword',
+      results: [],
+      suggestions: fallbackSuggestions,
+    };
+    const searchWithFallback = vi.fn().mockResolvedValue(fallbackResult);
+    const engine = { search: vi.fn(), searchWithExpansion, searchWithFallback };
+
+    const output = await searchCodebaseHandler(engine, { query: 'find auth handler' });
+    const text = (output.content[0] as { type: string; text: string }).text;
+
+    // Fallback suggestions returned — no anti-hallucination message needed
+    expect(text).toContain('Closest related code');
+    expect(text).not.toContain('Do not guess or hallucinate');
+    expect(output.structuredContent).toMatchObject({ answered: false });
+  });
+
+  it('returns normal response when some results pass threshold (no instructional message)', async () => {
+    const results = [makeResult(0.3, 'low'), makeResult(0.7, 'high')];
+    const searchWithExpansion = vi.fn().mockResolvedValue(results);
+    const engine = { search: vi.fn(), searchWithExpansion };
+
+    const output = await searchCodebaseHandler(engine, { query: 'find handler' });
+    const text = (output.content[0] as { type: string; text: string }).text;
+
+    expect(text).not.toContain('Do not guess or hallucinate');
+    expect(output.structuredContent).toMatchObject({ answered: true });
+  });
+});
+
+describe('searchCodebaseHybridHandler — anti-hallucination message', () => {
+  it('shows instructional message when threshold filters all hybrid results and no fallback', async () => {
+    const results = [makeResult(0.005, 'very-low')];
+    const searchHybrid = vi.fn().mockResolvedValue(results);
+    const engine = { searchHybrid };
+
+    // score_threshold=0.01 removes the 0.005 result
+    const output = await searchCodebaseHybridHandler(engine, {
+      query: 'find handler',
+      score_threshold: 0.01,
+      expand_hops: 0,
+    });
+    const text = (output.content[0] as { type: string; text: string }).text;
+
+    expect(text).toContain('Do not guess or hallucinate');
+    expect(output.structuredContent).toMatchObject({ answered: false, threshold_filtered: true });
+  });
+});
