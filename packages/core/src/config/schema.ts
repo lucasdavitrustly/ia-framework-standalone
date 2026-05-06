@@ -53,6 +53,8 @@ export const RetrievalConfigSchema = z.object({
   autoContextTopK: z.number().int().min(1).max(20).default(5),
   /** Soft token budget cap per search tool call. Results trimmed from bottom when exceeded. */
   maxTokensPerCall: z.number().int().positive().optional(),
+  /** Default minimum relevance score threshold. Results below this are filtered out. */
+  scoreThreshold: z.number().min(0).max(1).optional(),
 });
 
 export const ProjectConfigSchema = z.object({

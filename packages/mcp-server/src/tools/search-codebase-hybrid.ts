@@ -59,7 +59,7 @@ function formatResult(result: RetrievalResult, index: number): string {
 export async function searchCodebaseHybridHandler(
   engine: HybridEngine,
   input: SearchCodebaseHybridInput,
-  options?: { maxTokensPerCall?: number | undefined },
+  options?: { maxTokensPerCall?: number | undefined; defaultScoreThreshold?: number | undefined },
 ): Promise<ToolOutput> {
   const intent = analyzeRetrievalQuery(input.query);
   const hops = Math.min(Math.max(Math.round(input.expand_hops ?? 2), 0), 2) as 0 | 1 | 2;
@@ -92,6 +92,15 @@ export async function searchCodebaseHybridHandler(
     fallbackNote =
       `Note: hybrid retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
       'Returning indexed semantic search results instead.';
+  }
+
+  // Score threshold filtering — for hybrid, use input override only (RRF scores are rank-based, not 0-1)
+  const hybridScoreThreshold = input.score_threshold ?? options?.defaultScoreThreshold;
+  let hybridThresholdFiltered = false;
+  if (hybridScoreThreshold != null && hybridScoreThreshold > 0) {
+    const preFilterCount = results.length;
+    results = results.filter((r) => r.score >= hybridScoreThreshold);
+    hybridThresholdFiltered = preFilterCount > 0 && results.length === 0;
   }
 
   // Token budget cap (per D-02) — no 70/30 split for hybrid (no separate hierarchy step)

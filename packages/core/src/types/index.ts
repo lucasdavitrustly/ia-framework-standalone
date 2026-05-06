@@ -168,6 +168,8 @@ export interface RetrievalConfig {
   expansionHops: 0 | 1 | 2;
   /** Top-K results for auto-context injection (v2) */
   autoContextTopK: number;
+  /** Default minimum relevance score for filtering (0-1). Omit or 0 to disable. */
+  scoreThreshold?: number | undefined;
 }
 
 /**

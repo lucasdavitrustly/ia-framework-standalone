@@ -46,6 +46,8 @@ export interface ObservabilityConfig {
   defaultExpansionHops?: 0 | 1 | 2 | undefined;
   /** Soft token cap per search call (default: 6000) */
   maxTokensPerCall?: number | undefined;
+  /** Default minimum relevance score threshold (0-1). Results below this are filtered client-side. */
+  defaultScoreThreshold?: number | undefined;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -273,6 +275,15 @@ export async function searchCodebaseHandler(
 
   const latencyMs = Date.now() - startTime;
 
+  // Score threshold filtering (client-side, per D-01, D-02, D-03)
+  const scoreThreshold = input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5;
+  let thresholdFiltered = false;
+  if (scoreThreshold > 0) {
+    const preFilterCount = results.length;
+    results = results.filter((r) => r.score >= scoreThreshold);
+    thresholdFiltered = preFilterCount > 0 && results.length === 0;
+  }
+
   // Log RAG event if observability is wired up
   if (observability?.metricsStore && observability.tokenCounter) {
     try {
@@ -380,7 +391,7 @@ export function registerSearchCodebaseTool(
         score_threshold: z
           .number()
           .optional()
-          .describe('Minimum similarity score 0-1 (default: 0.3)'),
+          .describe('Minimum similarity score 0-1 (default: 0.5). Set to 0 to disable filtering.'),
         expand_hops: z
           .number()
           .optional()
