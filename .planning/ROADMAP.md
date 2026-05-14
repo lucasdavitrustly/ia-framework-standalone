@@ -6,7 +6,7 @@
 - ✅ **v1.1 LLM Chunking** — Phases 9–18 (shipped)
 - ✅ **v1.2 Tuning & Observability** — Phases 19–21 (shipped)
 - ✅ **v1.3 RAG Quality** — Phases 22–29 (shipped 2026-04-29)
-- ✅ **v1.4 RAG Quality Improvements** — Phases 1–5, 30–31 (shipped 2026-04-30)
+- ✅ **v1.4 RAG Quality Improvements** — Phases 1–5, 30–32 (shipped 2026-04-30)
 - 📋 **v1.5** — TBD (next milestone)
 
 ## Phases
@@ -22,7 +22,7 @@ See archived roadmaps in `.planning/milestones/`:
 </details>
 
 <details>
-<summary>✅ v1.4 RAG Quality Improvements (Phases 1–5, 30–31) — SHIPPED 2026-04-30</summary>
+<summary>✅ v1.4 RAG Quality Improvements (Phases 1–5, 30–32) — SHIPPED 2026-04-30</summary>
 
 - [x] Phase 1: Relevance Threshold (3/3 plans) — completed 2026-04-29
 - [x] Phase 2: Hierarchy-Aware Chunking (2/2 plans) — completed 2026-04-29
@@ -31,6 +31,7 @@ See archived roadmaps in `.planning/milestones/`:
 - [x] Phase 5: Adaptive Retrieval Depth (3/3 plans) — completed 2026-04-29
 - [x] Phase 30: Adaptive Decorator Chunking (3/3 plans) — completed 2026-04-30
 - [x] Phase 31: Dynamic Retrieval Cost Cap (2/2 plans) — completed 2026-04-30
+- [x] Phase 32: Relevance Score Threshold (1/1 plans) — completed 2026-05-14
 
 </details>
 
@@ -49,3 +50,4 @@ _To be defined in next milestone planning._
 | 5. Adaptive Retrieval Depth     | v1.4      | 3/3            | Complete | 2026-04-29 |
 | 30. Adaptive Decorator Chunking | v1.4      | 3/3            | Complete | 2026-04-30 |
 | 31. Dynamic Retrieval Cost Cap  | v1.4      | 2/2            | Complete | 2026-04-30 |
+| 32. Relevance Score Threshold   | v1.4      | 1/1            | Complete | 2026-05-14 |

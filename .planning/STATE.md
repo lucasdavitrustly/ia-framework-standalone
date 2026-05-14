@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: unknown
 stopped_at: Completed 32-01-PLAN.md
-last_updated: "2026-05-14T17:21:08.157Z"
+last_updated: '2026-05-14T17:21:08.157Z'
 last_activity: 2026-05-14
 progress:
   total_phases: 34
@@ -20,20 +20,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 32 — relevance-score-threshold
+**Current focus:** Planning next milestone (v1.5)
 
 ## Current Position
 
-Phase: 32
-Plan: Not started
+Phase: v1.4 complete, v1.5 not yet started
+Plan: N/A
 
 ## Velocity Summary
 
-**v1.5 Phases:**
+**v1.5 Phases (planned, not yet started):**
 
 | Phase | Name                      | Priority | Size | Package             | Status  |
 | ----- | ------------------------- | -------- | ---- | ------------------- | ------- |
-| 32    | relevance-score-threshold | P0       | S    | packages/mcp-server | pending |
 | 33    | reranking-layer           | P1       | M    | packages/core       | pending |
 | 34    | context-budget-caps       | P2       | S    | packages/mcp-server | pending |
 | 35    | index-code-patterns       | P3       | M    | packages/core       | pending |
@@ -74,5 +73,5 @@ None.
 ## Session Continuity
 
 Last activity: 2026-05-14
-Stopped at: Completed 32-01-PLAN.md
+Stopped at: v1.4 milestone complete (Phase 32 was last phase)
 Resume file: None
