@@ -46,6 +46,8 @@ export interface ObservabilityConfig {
   defaultExpansionHops?: 0 | 1 | 2 | undefined;
   /** Soft token cap per search call (default: 6000) */
   maxTokensPerCall?: number | undefined;
+  /** Default minimum relevance score threshold (0-1). Results below this are filtered client-side. */
+  defaultScoreThreshold?: number | undefined;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -66,6 +68,7 @@ function buildSearchResponse(
   fallbackResult?: FallbackSearchResult,
   useTemplate?: boolean,
   capMeta?: { token_cap_applied: true; results_trimmed: number },
+  thresholdFiltered?: boolean,
 ): ToolOutput {
   const intent = analyzeRetrievalQuery(input.query);
   const guardrailLead =
@@ -126,12 +129,15 @@ function buildSearchResponse(
       });
     }
 
-    const text = note
-      ? `${guardrailLead}\n\n${note}\n\nNo results found for query: "${input.query}"`
-      : `${guardrailLead}\n\nNo results found for query: "${input.query}"`;
+    const noResultText = thresholdFiltered
+      ? `${guardrailLead}\n\nNo relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`
+      : note
+        ? `${guardrailLead}\n\n${note}\n\nNo results found for query: "${input.query}"`
+        : `${guardrailLead}\n\nNo results found for query: "${input.query}"`;
 
-    return toTextResult(text, {
+    return toTextResult(noResultText, {
       ...(note ? { fallbackUsed: true } : {}),
+      ...(thresholdFiltered ? { threshold_filtered: true } : {}),
       ...(fallbackResult
         ? {
             found: false,
@@ -273,6 +279,19 @@ export async function searchCodebaseHandler(
 
   const latencyMs = Date.now() - startTime;
 
+  // Score threshold filtering (client-side, per D-01, D-02, D-03)
+  // Hierarchy-expanded results (expansionSource === 'hierarchy') are excluded from threshold
+  // since they are structurally-related chunks, not relevance-ranked results.
+  const scoreThreshold = input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5;
+  let thresholdFiltered = false;
+  if (scoreThreshold > 0) {
+    const directBefore = results.filter((r) => r.expansionSource !== 'hierarchy').length;
+    results = results.filter((r) => r.expansionSource === 'hierarchy' || r.score >= scoreThreshold);
+    const directAfter = results.filter((r) => r.expansionSource !== 'hierarchy').length;
+    // thresholdFiltered = true only when direct (non-hierarchy) results were present but all got filtered
+    thresholdFiltered = directBefore > 0 && directAfter === 0;
+  }
+
   // Log RAG event if observability is wired up
   if (observability?.metricsStore && observability.tokenCounter) {
     try {
@@ -353,10 +372,25 @@ export async function searchCodebaseHandler(
       fallbackNote,
       fallbackResult,
       input.use_template,
+      undefined,
+      // Pass thresholdFiltered only when fallback itself returns no results
+      fallbackResult.results.length === 0 &&
+        (!fallbackResult.suggestions || fallbackResult.suggestions.length === 0) &&
+        (!fallbackResult.relatedResults || fallbackResult.relatedResults.length === 0)
+        ? thresholdFiltered
+        : false,
     );
   }
 
-  return buildSearchResponse(input, results, fallbackNote, undefined, input.use_template, capMeta);
+  return buildSearchResponse(
+    input,
+    results,
+    fallbackNote,
+    undefined,
+    input.use_template,
+    capMeta,
+    thresholdFiltered,
+  );
 }
 
 /**
@@ -380,7 +414,7 @@ export function registerSearchCodebaseTool(
         score_threshold: z
           .number()
           .optional()
-          .describe('Minimum similarity score 0-1 (default: 0.3)'),
+          .describe('Minimum similarity score 0-1 (default: 0.5). Set to 0 to disable filtering.'),
         expand_hops: z
           .number()
           .optional()
