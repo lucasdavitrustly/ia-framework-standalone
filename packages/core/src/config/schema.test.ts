@@ -188,3 +188,20 @@ describe('RetrievalConfigSchema — classificationRules', () => {
     ).toThrow();
   });
 });
+
+describe('RetrievalConfigSchema — earlyExitConfidence', () => {
+  it('accepts earlyExitConfidence: 0.8 and parses correctly', () => {
+    const result = RetrievalConfigSchema.parse({ earlyExitConfidence: 0.8 });
+    expect(result.earlyExitConfidence).toBe(0.8);
+  });
+
+  it('defaults earlyExitConfidence to 0.8 when omitted', () => {
+    const result = RetrievalConfigSchema.parse({});
+    expect(result.earlyExitConfidence).toBe(0.8);
+  });
+
+  it('rejects earlyExitConfidence values outside 0-1 range', () => {
+    expect(() => RetrievalConfigSchema.parse({ earlyExitConfidence: 1.5 })).toThrow();
+    expect(() => RetrievalConfigSchema.parse({ earlyExitConfidence: -0.1 })).toThrow();
+  });
+});

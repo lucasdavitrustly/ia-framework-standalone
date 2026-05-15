@@ -170,6 +170,8 @@ export interface RetrievalConfig {
   autoContextTopK: number;
   /** Default minimum relevance score for filtering (0-1). Omit or 0 to disable. */
   scoreThreshold?: number | undefined;
+  /** Confidence threshold for keyword early exit (0-1, default 0.8). */
+  earlyExitConfidence?: number | undefined;
 }
 
 /**
