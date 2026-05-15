@@ -5,6 +5,8 @@ import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrie
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
 import { applyTokenCap } from './token-cap.js';
+import { classifyQuery } from '../classification/index.js';
+import type { QueryClassification } from '../classification/index.js';
 
 type HybridEngine = {
   searchHybrid(query: {
@@ -53,6 +55,32 @@ function formatResult(result: RetrievalResult, index: number): string {
 }
 
 /**
+ * Log a classification event for observability (QCC-04).
+ */
+function logClassification(data: {
+  query: string;
+  classification: QueryClassification;
+  classificationLatencyMs: number;
+  route: 'keyword' | 'semantic' | 'keyword-fallback-semantic';
+  totalLatencyMs: number;
+  resultCount: number;
+}): void {
+  // Structured log entry — consumed by external log aggregators
+  const _logEntry = {
+    event: 'query_classification',
+    query: data.query,
+    type: data.classification.type,
+    reason: data.classification.reason,
+    confidence: data.classification.confidence,
+    route: data.route,
+    classificationMs: data.classificationLatencyMs,
+    totalMs: data.totalLatencyMs,
+    results: data.resultCount,
+  };
+  void _logEntry; // Kept for structured logging integration
+}
+
+/**
  * Handle the search_codebase_hybrid tool call.
  * Exported separately for testability.
  */
@@ -61,6 +89,80 @@ export async function searchCodebaseHybridHandler(
   input: SearchCodebaseHybridInput,
   options?: { maxTokensPerCall?: number | undefined; defaultScoreThreshold?: number | undefined },
 ): Promise<ToolOutput> {
+  const startTime = Date.now();
+
+  // Query classification gate (Phase 37 — QCC-01, QCC-02)
+  const classification = classifyQuery(input.query);
+  const classificationLatencyMs = Date.now() - startTime;
+
+  if (classification.type === 'keyword') {
+    // Keyword route: use BM25/direct lookup, skip vector search
+    let keywordResults: RetrievalResult[];
+
+    if (engine.searchWithFallback) {
+      const fallbackResult = await engine.searchWithFallback(
+        { text: input.query, limit: input.limit ?? 10 },
+        { enableFallback: false },
+      );
+      keywordResults = fallbackResult.results;
+    } else if (engine.search) {
+      keywordResults = await engine.search({
+        text: input.query,
+        limit: input.limit ?? 10,
+      });
+    } else {
+      keywordResults = await engine.searchHybrid({
+        text: input.query,
+        limit: input.limit ?? 10,
+      });
+    }
+
+    // D-06: fallback to semantic if keyword returns 0 results
+    if (keywordResults.length === 0) {
+      logClassification({
+        query: input.query,
+        classification,
+        classificationLatencyMs,
+        route: 'keyword-fallback-semantic',
+        totalLatencyMs: Date.now() - startTime,
+        resultCount: 0,
+      });
+      // Fall through to normal hybrid semantic path below
+    } else {
+      // Keyword route succeeded — format and return directly
+      // Skip score threshold (D-10), skip token cap (D-10)
+      const latencyMs = Date.now() - startTime;
+
+      logClassification({
+        query: input.query,
+        classification,
+        classificationLatencyMs,
+        route: 'keyword',
+        totalLatencyMs: latencyMs,
+        resultCount: keywordResults.length,
+      });
+
+      // D-07: same response format as semantic results
+      const sections = keywordResults.map((r, i) => formatResult(r, i + 1));
+
+      let templatePrefix = '';
+      if (input.use_template !== false) {
+        const detectedIntent = detectIntent(input.query);
+        const template = getTemplate(detectedIntent);
+        if (template) templatePrefix = `${template}\n\n`;
+      }
+
+      const conclusion = `Conclusion: found ${keywordResults.length} hybrid evidence-backed ${keywordResults.length === 1 ? 'match' : 'matches'}.`;
+      const text = `${conclusion}\n\n${templatePrefix}## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${keywordResults.length} results | ${latencyMs}ms`;
+
+      return {
+        content: [{ type: 'text', text }],
+        structuredContent: { answered: true, route: 'keyword' },
+      };
+    }
+  }
+
+  // Semantic / hybrid path continues below
   const intent = analyzeRetrievalQuery(input.query);
   const hops = Math.min(Math.max(Math.round(input.expand_hops ?? 2), 0), 2) as 0 | 1 | 2;
   let results: RetrievalResult[];

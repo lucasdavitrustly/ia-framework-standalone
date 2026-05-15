@@ -6,6 +6,8 @@ import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
 import { applyTokenCap } from './token-cap.js';
+import { classifyQuery } from '../classification/index.js';
+import type { QueryClassification } from '../classification/index.js';
 
 type Engine = {
   search(query: {
@@ -235,6 +237,36 @@ async function expandHierarchy(
 }
 
 /**
+ * Log a classification event for observability (QCC-04).
+ */
+function logClassification(
+  observability: ObservabilityConfig,
+  data: {
+    query: string;
+    classification: QueryClassification;
+    classificationLatencyMs: number;
+    route: 'keyword' | 'semantic' | 'keyword-fallback-semantic';
+    totalLatencyMs: number;
+    resultCount: number;
+  },
+): void {
+  const logEntry = {
+    event: 'query_classification',
+    query: data.query,
+    type: data.classification.type,
+    reason: data.classification.reason,
+    confidence: data.classification.confidence,
+    route: data.route,
+    classificationMs: data.classificationLatencyMs,
+    totalMs: data.totalLatencyMs,
+    results: data.resultCount,
+  };
+  if ('logger' in observability && typeof (observability as any).logger?.info === 'function') {
+    (observability as any).logger.info(logEntry, 'query_classification');
+  }
+}
+
+/**
  * Handle the search_codebase tool call.
  * Exported separately for testability.
  */
@@ -244,6 +276,76 @@ export async function searchCodebaseHandler(
   observability?: ObservabilityConfig,
 ): Promise<ToolOutput> {
   const startTime = Date.now();
+
+  // Query classification gate (Phase 37 — QCC-01, QCC-02)
+  const classification = classifyQuery(input.query);
+  const classificationLatencyMs = Date.now() - startTime;
+
+  if (classification.type === 'keyword') {
+    // Keyword route: use BM25/direct lookup, skip vector search
+    // Per D-10: skip score threshold filtering and token cap
+    let keywordResults: RetrievalResult[];
+
+    if (engine.searchWithFallback) {
+      const fallbackResult = await engine.searchWithFallback(
+        { text: input.query, limit: input.limit ?? 10 },
+        { enableFallback: false },
+      );
+      keywordResults = fallbackResult.results;
+    } else {
+      keywordResults = await engine.search({
+        text: input.query,
+        limit: input.limit ?? 10,
+      });
+    }
+
+    // D-06: fallback to semantic if keyword returns 0 results
+    if (keywordResults.length === 0) {
+      // Log fallback, then fall through to normal semantic path
+      observability?.metricsStore &&
+        logClassification(observability, {
+          query: input.query,
+          classification,
+          classificationLatencyMs,
+          route: 'keyword-fallback-semantic',
+          totalLatencyMs: Date.now() - startTime,
+          resultCount: 0,
+        });
+    } else {
+      // Keyword route succeeded — format and return directly
+      // Skip score threshold (D-10), skip token cap (D-10)
+      const latencyMs = Date.now() - startTime;
+
+      // Structured logging per D-11
+      observability?.metricsStore &&
+        logClassification(observability, {
+          query: input.query,
+          classification,
+          classificationLatencyMs,
+          route: 'keyword',
+          totalLatencyMs: latencyMs,
+          resultCount: keywordResults.length,
+        });
+
+      // D-07: same response format as semantic results
+      const sections = keywordResults.map((r, i) => formatResult(r, i + 1));
+
+      // Template injection still applies if enabled
+      let templatePrefix = '';
+      if (input.use_template !== false) {
+        const detectedIntent = detectIntent(input.query);
+        const template = getTemplate(detectedIntent);
+        if (template) templatePrefix = `${template}\n\n`;
+      }
+
+      const guardrailLead = `Conclusion: found ${keywordResults.length} evidence-backed ${keywordResults.length === 1 ? 'match' : 'matches'}.`;
+      const text = `${guardrailLead}\n\n${templatePrefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${keywordResults.length} results | ${latencyMs}ms`;
+
+      return toTextResult(text, { answered: true, route: 'keyword' });
+    }
+  }
+
+  // Semantic path continues below (existing code unchanged)
 
   // Determine expansion hops: input overrides config default
   const hops = input.expand_hops ?? observability?.defaultExpansionHops ?? 2;
@@ -381,6 +483,17 @@ export async function searchCodebaseHandler(
         : false,
     );
   }
+
+  // Log classification for semantic path
+  observability?.metricsStore &&
+    logClassification(observability, {
+      query: input.query,
+      classification,
+      classificationLatencyMs,
+      route: classification.type === 'keyword' ? 'keyword-fallback-semantic' : 'semantic',
+      totalLatencyMs: Date.now() - startTime,
+      resultCount: results.length,
+    });
 
   return buildSearchResponse(
     input,

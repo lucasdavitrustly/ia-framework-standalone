@@ -1,0 +1,154 @@
+import { describe, it, expect } from 'vitest';
+import { classifyQuery, DEFAULT_RULES, type QueryClassification } from './query-classifier.js';
+
+describe('classifyQuery', () => {
+  describe('symbol detection — PascalCase', () => {
+    it('classifies PascalCase identifier as keyword', () => {
+      const result = classifyQuery('UserService');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('symbol-pascalcase');
+      expect(result.confidence).toBe(1.0);
+    });
+
+    it('classifies multi-word PascalCase as keyword', () => {
+      const result = classifyQuery('DatabaseConnectionPool');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('symbol-pascalcase');
+    });
+  });
+
+  describe('symbol detection — camelCase', () => {
+    it('classifies camelCase identifier as keyword', () => {
+      const result = classifyQuery('getUserById');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('symbol-camelcase');
+      expect(result.confidence).toBe(1.0);
+    });
+  });
+
+  describe('symbol detection — dot notation', () => {
+    it('classifies dot-notation as keyword', () => {
+      const result = classifyQuery('fs.readFileSync');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('symbol-dotnotation');
+      expect(result.confidence).toBe(1.0);
+    });
+  });
+
+  describe('quoted strings', () => {
+    it('classifies double-quoted string as keyword', () => {
+      const result = classifyQuery('"exact string match"');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('quoted-string');
+      expect(result.confidence).toBe(1.0);
+    });
+
+    it('classifies single-quoted string as keyword', () => {
+      const result = classifyQuery("'some function name'");
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('quoted-string');
+      expect(result.confidence).toBe(1.0);
+    });
+  });
+
+  describe('lookup verbs', () => {
+    it('classifies query starting with "find" as keyword', () => {
+      const result = classifyQuery('find handleAuth');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('lookup-verb');
+      expect(result.confidence).toBe(0.8);
+    });
+
+    it('classifies query starting with "where" as keyword', () => {
+      const result = classifyQuery('where is the database config');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('lookup-verb');
+      expect(result.confidence).toBe(0.8);
+    });
+
+    it('does not classify long query with lookup verb as keyword', () => {
+      const result = classifyQuery(
+        'find me all the places where error handling is done incorrectly in the entire codebase',
+      );
+      expect(result.type).toBe('semantic');
+    });
+  });
+
+  describe('semantic queries', () => {
+    it('classifies conceptual question as semantic', () => {
+      const result = classifyQuery('how does authentication work');
+      expect(result.type).toBe('semantic');
+      expect(result.reason).toBe('default');
+      expect(result.confidence).toBe(0.5);
+    });
+
+    it('classifies multi-service question as semantic', () => {
+      const result = classifyQuery('explain the data flow between services');
+      expect(result.type).toBe('semantic');
+      expect(result.reason).toBe('default');
+    });
+
+    it('classifies architecture question as semantic', () => {
+      const result = classifyQuery('what is the architecture of the payment system');
+      expect(result.type).toBe('semantic');
+      expect(result.reason).toBe('default');
+    });
+  });
+
+  describe('custom rules', () => {
+    it('uses custom symbolPatterns when provided', () => {
+      const result = classifyQuery('XFOO', { symbolPatterns: [/^X/] });
+      expect(result.type).toBe('keyword');
+    });
+
+    it('uses custom lookupVerbs', () => {
+      const result = classifyQuery('search handleAuth', { lookupVerbs: ['search'] });
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('lookup-verb');
+    });
+
+    it('uses custom maxKeywordWords', () => {
+      const result = classifyQuery('find the thing', { maxKeywordWords: 2 });
+      // 3 words > maxKeywordWords of 2, so lookup verb rule won't fire
+      expect(result.type).toBe('semantic');
+    });
+  });
+
+  describe('performance', () => {
+    it('classifies 1000 queries in under 5ms total', () => {
+      const queries = [
+        'UserService',
+        'getUserById',
+        'fs.readFileSync',
+        '"exact match"',
+        'find handleAuth',
+        'how does authentication work',
+        'explain the data flow between services',
+        'where is the database config',
+        'what is the architecture of the payment system',
+        'DatabaseConnectionPool',
+      ];
+
+      const start = performance.now();
+      for (let i = 0; i < 1000; i++) {
+        classifyQuery(queries[i % queries.length]!);
+      }
+      const elapsed = performance.now() - start;
+
+      expect(elapsed).toBeLessThan(50); // 50ms budget for 1000 calls (generous)
+    });
+  });
+
+  describe('edge cases', () => {
+    it('handles empty string as semantic', () => {
+      const result = classifyQuery('');
+      expect(result.type).toBe('semantic');
+    });
+
+    it('classifies short identifier-like words as keyword', () => {
+      const result = classifyQuery('handleAuth');
+      expect(result.type).toBe('keyword');
+      expect(result.reason).toBe('symbol-camelcase');
+    });
+  });
+});

@@ -239,3 +239,82 @@ describe('searchCodebaseHandler - token cap', () => {
     expect(text).toContain('src/direct0.ts');
   });
 });
+
+describe('query classification routing', () => {
+  it('keyword query routes to searchWithFallback, not searchWithExpansion', async () => {
+    const result = makeResult({ chunkId: 'kw-1', name: 'UserService' });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([]),
+      search: vi.fn().mockResolvedValue([]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [result], suggestions: [], fallback_used: false }),
+    };
+
+    const output = await searchCodebaseHandler(engine, { query: 'UserService' });
+
+    expect(engine.searchWithFallback).toHaveBeenCalled();
+    expect(engine.searchWithExpansion).not.toHaveBeenCalled();
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('keyword-routed');
+  });
+
+  it('semantic query routes to searchWithExpansion', async () => {
+    const result = makeResult({ chunkId: 'sem-1' });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [], suggestions: [], fallback_used: false }),
+    };
+
+    const output = await searchCodebaseHandler(engine, {
+      query: 'how does authentication work in this project',
+    });
+
+    expect(engine.searchWithExpansion).toHaveBeenCalled();
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).not.toContain('keyword-routed');
+  });
+
+  it('keyword query with 0 results falls back to semantic path', async () => {
+    const result = makeResult({ chunkId: 'fb-1' });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [], suggestions: [], fallback_used: false }),
+    };
+
+    const output = await searchCodebaseHandler(engine, { query: 'NonExistentSymbol' });
+
+    // searchWithFallback called first (keyword route), then searchWithExpansion (semantic fallback)
+    expect(engine.searchWithFallback).toHaveBeenCalled();
+    expect(engine.searchWithExpansion).toHaveBeenCalled();
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).not.toContain('keyword-routed');
+  });
+
+  it('keyword route skips score threshold filtering', async () => {
+    const lowScoreResult = makeResult({ chunkId: 'low-1', score: 0.1 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([]),
+      search: vi.fn().mockResolvedValue([]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [lowScoreResult], suggestions: [], fallback_used: false }),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'UserService' },
+      { defaultScoreThreshold: 0.5 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('keyword-routed');
+    expect(text).toContain('1 results');
+  });
+});

@@ -8,9 +8,11 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current State: v1.4 SHIPPED (2026-04-30)
+## Current State: Phase 37 complete (2026-05-15)
 
-**What shipped:**
+**Latest:** Phase 37 — Query complexity classifier routes queries as keyword/semantic, integrated into MCP search handlers.
+
+**What shipped (v1.4, 2026-04-30):**
 
 - Relevance threshold with configurable score filtering and empty-result signaling
 - Hierarchy-aware chunking — class inheritance/decorator metadata in AST chunks
@@ -186,4 +188,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-30 after v1.4 milestone_
+_Last updated: 2026-05-15 after Phase 37 completion_

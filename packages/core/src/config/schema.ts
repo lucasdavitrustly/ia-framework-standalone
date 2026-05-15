@@ -44,6 +44,17 @@ export const ProjectProfileSchema = z.object({
 
 export const RetrievalModeSchema = z.enum(['mcp-only', 'auto-context', 'combined']);
 
+export const ClassificationRulesSchema = z
+  .object({
+    /** Regex patterns (as strings) that identify symbol/identifier queries */
+    symbolPatterns: z.array(z.string()).optional(),
+    /** Verbs that indicate a lookup query when at the start */
+    lookupVerbs: z.array(z.string()).optional(),
+    /** Max word count for a query to be considered keyword-type */
+    maxKeywordWords: z.number().int().min(1).max(20).optional(),
+  })
+  .optional();
+
 export const RetrievalConfigSchema = z.object({
   /** Retrieval mode: mcp-only (default), auto-context (v2), combined (v2) */
   mode: RetrievalModeSchema.default('mcp-only'),
@@ -55,6 +66,8 @@ export const RetrievalConfigSchema = z.object({
   maxTokensPerCall: z.number().int().positive().optional(),
   /** Default minimum relevance score threshold. Results below this are filtered out. */
   scoreThreshold: z.number().min(0).max(1).optional(),
+  /** Classification rules for query complexity classifier */
+  classificationRules: ClassificationRulesSchema,
 });
 
 export const ProjectConfigSchema = z.object({
