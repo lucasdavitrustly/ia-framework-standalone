@@ -32,7 +32,7 @@ describe('searchCodebaseHandler — engine call (no server-side threshold)', () 
     const searchWithExpansion = vi.fn().mockResolvedValue([makeResult(0.8)]);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    await searchCodebaseHandler(engine, { query: 'find auth handler' });
+    await searchCodebaseHandler(engine, { query: 'explain how authentication works in the system' });
 
     expect(searchWithExpansion).toHaveBeenCalledWith(
       expect.objectContaining({ scoreThreshold: undefined }),
@@ -44,7 +44,7 @@ describe('searchCodebaseHandler — engine call (no server-side threshold)', () 
     const searchWithExpansion = vi.fn().mockResolvedValue([makeResult(0.8)]);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    await searchCodebaseHandler(engine, { query: 'auth handler', score_threshold: 0.5 });
+    await searchCodebaseHandler(engine, { query: 'explain how authentication works in detail', score_threshold: 0.5 });
 
     expect(searchWithExpansion).toHaveBeenCalledWith(
       expect.objectContaining({ scoreThreshold: 0.5 }),
@@ -68,7 +68,7 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
     const searchWithExpansion = vi.fn().mockResolvedValue(results);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    const output = await searchCodebaseHandler(engine, { query: 'find something' });
+    const output = await searchCodebaseHandler(engine, { query: 'explain how the system processes data internally' });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     expect(text).toContain('src/c.ts');
@@ -84,7 +84,7 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
     const engine = { search: vi.fn(), searchWithExpansion };
 
     const output = await searchCodebaseHandler(engine, {
-      query: 'find something',
+      query: 'explain how the system processes data internally',
       score_threshold: 0,
     });
     const text = (output.content[0] as { type: string; text: string }).text;
@@ -100,7 +100,7 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
     const engine = { search: vi.fn(), searchWithExpansion };
 
     const output = await searchCodebaseHandler(engine, {
-      query: 'find something',
+      query: 'explain how the system processes data internally',
       score_threshold: 0.7,
     });
     const text = (output.content[0] as { type: string; text: string }).text;
@@ -117,7 +117,7 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
 
     const output = await searchCodebaseHandler(
       engine,
-      { query: 'find something' },
+      { query: 'explain how the system processes data internally' },
       {
         defaultScoreThreshold: 0.6,
       },
@@ -145,7 +145,7 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
     // If filtering happened AFTER cap, cap might include low-score results
     const output = await searchCodebaseHandler(
       engine,
-      { query: 'find something' },
+      { query: 'explain how the system processes data internally' },
       {
         maxTokensPerCall: 10, // tight budget
       },
@@ -173,7 +173,7 @@ describe('searchCodebaseHybridHandler — client-side score filtering', () => {
     const engine = { searchHybrid };
 
     const input: SearchCodebaseHybridInput = {
-      query: 'find handler',
+      query: 'explain how request handling works internally',
       score_threshold: 0.025,
       expand_hops: 0,
     };
@@ -192,7 +192,7 @@ describe('searchCodebaseHybridHandler — client-side score filtering', () => {
 
     // No score_threshold provided — hybrid should NOT filter with 0.5 default
     const output = await searchCodebaseHybridHandler(engine, {
-      query: 'find handler',
+      query: 'explain how request handling works internally',
       expand_hops: 0,
     });
     const text = (output.content[0] as { type: string; text: string }).text;
@@ -212,7 +212,7 @@ describe('searchCodebaseHandler — anti-hallucination message when threshold fi
     const engine = { search: vi.fn(), searchWithExpansion };
 
     // Default 0.5 threshold removes all; no searchWithFallback on engine
-    const output = await searchCodebaseHandler(engine, { query: 'find auth handler' });
+    const output = await searchCodebaseHandler(engine, { query: 'explain how authentication works in the system' });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     expect(text).toContain('Do not guess or hallucinate');
@@ -235,7 +235,7 @@ describe('searchCodebaseHandler — anti-hallucination message when threshold fi
     const searchWithFallback = vi.fn().mockResolvedValue(fallbackResult);
     const engine = { search: vi.fn(), searchWithExpansion, searchWithFallback };
 
-    const output = await searchCodebaseHandler(engine, { query: 'find auth handler' });
+    const output = await searchCodebaseHandler(engine, { query: 'explain how authentication works in the system' });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     // Fallback suggestions returned — no anti-hallucination message needed
@@ -249,7 +249,7 @@ describe('searchCodebaseHandler — anti-hallucination message when threshold fi
     const searchWithExpansion = vi.fn().mockResolvedValue(results);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    const output = await searchCodebaseHandler(engine, { query: 'find handler' });
+    const output = await searchCodebaseHandler(engine, { query: 'explain how request handling works internally' });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     expect(text).not.toContain('Do not guess or hallucinate');
@@ -265,7 +265,7 @@ describe('searchCodebaseHybridHandler — anti-hallucination message', () => {
 
     // score_threshold=0.01 removes the 0.005 result
     const output = await searchCodebaseHybridHandler(engine, {
-      query: 'find handler',
+      query: 'explain how request handling works internally',
       score_threshold: 0.01,
       expand_hops: 0,
     });
