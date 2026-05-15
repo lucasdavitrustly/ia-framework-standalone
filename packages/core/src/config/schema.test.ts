@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { IndexingConfigSchema, LlmConfigSchema, RetrievalConfigSchema } from './schema.js';
+import {
+  IndexingConfigSchema,
+  LlmConfigSchema,
+  RetrievalConfigSchema,
+  ClassificationRulesSchema,
+} from './schema.js';
 
 describe('IndexingConfigSchema — embeddingConcurrency', () => {
   const validBase = {
@@ -131,5 +136,55 @@ describe('RetrievalConfigSchema — scoreThreshold', () => {
 
   it('rejects scoreThreshold < 0', () => {
     expect(() => RetrievalConfigSchema.parse({ scoreThreshold: -0.1 })).toThrow();
+  });
+});
+
+describe('RetrievalConfigSchema — classificationRules', () => {
+  it('accepts config with classificationRules', () => {
+    const result = RetrievalConfigSchema.parse({
+      classificationRules: {
+        symbolPatterns: ['^[A-Z]'],
+        lookupVerbs: ['find', 'where'],
+        maxKeywordWords: 5,
+      },
+    });
+    expect(result.classificationRules).toBeDefined();
+    expect(result.classificationRules!.symbolPatterns).toEqual(['^[A-Z]']);
+    expect(result.classificationRules!.lookupVerbs).toEqual(['find', 'where']);
+    expect(result.classificationRules!.maxKeywordWords).toBe(5);
+  });
+
+  it('accepts config without classificationRules (optional)', () => {
+    const result = RetrievalConfigSchema.parse({});
+    expect(result.classificationRules).toBeUndefined();
+  });
+
+  it('accepts partial classificationRules (all fields optional)', () => {
+    const result = RetrievalConfigSchema.parse({
+      classificationRules: { lookupVerbs: ['search'] },
+    });
+    expect(result.classificationRules!.lookupVerbs).toEqual(['search']);
+    expect(result.classificationRules!.symbolPatterns).toBeUndefined();
+  });
+
+  it('rejects non-string array in symbolPatterns', () => {
+    expect(() =>
+      RetrievalConfigSchema.parse({
+        classificationRules: { symbolPatterns: [123] },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects maxKeywordWords outside valid range', () => {
+    expect(() =>
+      RetrievalConfigSchema.parse({
+        classificationRules: { maxKeywordWords: 0 },
+      }),
+    ).toThrow();
+    expect(() =>
+      RetrievalConfigSchema.parse({
+        classificationRules: { maxKeywordWords: 21 },
+      }),
+    ).toThrow();
   });
 });
