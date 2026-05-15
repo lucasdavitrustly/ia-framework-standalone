@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 40 context gathered; ready for planning
+**Current focus:** Phase 40 completed; ready to ship or start Phase 41
 
 ## Current Position
 
-Phase: 40 (context gathered)
-Plan: Not started
+Phase: 40 (completed, ready to ship)
+Plan: 40-01 completed
 
 ## Velocity Summary
 
@@ -36,7 +36,7 @@ Plan: Not started
 | 37    | query-complexity-classifier | P0       | M    | packages/mcp-server                      | context gathered |
 | 38    | line-number-aware-chunking  | P1       | M    | packages/core                            | shipped PR #39   |
 | 39    | confidence-based-early-exit | P2       | S    | packages/mcp-server                      | shipped PR #39   |
-| 40    | benchmark-preflight-tool    | P3       | S    | packages/benchmark + packages/mcp-server | context gathered |
+| 40    | benchmark-preflight-tool    | P3       | S    | packages/benchmark + packages/mcp-server | completed        |
 | 41    | hybrid-retrieval-tuning     | P4       | M    | packages/core                            | pending          |
 
 **v1.0:** 11 phases, 34 plans, ~14 min/plan, ~7 hours total
@@ -74,6 +74,6 @@ None.
 ## Session Continuity
 
 Last activity: 2026-05-15
-Stopped at: Phase 40 context gathered
-Resume file: .planning/phases/40-benchmark-preflight-tool/40-CONTEXT.md
-Next options: /gsd-plan-phase 40
+Stopped at: Phase 40 completed — ready to ship or start Phase 41
+Resume file: .planning/phases/40-benchmark-preflight-tool/40-01-SUMMARY.md
+Next options: /gsd-ship or /gsd-plan-phase 41
