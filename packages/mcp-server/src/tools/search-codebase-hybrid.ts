@@ -64,6 +64,8 @@ function logClassification(data: {
   route: 'keyword' | 'semantic' | 'keyword-fallback-semantic';
   totalLatencyMs: number;
   resultCount: number;
+  earlyExit?: boolean | undefined;
+  earlyExitReason?: string | undefined;
 }): void {
   // Structured log entry — consumed by external log aggregators
   const _logEntry = {
@@ -76,6 +78,8 @@ function logClassification(data: {
     classificationMs: data.classificationLatencyMs,
     totalMs: data.totalLatencyMs,
     results: data.resultCount,
+    ...(data.earlyExit !== undefined ? { earlyExit: data.earlyExit } : {}),
+    ...(data.earlyExitReason ? { earlyExitReason: data.earlyExitReason } : {}),
   };
   void _logEntry; // Kept for structured logging integration
 }
@@ -87,7 +91,11 @@ function logClassification(data: {
 export async function searchCodebaseHybridHandler(
   engine: HybridEngine,
   input: SearchCodebaseHybridInput,
-  options?: { maxTokensPerCall?: number | undefined; defaultScoreThreshold?: number | undefined },
+  options?: {
+    maxTokensPerCall?: number | undefined;
+    defaultScoreThreshold?: number | undefined;
+    earlyExitConfidence?: number | undefined;
+  },
 ): Promise<ToolOutput> {
   const startTime = Date.now();
 
@@ -119,6 +127,7 @@ export async function searchCodebaseHybridHandler(
 
     // D-06: fallback to semantic if keyword returns 0 results
     if (keywordResults.length === 0) {
+      const earlyExitThreshold = options?.earlyExitConfidence ?? 0.8;
       logClassification({
         query: input.query,
         classification,
@@ -126,12 +135,17 @@ export async function searchCodebaseHybridHandler(
         route: 'keyword-fallback-semantic',
         totalLatencyMs: Date.now() - startTime,
         resultCount: 0,
+        earlyExit: false,
+        earlyExitReason:
+          classification.confidence >= earlyExitThreshold ? 'fallback-no-results' : undefined,
       });
       // Fall through to normal hybrid semantic path below
     } else {
       // Keyword route succeeded — format and return directly
       // Skip score threshold (D-10), skip token cap (D-10)
       const latencyMs = Date.now() - startTime;
+      const earlyExitThreshold = options?.earlyExitConfidence ?? 0.8;
+      const isEarlyExit = classification.confidence >= earlyExitThreshold;
 
       logClassification({
         query: input.query,
@@ -140,6 +154,8 @@ export async function searchCodebaseHybridHandler(
         route: 'keyword',
         totalLatencyMs: latencyMs,
         resultCount: keywordResults.length,
+        earlyExit: isEarlyExit,
+        earlyExitReason: isEarlyExit ? 'confidence-above-threshold' : undefined,
       });
 
       // D-07: same response format as semantic results
