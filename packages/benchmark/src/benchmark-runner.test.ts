@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BenchmarkRunner } from './benchmark-runner.js';
-import type { BenchmarkConfig, BenchmarkQuery, ConfigSnapshot } from './types.js';
+import { BenchmarkPreflightError } from './mcp-preflight.js';
+import type {
+  BenchmarkConfig,
+  BenchmarkQuery,
+  BenchmarkToolProbe,
+  ConfigSnapshot,
+} from './types.js';
 import type { RetrievalResult, RetrievalQuery } from '@ia-framework/retrieval';
 
 function makeRetrievalResult(relativePath: string, score = 0.9): RetrievalResult {
@@ -363,5 +369,107 @@ Temperature: 1.0
     const result = await runner.run(queries, makeConfigSnapshot());
 
     expect(result.queries[0]!.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  // --- Preflight integration tests ---
+
+  function makeProbe(tool: string, callable: boolean): BenchmarkToolProbe {
+    return { tool, available: callable, callable, reason: callable ? undefined : 'not available' };
+  }
+
+  function makeAllReadyProbes(): BenchmarkToolProbe[] {
+    return [
+      makeProbe('search_codebase', true),
+      makeProbe('search_codebase_hybrid', true),
+      makeProbe('get_file', true),
+      makeProbe('get_module_dependencies', true),
+      makeProbe('query_database', true),
+    ];
+  }
+
+  it('Test 17: run() with blocked required tool throws BenchmarkPreflightError', async () => {
+    const probes = makeAllReadyProbes();
+    probes[0] = makeProbe('search_codebase', false); // block a required tool
+    probes[2] = makeProbe('get_file', false); // block its fallback too
+
+    const mockEngine = makeMockSearchEngine([]);
+    const preflightProvider = { probe: vi.fn().mockResolvedValue(probes) };
+    const runner = new BenchmarkRunner(mockEngine, makeConfig(), undefined, preflightProvider);
+    const queries: BenchmarkQuery[] = [
+      { id: 'auth', query: 'auth', expectedFiles: ['src/middleware/auth.ts'] },
+    ];
+
+    await expect(runner.run(queries, makeConfigSnapshot())).rejects.toThrow(
+      BenchmarkPreflightError,
+    );
+    expect(preflightProvider.probe).toHaveBeenCalledOnce();
+  });
+
+  it('Test 18: run() with skipPreflight=true and blocked required tool does NOT throw', async () => {
+    const probes = makeAllReadyProbes();
+    probes[0] = makeProbe('search_codebase', false);
+    probes[2] = makeProbe('get_file', false);
+
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const preflightProvider = { probe: vi.fn().mockResolvedValue(probes) };
+    const runner = new BenchmarkRunner(mockEngine, makeConfig(), undefined, preflightProvider);
+    const queries: BenchmarkQuery[] = [
+      { id: 'auth', query: 'auth', expectedFiles: ['src/middleware/auth.ts'] },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot(), { skipPreflight: true });
+    expect(result.queries).toHaveLength(1);
+    expect(preflightProvider.probe).not.toHaveBeenCalled();
+  });
+
+  it('Test 19: run() with all tools ready proceeds normally', async () => {
+    const probes = makeAllReadyProbes();
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const preflightProvider = { probe: vi.fn().mockResolvedValue(probes) };
+    const runner = new BenchmarkRunner(mockEngine, makeConfig(), undefined, preflightProvider);
+    const queries: BenchmarkQuery[] = [
+      { id: 'auth', query: 'auth', expectedFiles: ['src/middleware/auth.ts'] },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    expect(result.queries).toHaveLength(1);
+    expect(result.queries[0]!.hit).toBe(true);
+    expect(preflightProvider.probe).toHaveBeenCalledOnce();
+  });
+
+  it('Test 20: BenchmarkPreflightError.report contains the full report', async () => {
+    const probes = makeAllReadyProbes();
+    probes[0] = makeProbe('search_codebase', false);
+    probes[2] = makeProbe('get_file', false);
+
+    const mockEngine = makeMockSearchEngine([]);
+    const preflightProvider = { probe: vi.fn().mockResolvedValue(probes) };
+    const runner = new BenchmarkRunner(mockEngine, makeConfig(), undefined, preflightProvider);
+    const queries: BenchmarkQuery[] = [
+      { id: 'auth', query: 'auth', expectedFiles: ['src/middleware/auth.ts'] },
+    ];
+
+    try {
+      await runner.run(queries, makeConfigSnapshot());
+      expect.unreachable('Should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(BenchmarkPreflightError);
+      const prefErr = err as BenchmarkPreflightError;
+      expect(prefErr.report.runnable).toBe(false);
+      expect(prefErr.report.blockedCount).toBeGreaterThan(0);
+      expect(prefErr.message).toContain('Preflight failed');
+      expect(prefErr.message).toContain('search_codebase');
+    }
+  });
+
+  it('Test 21: run() without preflightProvider skips preflight silently', async () => {
+    const mockEngine = makeMockSearchEngine([makeRetrievalResult('src/middleware/auth.ts')]);
+    const runner = new BenchmarkRunner(mockEngine, makeConfig());
+    const queries: BenchmarkQuery[] = [
+      { id: 'auth', query: 'auth', expectedFiles: ['src/middleware/auth.ts'] },
+    ];
+
+    const result = await runner.run(queries, makeConfigSnapshot());
+    expect(result.queries).toHaveLength(1);
   });
 });

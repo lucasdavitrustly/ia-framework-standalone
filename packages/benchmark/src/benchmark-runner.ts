@@ -4,10 +4,13 @@ import type {
   BenchmarkConfig,
   BenchmarkQuery,
   BenchmarkRun,
+  BenchmarkRunOptions,
+  BenchmarkToolProbe,
   ConfigSnapshot,
   QueryResult,
 } from './types.js';
 import { parseIdentityBlock, compareModelIdentity } from './identity-parser.js';
+import { evaluateBenchmarkPreflight, BenchmarkPreflightError } from './mcp-preflight.js';
 
 /**
  * Runs a set of benchmark queries against a SearchEngine and computes retrieval quality metrics.
@@ -29,9 +32,23 @@ export class BenchmarkRunner {
     private readonly searchEngine: { search(q: RetrievalQuery): Promise<RetrievalResult[]> },
     private readonly config: BenchmarkConfig,
     private readonly metadataProvider?: PromptMetadataProvider,
+    private readonly preflightProvider?: { probe(): Promise<BenchmarkToolProbe[]> },
   ) {}
 
-  async run(queries: BenchmarkQuery[], configSnapshot: ConfigSnapshot): Promise<BenchmarkRun> {
+  async run(
+    queries: BenchmarkQuery[],
+    configSnapshot: ConfigSnapshot,
+    options?: BenchmarkRunOptions,
+  ): Promise<BenchmarkRun> {
+    // Preflight gate
+    if (!options?.skipPreflight && this.preflightProvider) {
+      const probes = await this.preflightProvider.probe();
+      const report = evaluateBenchmarkPreflight(probes);
+      if (!report.runnable) {
+        throw new BenchmarkPreflightError(report);
+      }
+    }
+
     const queryResults: QueryResult[] = [];
 
     for (const q of queries) {

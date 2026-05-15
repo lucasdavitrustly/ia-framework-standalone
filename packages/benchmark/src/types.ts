@@ -143,6 +143,14 @@ export interface BenchmarkToolCapability {
   fallback?: BenchmarkToolProbe | undefined;
 }
 
+/** Options controlling a single benchmark run invocation. */
+export interface BenchmarkRunOptions {
+  /** When true, skip the preflight tool check entirely. */
+  skipPreflight?: boolean;
+  /** Pre-collected probe results; when provided, preflight uses these instead of probing. */
+  preflightProbes?: BenchmarkToolProbe[];
+}
+
 /** Summary of whether a benchmark run can proceed with MCP retrieval enabled. */
 export interface BenchmarkPreflightReport {
   runnable: boolean;

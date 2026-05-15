@@ -3,6 +3,7 @@ export type {
   QueryResult,
   BenchmarkRun,
   BenchmarkConfig,
+  BenchmarkRunOptions,
   ConfigSnapshot,
   BaselineResult,
   BenchmarkToolProbe,
@@ -16,6 +17,7 @@ export { BenchmarkRunner } from './benchmark-runner.js';
 export {
   DEFAULT_BENCHMARK_TOOL_REQUIREMENTS,
   evaluateBenchmarkPreflight,
+  BenchmarkPreflightError,
 } from './mcp-preflight.js';
 export {
   loadCorpus,

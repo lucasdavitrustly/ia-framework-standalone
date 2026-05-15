@@ -105,3 +105,17 @@ export function evaluateBenchmarkPreflight(
     tools,
   };
 }
+
+/** Thrown when preflight detects that required benchmark tools are blocked. */
+export class BenchmarkPreflightError extends Error {
+  constructor(public readonly report: BenchmarkPreflightReport) {
+    const table = report.tools
+      .map(
+        (t) =>
+          `  ${t.tool.padEnd(28)} ${t.status.padEnd(10)} required=${t.required}${t.status === 'blocked' ? `  reason: ${t.primary.reason ?? 'unknown'}` : ''}`,
+      )
+      .join('\n');
+    super(`Preflight failed: ${report.blockedCount} required tool(s) blocked\n\n${table}`);
+    this.name = 'BenchmarkPreflightError';
+  }
+}
