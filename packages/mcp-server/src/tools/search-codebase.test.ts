@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { searchCodebaseHandler } from './search-codebase.js';
+import { searchCodebaseHandler, formatResult } from './search-codebase.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 
 function makeResult(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
@@ -316,5 +316,34 @@ describe('query classification routing', () => {
     const text = (output.content[0] as { type: 'text'; text: string }).text;
     expect(text).toContain('keyword-routed');
     expect(text).toContain('1 results');
+  });
+});
+
+describe('formatResult - line number display', () => {
+  it('includes :startLine-endLine in header with named chunk', () => {
+    const result = makeResult({
+      startLine: 10,
+      endLine: 25,
+      relativePath: 'src/Foo.ts',
+      name: 'FooClass',
+      score: 0.85,
+      matchedVector: 'both',
+    });
+    const output = formatResult(result, 1);
+    expect(output).toContain('### 1. src/Foo.ts:10-25 (FooClass)');
+  });
+
+  it('includes :startLine-endLine in header without name', () => {
+    const result = makeResult({
+      startLine: 10,
+      endLine: 25,
+      relativePath: 'src/Foo.ts',
+      name: undefined,
+      score: 0.85,
+      matchedVector: 'both',
+    });
+    const output = formatResult(result, 1);
+    expect(output).toContain('### 1. src/Foo.ts:10-25 —');
+    expect(output).not.toMatch(/src\/Foo\.ts:10-25 \(/);
   });
 });

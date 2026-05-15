@@ -3,6 +3,7 @@ import type { VectorStore, VectorPoint, ChunkPayload } from '@ia-framework/vecto
 import type { CodeChunk } from '@ia-framework/ast-parser';
 import type { ContextSource } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
+import { readFile } from 'node:fs/promises';
 import PQueue from 'p-queue';
 import { walkFiles } from './file-walker.js';
 import {
@@ -294,6 +295,28 @@ export class IndexingPipeline {
           signal,
         });
         allChunks.push(...chunks);
+
+        // Validate line numbers against actual file line count (LNC-05)
+        try {
+          const fileContent = await readFile(filePath, 'utf-8');
+          const fileLineCount = fileContent.split('\n').length;
+          for (const chunk of chunks) {
+            if (chunk.endLine > fileLineCount) {
+              logger.warn(
+                {
+                  event: 'chunk_line_number_mismatch',
+                  filePath: chunk.relativePath,
+                  chunkName: chunk.name,
+                  endLine: chunk.endLine,
+                  fileLineCount,
+                },
+                `Chunk endLine (${chunk.endLine}) exceeds file line count (${fileLineCount})`,
+              );
+            }
+          }
+        } catch {
+          // If file can't be read for validation, skip check silently
+        }
 
         // Build dependency graph edges from parsed imports
         if (dependencyGraph) {

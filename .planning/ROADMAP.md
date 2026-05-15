@@ -37,7 +37,10 @@ See archived roadmaps in `.planning/milestones/`:
 
 ### 📋 v1.5 (Planned)
 
-_To be defined in next milestone planning._
+- [ ] Phase 38: Line-Number-Aware Chunking (1/1 plans)
+  - [ ] 38-01-PLAN.md — Add line number display to MCP results + validation warnings
+
+_Additional phases to be defined in next milestone planning._
 
 ## Progress
 
