@@ -15,6 +15,8 @@ type PreflightEngine = {
   ): Promise<RetrievalResult[]>;
   searchHybrid?(query: { text: string; limit?: number }): Promise<RetrievalResult[]>;
   getFile(path: string): Promise<RetrievalResult[]>;
+  getModuleDependencies?(modulePath: string): Promise<unknown>;
+  queryDatabase?(query: string): Promise<unknown>;
 };
 
 export interface BenchmarkPreflightInput {
@@ -58,6 +60,8 @@ const DEFAULT_BENCHMARK_TOOL_REQUIREMENTS: BenchmarkToolRequirement[] = [
   { tool: 'search_codebase', required: true, fallbackTool: 'get_file' },
   { tool: 'search_codebase_hybrid', required: true, fallbackTool: 'search_codebase' },
   { tool: 'get_file', required: true },
+  { tool: 'get_module_dependencies', required: false },
+  { tool: 'query_database', required: false },
 ];
 
 function evaluateBenchmarkPreflight(
@@ -145,9 +149,21 @@ export async function benchmarkPreflightHandler(
     await engine.searchHybrid({ text: probeQuery, limit: 1 });
   });
   const getFileProbe = probeTool('get_file', () => engine.getFile(probePath));
+  const moduleDepsProbe = probeTool('get_module_dependencies', async () => {
+    if (!engine.getModuleDependencies) {
+      throw new Error('module dependencies not supported by engine');
+    }
+    await engine.getModuleDependencies(probePath);
+  });
+  const queryDbProbe = probeTool('query_database', async () => {
+    if (!engine.queryDatabase) {
+      throw new Error('database query not supported by engine');
+    }
+    await engine.queryDatabase('SELECT 1');
+  });
 
   const report = evaluateBenchmarkPreflight(
-    await Promise.all([searchProbe, hybridProbe, getFileProbe]),
+    await Promise.all([searchProbe, hybridProbe, getFileProbe, moduleDepsProbe, queryDbProbe]),
     requirements,
   );
 

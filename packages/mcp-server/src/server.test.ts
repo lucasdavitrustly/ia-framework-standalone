@@ -42,6 +42,8 @@ function makeMockEngine(
     searchWithExpansion: vi.fn().mockResolvedValue(searchResults),
     searchHybrid: vi.fn().mockResolvedValue(searchResults),
     getFile: vi.fn().mockResolvedValue(fileResults),
+    getModuleDependencies: vi.fn().mockResolvedValue(fileResults),
+    queryDatabase: vi.fn().mockResolvedValue(fileResults),
   };
 }
 

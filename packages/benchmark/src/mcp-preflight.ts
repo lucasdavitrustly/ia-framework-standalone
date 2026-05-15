@@ -23,6 +23,16 @@ export const DEFAULT_BENCHMARK_TOOL_REQUIREMENTS: BenchmarkToolRequirement[] = [
     required: true,
     description: 'Direct indexed file evidence for fallback and citation',
   },
+  {
+    tool: 'get_module_dependencies',
+    required: false,
+    description: 'Dependency graph traversal for context expansion',
+  },
+  {
+    tool: 'query_database',
+    required: false,
+    description: 'Database schema and metadata retrieval',
+  },
 ];
 
 function toCapability(

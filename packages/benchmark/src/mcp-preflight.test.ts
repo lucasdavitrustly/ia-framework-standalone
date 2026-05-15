@@ -15,21 +15,45 @@ function makeProbe(overrides: Partial<BenchmarkToolProbe>): BenchmarkToolProbe {
 }
 
 describe('evaluateBenchmarkPreflight', () => {
+  it('has 5 tools in DEFAULT_BENCHMARK_TOOL_REQUIREMENTS', () => {
+    expect(DEFAULT_BENCHMARK_TOOL_REQUIREMENTS).toHaveLength(5);
+    expect(DEFAULT_BENCHMARK_TOOL_REQUIREMENTS.filter((r) => r.required === false)).toHaveLength(2);
+  });
+
   it('marks the report runnable when all required tools are callable', () => {
     const report = evaluateBenchmarkPreflight(
       [
         makeProbe({ tool: 'search_codebase' }),
         makeProbe({ tool: 'search_codebase_hybrid' }),
         makeProbe({ tool: 'get_file' }),
+        makeProbe({ tool: 'get_module_dependencies' }),
+        makeProbe({ tool: 'query_database' }),
+      ],
+      DEFAULT_BENCHMARK_TOOL_REQUIREMENTS,
+    );
+
+    expect(report.runnable).toBe(true);
+    expect(report.readyCount).toBe(5);
+    expect(report.fallbackCount).toBe(0);
+    expect(report.blockedCount).toBe(0);
+  });
+
+  it('marks the report runnable when only optional tools are blocked', () => {
+    const report = evaluateBenchmarkPreflight(
+      [
+        makeProbe({ tool: 'search_codebase' }),
+        makeProbe({ tool: 'search_codebase_hybrid' }),
+        makeProbe({ tool: 'get_file' }),
+        makeProbe({ tool: 'get_module_dependencies', callable: false, reason: 'not supported' }),
+        makeProbe({ tool: 'query_database', callable: false, reason: 'not supported' }),
       ],
       DEFAULT_BENCHMARK_TOOL_REQUIREMENTS,
     );
 
     expect(report.runnable).toBe(true);
     expect(report.readyCount).toBe(3);
-    expect(report.fallbackCount).toBe(0);
+    // Optional blocked tools get status 'fallback' (non-blocking)
     expect(report.blockedCount).toBe(0);
-    expect(report.tools.every((tool) => tool.status === 'ready')).toBe(true);
   });
 
   it('marks a tool as fallback when the primary probe is blocked but fallback is callable', () => {
@@ -38,13 +62,15 @@ describe('evaluateBenchmarkPreflight', () => {
         makeProbe({ tool: 'search_codebase', callable: false, reason: 'permission denied' }),
         makeProbe({ tool: 'search_codebase_hybrid' }),
         makeProbe({ tool: 'get_file' }),
+        makeProbe({ tool: 'get_module_dependencies' }),
+        makeProbe({ tool: 'query_database' }),
       ],
       DEFAULT_BENCHMARK_TOOL_REQUIREMENTS,
     );
 
     const semanticSearch = report.tools.find((tool) => tool.tool === 'search_codebase');
     expect(report.runnable).toBe(true);
-    expect(report.readyCount).toBe(2);
+    expect(report.readyCount).toBe(4);
     expect(report.fallbackCount).toBe(1);
     expect(report.blockedCount).toBe(0);
     expect(semanticSearch?.status).toBe('fallback');
@@ -57,6 +83,8 @@ describe('evaluateBenchmarkPreflight', () => {
         makeProbe({ tool: 'search_codebase', callable: false, reason: 'blocked' }),
         makeProbe({ tool: 'search_codebase_hybrid' }),
         makeProbe({ tool: 'get_file', callable: false, reason: 'index unavailable' }),
+        makeProbe({ tool: 'get_module_dependencies' }),
+        makeProbe({ tool: 'query_database' }),
       ],
       DEFAULT_BENCHMARK_TOOL_REQUIREMENTS,
     );
