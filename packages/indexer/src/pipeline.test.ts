@@ -25,6 +25,25 @@ const { mockPromptContentHash } = vi.hoisted(() => ({
   mockPromptContentHash: { value: 'test-hash-abc' },
 }));
 
+const { mockLoggerWarn } = vi.hoisted(() => ({
+  mockLoggerWarn: vi.fn(),
+}));
+
+// ── Mock @ia-framework/core ─────────────────────────────────────────────────
+vi.mock('@ia-framework/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@ia-framework/core')>();
+  return {
+    ...actual,
+    createLogger: () => ({
+      info: vi.fn(),
+      warn: mockLoggerWarn,
+      error: vi.fn(),
+      debug: vi.fn(),
+      child: vi.fn().mockReturnThis(),
+    }),
+  };
+});
+
 // ── Mock @ia-framework/ast-parser ───────────────────────────────────────────
 vi.mock('@ia-framework/ast-parser', () => ({
   parseFile: mockParseFile,
@@ -1038,5 +1057,96 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
     );
 
     expect(result.filesIndexed).toBe(0);
+  });
+});
+
+describe('IndexingPipeline - line number validation (LNC-05)', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+    tmpDir = join(tmpdir(), `indexer-lnc-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    // File has 1 line
+    await writeFile(join(tmpDir, 'short.ts'), 'const x = 1;');
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+  });
+
+  it('logs warning when chunk endLine exceeds file line count', async () => {
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'chunk-bad',
+        filePath: join(tmpDir, 'short.ts'),
+        relativePath: 'short.ts',
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'badFn',
+        content: 'const x = 1;',
+        startLine: 1,
+        endLine: 50, // exceeds actual line count of 1
+        imports: [],
+        exports: [],
+      },
+    ]);
+
+    await pipeline.run({
+      targetProjectPath: tmpDir,
+      frameworkDir: join(tmpDir, '.ia-framework'),
+      collectionName: 'test-collection',
+      embeddingProvider,
+      vectorStore,
+    });
+
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'chunk_line_number_mismatch',
+        chunkName: 'badFn',
+        endLine: 50,
+        fileLineCount: 1,
+      }),
+      expect.stringContaining('exceeds file line count'),
+    );
+    // Chunk is still indexed
+    expect(vectorStore.upsertBatch).toHaveBeenCalled();
+  });
+
+  it('does not log warning when chunk endLine is within file line count', async () => {
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'chunk-ok',
+        filePath: join(tmpDir, 'short.ts'),
+        relativePath: 'short.ts',
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'okFn',
+        content: 'const x = 1;',
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: [],
+      },
+    ]);
+
+    await pipeline.run({
+      targetProjectPath: tmpDir,
+      frameworkDir: join(tmpDir, '.ia-framework'),
+      collectionName: 'test-collection',
+      embeddingProvider,
+      vectorStore,
+    });
+
+    expect(mockLoggerWarn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'chunk_line_number_mismatch' }),
+      expect.any(String),
+    );
   });
 });

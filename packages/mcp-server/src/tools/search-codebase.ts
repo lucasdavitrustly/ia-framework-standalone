@@ -179,13 +179,15 @@ function buildSearchResponse(
 
 /**
  * Format a single RetrievalResult as a markdown section.
+ * @internal Exported for testing only.
  */
-function formatResult(result: RetrievalResult, index: number): string {
+export function formatResult(result: RetrievalResult, index: number): string {
   const sourceTag = result.source ? ` [${result.source}]` : '';
   const hierarchyTag = result.expansionSource === 'hierarchy' ? ' [hierarchy]' : '';
+  const lineRange = `:${result.startLine}-${result.endLine}`;
   const header = result.name
-    ? `### ${index}. ${result.relativePath} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`
-    : `### ${index}. ${result.relativePath} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`;
+    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`
+    : `### ${index}. ${result.relativePath}${lineRange} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`;
   const contextLine = formatRetrievalContext(result);
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
