@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 32-01-PLAN.md
-last_updated: '2026-05-14T17:21:08.157Z'
-last_activity: 2026-05-14
+stopped_at: Phase 37 context gathered
+last_updated: "2026-05-15T14:59:51.650Z"
+last_activity: 2026-05-15
 progress:
-  total_phases: 34
+  total_phases: 35
   completed_phases: 34
   total_plans: 87
   completed_plans: 87
@@ -20,23 +20,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Planning next milestone (v1.5)
+**Current focus:** v1.6 — RAG Retrieval Quality Improvements (benchmark-driven)
 
 ## Current Position
 
-Phase: v1.4 complete, v1.5 not yet started
+Phase: v1.6 planning complete, Phase 37 not yet started
 Plan: N/A
 
 ## Velocity Summary
 
-**v1.5 Phases (planned, not yet started):**
+**v1.6 Phases (planned, not yet started):**
 
-| Phase | Name                      | Priority | Size | Package             | Status  |
-| ----- | ------------------------- | -------- | ---- | ------------------- | ------- |
-| 33    | reranking-layer           | P1       | M    | packages/core       | pending |
-| 34    | context-budget-caps       | P2       | S    | packages/mcp-server | pending |
-| 35    | index-code-patterns       | P3       | M    | packages/core       | pending |
-| 36    | query-type-classification | P4       | L    | packages/mcp-server | pending |
+| Phase | Name                        | Priority | Size | Package                                  | Status  |
+| ----- | --------------------------- | -------- | ---- | ---------------------------------------- | ------- |
+| 37    | query-complexity-classifier | P0       | M    | packages/mcp-server                      | pending |
+| 38    | line-number-aware-chunking  | P1       | M    | packages/core                            | pending |
+| 39    | confidence-based-early-exit | P2       | S    | packages/mcp-server                      | pending |
+| 40    | benchmark-preflight-tool    | P3       | S    | packages/benchmark + packages/mcp-server | pending |
+| 41    | hybrid-retrieval-tuning     | P4       | M    | packages/core                            | pending |
 
 **v1.0:** 11 phases, 34 plans, ~14 min/plan, ~7 hours total
 **v1.1:** 7 phases, 17 plans
@@ -72,6 +73,6 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-05-14
-Stopped at: v1.4 milestone complete (Phase 32 was last phase)
-Resume file: None
+Last activity: 2026-05-15
+Stopped at: Phase 37 context gathered
+Resume file: .planning/phases/37-query-complexity-classifier/37-CONTEXT.md
