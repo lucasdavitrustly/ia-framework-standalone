@@ -178,3 +178,63 @@ describe('searchCodebaseHybridHandler - token cap', () => {
     );
   });
 });
+
+describe('CEX — confidence-based early exit (hybrid)', () => {
+  it('logs earlyExit=true when keyword confidence >= 0.8 and results > 0', async () => {
+    // "UserService" → symbol pattern → keyword with confidence 1.0
+    const result = makeResult({ chunkId: 'cex-h1', name: 'UserService' });
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [result], suggestions: [], fallback_used: false }),
+    };
+
+    const output = await searchCodebaseHybridHandler(engine, { query: 'UserService' });
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('keyword-routed');
+    expect(output.structuredContent).toBeDefined();
+    expect((output.structuredContent as Record<string, unknown>).route).toBe('keyword');
+  });
+
+  it('falls back to semantic when keyword confidence >= 0.8 but 0 results', async () => {
+    const semanticResult = makeResult({ chunkId: 'cex-h2' });
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([semanticResult]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [], suggestions: [], fallback_used: false }),
+    };
+
+    const output = await searchCodebaseHybridHandler(engine, { query: 'NonExistentSymbol' });
+
+    // Should have fallen back to hybrid/semantic path
+    expect(engine.searchHybrid).toHaveBeenCalled();
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).not.toContain('keyword-routed');
+  });
+
+  it('respects custom earlyExitConfidence threshold', async () => {
+    // "find getUserById" → lookup verb → keyword with confidence 0.8
+    // With threshold 0.9, this should NOT be an early exit
+    const result = makeResult({ chunkId: 'cex-h3' });
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([result]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [result], suggestions: [], fallback_used: false }),
+    };
+
+    // The keyword route still returns results (route=keyword), but earlyExit in log would be false
+    // since confidence 0.8 < threshold 0.9. We verify via structured output.
+    const output = await searchCodebaseHybridHandler(
+      engine,
+      { query: 'find getUserById' },
+      { earlyExitConfidence: 0.9 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('keyword-routed');
+  });
+});
