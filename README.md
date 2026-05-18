@@ -22,7 +22,7 @@ Your Project                  ia-framework                    OpenCode
 ```
 
 1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks (AST strategy), or uses an LLM to generate rich prose summaries (LLM strategy). Generates dual embeddings (text + code vectors) stored in Qdrant with BM25 sparse vectors for hybrid search
-2. **Serves context via MCP** — OpenCode calls `search_codebase`, `search_codebase_hybrid`, `get_file`, and `get_dependencies` tools during conversations to pull in relevant code
+2. **Serves context via MCP** — OpenCode calls `search_codebase`, `search_codebase_hybrid`, `get_file`, `get_dependencies`, `get_module_dependencies`, and `benchmark_preflight` tools during conversations to pull in relevant code
 3. **Supports multi-collection search** — query AST and LLM collections simultaneously with Reciprocal Rank Fusion (RRF) merging and source tagging
 4. **Expands results along the dependency graph** — search results include 1-2 hops of imported files so the AI sees the full picture
 5. **Tracks everything** — token usage, retrieval quality, indexing status, all visible in a browser dashboard
@@ -102,7 +102,16 @@ After it completes:
 
 > Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready.
 
-## Recent Improvements (v1.1 — RAG Quality & Dashboard Evolution)
+## Recent Improvements (v1.6 — RAG Retrieval Quality)
+
+### New in v1.6
+
+- **Query complexity classifier** — Deterministic regex-based routing (`classifyQuery`) detects keyword/symbol queries (camelCase, dot-notation, quoted strings, lookup verbs) and routes them directly to BM25, skipping vector search entirely. Configurable via `retrieval.classificationRules` in project.json. Eliminates keyword lookup regression.
+- **Line-number-aware results** — MCP search results now display `file:startLine-endLine` format (e.g., `src/Foo.ts:10-25`). Pipeline validates chunk boundaries against actual file line counts.
+- **Confidence-based early exit** — Keyword queries classified at ≥0.8 confidence skip the semantic fallback path entirely, with structured logging of `earlyExit`/`earlyExitReason` for observability. Configurable via `retrieval.earlyExitConfidence`.
+- **Benchmark preflight gate** — `BenchmarkRunner.run()` now validates all required MCP tools are available before executing queries. Throws `BenchmarkPreflightError` with a formatted tool status table if any required tool is blocked. Bypass with `skipPreflight: true`.
+- **Configurable hybrid search tuning** — Four new project.json fields: `keywordPrefetchMultiplier`, `semanticPrefetchMultiplier` (1-10, control branch prefetch limits), `rrfK` (1-200, RRF constant), and `rrfScoreThreshold` (0-1). Tune hybrid search per-project without code changes.
+- **New MCP tools:** `get_module_dependencies` and `benchmark_preflight` (5 total benchmark tools)
 
 ### New in v1.1
 
@@ -305,14 +314,16 @@ Add the MCP server to OpenCode's config at `~/.config/opencode/opencode.json`:
 
 Restart OpenCode. The following tools are now available to your AI assistant:
 
-| MCP Tool                 | Description                                                                           |
-| ------------------------ | ------------------------------------------------------------------------------------- |
-| `search_codebase`        | Semantic search with dependency graph expansion                                       |
-| `search_codebase_hybrid` | Hybrid BM25 + semantic search with RRF fusion — higher recall for exact-match queries |
-| `get_file`               | Retrieve all indexed chunks for a specific file                                       |
-| `get_dependencies`       | Get imports and exports for a file                                                    |
-| `query_database`         | Execute SQL against a configured PostgreSQL database                                  |
-| `index_database_schema`  | Index database schema into Qdrant                                                     |
+| MCP Tool                  | Description                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------ |
+| `search_codebase`         | Semantic search with dependency graph expansion and query classification       |
+| `search_codebase_hybrid`  | Hybrid BM25 + semantic search with RRF fusion and configurable prefetch tuning |
+| `get_file`                | Retrieve all indexed chunks for a specific file                                |
+| `get_dependencies`        | Get imports and exports for a file                                             |
+| `get_module_dependencies` | Get Maven module dependency graph (BFS traversal)                              |
+| `benchmark_preflight`     | Validate MCP tool availability before benchmark runs                           |
+| `query_database`          | Execute SQL against a configured PostgreSQL database                           |
+| `index_database_schema`   | Index database schema into Qdrant                                              |
 
 ### Step 9: Start the Dashboard (Optional)
 
@@ -698,7 +709,12 @@ The main config file is `.ia-framework/project.json`:
   "retrieval": {
     "mode": "mcp-only", // "mcp-only", "auto-context" (v2), "combined" (v2)
     "expansionHops": 1, // 0 = off, 1 = direct imports, 2 = transitive
-    "autoContextTopK": 5 // Top results for auto-context (v2)
+    "autoContextTopK": 5, // Top results for auto-context (v2)
+    "earlyExitConfidence": 0.8, // Keyword early exit threshold (0-1)
+    "keywordPrefetchMultiplier": 3, // BM25 branch prefetch multiplier (1-10)
+    "semanticPrefetchMultiplier": 3, // Dense branch prefetch multiplier (1-10)
+    "rrfK": 60, // RRF constant (1-200, lower = amplify rank differences)
+    "rrfScoreThreshold": 0.015 // Minimum RRF score to include result (0-1)
   }
 }
 ```
@@ -924,7 +940,7 @@ pnpm lint           # ESLint + Prettier
 | `@ia-framework/vector-store`     | 8     | Qdrant dual-vector storage                          |
 | `@ia-framework/indexer`          | 17    | File walker, incremental indexing, context sources  |
 | `@ia-framework/retrieval`        | 24    | Search engine, dependency graph, hop expansion      |
-| `@ia-framework/mcp-server`       | 17    | 6 MCP tools via stdio transport                     |
+| `@ia-framework/mcp-server`       | 17    | 8 MCP tools via stdio transport                     |
 | `@ia-framework/observability`    | 27    | Token counting, metrics SQLite store                |
 | `@ia-framework/benchmark`        | 19    | Hit@K, MRR, benchmark store, comparison             |
 | `@ia-framework/project-detector` | 19    | Language, framework, package manager detection      |
