@@ -68,6 +68,8 @@ export const RetrievalConfigSchema = z.object({
   scoreThreshold: z.number().min(0).max(1).optional(),
   /** Classification rules for query complexity classifier */
   classificationRules: ClassificationRulesSchema,
+  /** Confidence threshold for keyword early exit (0-1). Queries at or above skip vector search. */
+  earlyExitConfidence: z.number().min(0).max(1).default(0.8),
 });
 
 export const ProjectConfigSchema = z.object({

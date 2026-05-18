@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { searchCodebaseHandler, formatResult } from './search-codebase.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
+import * as classificationModule from '../classification/index.js';
 
 function makeResult(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
   return {
@@ -316,6 +317,110 @@ describe('query classification routing', () => {
     const text = (output.content[0] as { type: 'text'; text: string }).text;
     expect(text).toContain('keyword-routed');
     expect(text).toContain('1 results');
+  });
+});
+
+describe('CEX — confidence-based early exit', () => {
+  it('logs earlyExit=true when keyword confidence >= 0.8 and results > 0', async () => {
+    // "UserService" is a symbol pattern → classified as keyword with confidence 1.0
+    const result = makeResult({ chunkId: 'cex-1', name: 'UserService' });
+    const loggerInfo = vi.fn();
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([]),
+      search: vi.fn().mockResolvedValue([]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [result], suggestions: [], fallback_used: false }),
+    };
+
+    await searchCodebaseHandler(engine, { query: 'UserService' }, {
+      metricsStore: {} as any,
+      logger: { info: loggerInfo },
+    } as any);
+
+    expect(loggerInfo).toHaveBeenCalled();
+    const logEntry = loggerInfo.mock.calls[0]![0] as Record<string, unknown>;
+    expect(logEntry.earlyExit).toBe(true);
+    expect(logEntry.earlyExitReason).toBe('confidence-above-threshold');
+  });
+
+  it('logs earlyExit=false when keyword confidence >= 0.8 but 0 results (fallback)', async () => {
+    // "NonExistentSymbol" is a symbol → keyword with high confidence, but 0 results
+    const semanticResult = makeResult({ chunkId: 'fb-sem' });
+    const loggerInfo = vi.fn();
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([semanticResult]),
+      search: vi.fn().mockResolvedValue([semanticResult]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [], suggestions: [], fallback_used: false }),
+    };
+
+    await searchCodebaseHandler(engine, { query: 'NonExistentSymbol' }, {
+      metricsStore: {} as any,
+      logger: { info: loggerInfo },
+    } as any);
+
+    // First log call is the keyword-fallback-semantic
+    expect(loggerInfo).toHaveBeenCalled();
+    const firstLog = loggerInfo.mock.calls[0]![0] as Record<string, unknown>;
+    expect(firstLog.earlyExit).toBe(false);
+    expect(firstLog.earlyExitReason).toBe('fallback-no-results');
+  });
+
+  it('logs earlyExit=false when keyword confidence < 0.8', async () => {
+    // Mock classifyQuery to return keyword with low confidence (0.6)
+    const classifySpy = vi.spyOn(classificationModule, 'classifyQuery').mockReturnValue({
+      type: 'keyword',
+      reason: 'short-identifier',
+      confidence: 0.6,
+    });
+
+    const result = makeResult({ chunkId: 'low-conf' });
+    const loggerInfo = vi.fn();
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [result], suggestions: [], fallback_used: false }),
+    };
+
+    await searchCodebaseHandler(engine, { query: 'some query' }, {
+      metricsStore: {} as any,
+      logger: { info: loggerInfo },
+    } as any);
+
+    expect(loggerInfo).toHaveBeenCalled();
+    const logEntry = loggerInfo.mock.calls[0]![0] as Record<string, unknown>;
+    expect(logEntry.earlyExit).toBe(false);
+    expect(logEntry.earlyExitReason).toBeUndefined();
+
+    classifySpy.mockRestore();
+  });
+
+  it('respects custom earlyExitConfidence threshold (0.9)', async () => {
+    // "UserService" → confidence 1.0, which is >= 0.9
+    const result = makeResult({ chunkId: 'custom-1', name: 'UserService' });
+    const loggerInfo = vi.fn();
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([]),
+      search: vi.fn().mockResolvedValue([]),
+      searchWithFallback: vi
+        .fn()
+        .mockResolvedValue({ results: [result], suggestions: [], fallback_used: false }),
+    };
+
+    await searchCodebaseHandler(engine, { query: 'UserService' }, {
+      metricsStore: {} as any,
+      logger: { info: loggerInfo },
+      earlyExitConfidence: 0.9,
+    } as any);
+
+    expect(loggerInfo).toHaveBeenCalled();
+    const logEntry = loggerInfo.mock.calls[0]![0] as Record<string, unknown>;
+    expect(logEntry.earlyExit).toBe(true);
+    expect(logEntry.earlyExitReason).toBe('confidence-above-threshold');
   });
 });
 

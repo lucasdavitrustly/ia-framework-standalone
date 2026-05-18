@@ -50,6 +50,8 @@ export interface ObservabilityConfig {
   maxTokensPerCall?: number | undefined;
   /** Default minimum relevance score threshold (0-1). Results below this are filtered client-side. */
   defaultScoreThreshold?: number | undefined;
+  /** Confidence threshold for keyword early exit (0-1, default 0.8). */
+  earlyExitConfidence?: number | undefined;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -250,6 +252,8 @@ function logClassification(
     route: 'keyword' | 'semantic' | 'keyword-fallback-semantic';
     totalLatencyMs: number;
     resultCount: number;
+    earlyExit?: boolean | undefined;
+    earlyExitReason?: string | undefined;
   },
 ): void {
   const logEntry = {
@@ -262,6 +266,8 @@ function logClassification(
     classificationMs: data.classificationLatencyMs,
     totalMs: data.totalLatencyMs,
     results: data.resultCount,
+    ...(data.earlyExit !== undefined ? { earlyExit: data.earlyExit } : {}),
+    ...(data.earlyExitReason ? { earlyExitReason: data.earlyExitReason } : {}),
   };
   if ('logger' in observability && typeof (observability as any).logger?.info === 'function') {
     (observability as any).logger.info(logEntry, 'query_classification');
@@ -304,6 +310,7 @@ export async function searchCodebaseHandler(
     // D-06: fallback to semantic if keyword returns 0 results
     if (keywordResults.length === 0) {
       // Log fallback, then fall through to normal semantic path
+      const earlyExitThreshold = observability?.earlyExitConfidence ?? 0.8;
       observability?.metricsStore &&
         logClassification(observability, {
           query: input.query,
@@ -312,11 +319,16 @@ export async function searchCodebaseHandler(
           route: 'keyword-fallback-semantic',
           totalLatencyMs: Date.now() - startTime,
           resultCount: 0,
+          earlyExit: false,
+          earlyExitReason:
+            classification.confidence >= earlyExitThreshold ? 'fallback-no-results' : undefined,
         });
     } else {
       // Keyword route succeeded — format and return directly
       // Skip score threshold (D-10), skip token cap (D-10)
       const latencyMs = Date.now() - startTime;
+      const earlyExitThreshold = observability?.earlyExitConfidence ?? 0.8;
+      const isEarlyExit = classification.confidence >= earlyExitThreshold;
 
       // Structured logging per D-11
       observability?.metricsStore &&
@@ -327,6 +339,8 @@ export async function searchCodebaseHandler(
           route: 'keyword',
           totalLatencyMs: latencyMs,
           resultCount: keywordResults.length,
+          earlyExit: isEarlyExit,
+          earlyExitReason: isEarlyExit ? 'confidence-above-threshold' : undefined,
         });
 
       // D-07: same response format as semantic results
