@@ -187,4 +187,24 @@ describe('RetrievalConfigSchema — classificationRules', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts hybrid tuning fields (rrfK, rrfScoreThreshold, prefetch multipliers)', () => {
+    const result = RetrievalConfigSchema.parse({
+      rrfK: 40,
+      rrfScoreThreshold: 0.02,
+      keywordPrefetchMultiplier: 5,
+      semanticPrefetchMultiplier: 2,
+    });
+    expect(result.rrfK).toBe(40);
+    expect(result.rrfScoreThreshold).toBe(0.02);
+    expect(result.keywordPrefetchMultiplier).toBe(5);
+    expect(result.semanticPrefetchMultiplier).toBe(2);
+  });
+
+  it('rejects invalid hybrid tuning values', () => {
+    expect(() => RetrievalConfigSchema.parse({ rrfK: 0 })).toThrow();
+    expect(() => RetrievalConfigSchema.parse({ rrfK: 201 })).toThrow();
+    expect(() => RetrievalConfigSchema.parse({ keywordPrefetchMultiplier: 0 })).toThrow();
+    expect(() => RetrievalConfigSchema.parse({ keywordPrefetchMultiplier: 11 })).toThrow();
+  });
 });

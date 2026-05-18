@@ -212,22 +212,26 @@ export class QdrantVectorStore implements VectorStore {
       collectionName: string,
       request: Record<string, unknown>,
     ) => Promise<unknown>;
+
+    const semanticMult = options.semanticPrefetchMultiplier ?? 3;
+    const keywordMult = options.keywordPrefetchMultiplier ?? 3;
+
     const results = await query(this.collectionName, {
       prefetch: [
         {
           query: { nearest: options.denseVector },
           using: 'text',
-          limit: options.limit * 3,
+          limit: options.limit * semanticMult,
         },
         {
           query: { nearest: options.denseVector },
           using: 'code',
-          limit: options.limit * 3,
+          limit: options.limit * semanticMult,
         },
         {
           query: { nearest: options.sparseVector },
           using: 'sparse',
-          limit: options.limit * 3,
+          limit: options.limit * keywordMult,
         },
       ],
       query: { fusion: 'rrf' },

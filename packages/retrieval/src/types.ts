@@ -141,6 +141,10 @@ export interface SearchEngineConfig {
       sparseVector: { indices: number[]; values: number[] };
       limit: number;
       filter?: Record<string, unknown> | undefined;
+      /** Prefetch multiplier for keyword/sparse branch (default: 3) */
+      keywordPrefetchMultiplier?: number | undefined;
+      /** Prefetch multiplier for semantic/dense branches (default: 3) */
+      semanticPrefetchMultiplier?: number | undefined;
     }): Promise<
       Array<{
         id: string;
@@ -172,12 +176,18 @@ export interface SearchEngineConfig {
   defaultScoreThreshold?: number | undefined;
   /** Default RRF score threshold for hybrid search (default: 0.015). RRF scores are rank-based (~0.01–0.03), not cosine. */
   defaultRrfScoreThreshold?: number | undefined;
+  /** RRF constant k (default: 60). Lower values amplify top-ranked differences. */
+  rrfK?: number | undefined;
   /** Enable MMR diversity re-ranking (default: true). Per D-05. */
   mmrEnabled?: boolean | undefined;
   /** Override MMR lambda (0=max diversity, 1=relevance only). If unset, query-type-aware. Per D-02. */
   mmrLambda?: number | undefined;
   /** Candidate multiplier for over-fetching before MMR (default: 3). Per D-06. */
   mmrCandidateMultiplier?: number | undefined;
+  /** Prefetch multiplier for keyword/sparse branch in hybrid search (default: 3). Higher = more keyword influence. */
+  keywordPrefetchMultiplier?: number | undefined;
+  /** Prefetch multiplier for semantic/dense branches in hybrid search (default: 3). Higher = more semantic influence. */
+  semanticPrefetchMultiplier?: number | undefined;
   /** Optional dependency graph for expanding results along import edges */
   dependencyGraph?:
     | {

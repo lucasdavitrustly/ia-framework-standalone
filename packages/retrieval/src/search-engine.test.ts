@@ -440,6 +440,38 @@ describe('SearchEngine.searchHybrid', () => {
 
     expect(results[0]!.name).toBe('PaymentController');
   });
+
+  test('searchHybrid() passes keywordPrefetchMultiplier and semanticPrefetchMultiplier from config', async () => {
+    mockSearchHybrid.mockResolvedValue([]);
+
+    const cfg: SearchEngineConfig = {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch, searchHybrid: mockSearchHybrid },
+      keywordPrefetchMultiplier: 5,
+      semanticPrefetchMultiplier: 2,
+    };
+    const eng = new SearchEngine(cfg);
+
+    await eng.searchHybrid({ text: 'some query', limit: 10 });
+
+    expect(mockSearchHybrid).toHaveBeenCalledOnce();
+    const [args] = mockSearchHybrid.mock.calls[0] as [Record<string, unknown>];
+    expect(args.keywordPrefetchMultiplier).toBe(5);
+    expect(args.semanticPrefetchMultiplier).toBe(2);
+  });
+
+  test('searchHybrid() omits multipliers when not configured (defaults apply in store)', async () => {
+    mockSearchHybrid.mockResolvedValue([]);
+
+    const cfg = makeHybridConfig(true);
+    const eng = new SearchEngine(cfg);
+
+    await eng.searchHybrid({ text: 'some query', limit: 5 });
+
+    const [args] = mockSearchHybrid.mock.calls[0] as [Record<string, unknown>];
+    expect(args.keywordPrefetchMultiplier).toBeUndefined();
+    expect(args.semanticPrefetchMultiplier).toBeUndefined();
+  });
 });
 
 describe('SearchEngine module-aware expansion', () => {

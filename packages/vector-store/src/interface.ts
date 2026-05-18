@@ -74,6 +74,10 @@ export interface HybridSearchOptions {
   limit: number;
   /** Optional Qdrant filter for payload field filtering */
   filter?: Record<string, unknown> | undefined;
+  /** Prefetch multiplier for keyword/sparse branch (default: 3). Higher = more keyword influence in RRF. */
+  keywordPrefetchMultiplier?: number | undefined;
+  /** Prefetch multiplier for semantic/dense branches (default: 3). Higher = more semantic influence in RRF. */
+  semanticPrefetchMultiplier?: number | undefined;
 }
 
 /**

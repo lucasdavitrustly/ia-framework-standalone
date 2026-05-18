@@ -68,6 +68,14 @@ export const RetrievalConfigSchema = z.object({
   scoreThreshold: z.number().min(0).max(1).optional(),
   /** Classification rules for query complexity classifier */
   classificationRules: ClassificationRulesSchema,
+  /** RRF constant (default: 60). Lower values amplify top-ranked differences. */
+  rrfK: z.number().int().min(1).max(200).optional(),
+  /** RRF score threshold for hybrid search (default: 0.015). Results below this are filtered. */
+  rrfScoreThreshold: z.number().min(0).max(1).optional(),
+  /** Prefetch multiplier for keyword (sparse/BM25) branch (default: 3). Higher = more keyword influence. */
+  keywordPrefetchMultiplier: z.number().min(1).max(10).optional(),
+  /** Prefetch multiplier for semantic (dense) branches (default: 3). Higher = more semantic influence. */
+  semanticPrefetchMultiplier: z.number().min(1).max(10).optional(),
 });
 
 export const ProjectConfigSchema = z.object({

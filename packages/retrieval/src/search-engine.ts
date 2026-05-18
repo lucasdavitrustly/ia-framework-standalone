@@ -495,6 +495,8 @@ export class SearchEngine {
       sparseVector,
       limit: limit * (this.config.mmrCandidateMultiplier ?? 3), // over-fetch for MMR (per D-06)
       filter: query.filter,
+      keywordPrefetchMultiplier: this.config.keywordPrefetchMultiplier,
+      semanticPrefetchMultiplier: this.config.semanticPrefetchMultiplier,
     });
 
     const rawResults = results.map((raw) => toRetrievalResult(raw, 'both'));
