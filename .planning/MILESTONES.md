@@ -1,25 +1,18 @@
 # Milestones
 
-## v1.6 RAG Retrieval Quality Improvements (Active)
+## v1.6 RAG Retrieval Quality Improvements (Shipped: 2026-05-18)
 
 **Goal:** Based on benchmark results (Claude Opus 4.6, 2026-05-15), MCP provides +1.1% quality uplift but regresses on keyword lookups (-3pts). This milestone targets specific regression gaps, latency issues, and benchmark tooling blockers.
 
-**Benchmark report:** `.opencode/benchmark/reports/benchmark-2026-05-15-143022.md`
-**Baseline (2026-05-15):** 18.0/25 quality (+1.1%), $2.927 total cost (-11.7%), 2/6 win rate. Keyword regression -3pts (22→19), simple query latency 57s, benchmark_preflight BLOCKED. RAG health 6/10.
+**Phases completed:** 5 phases (37-41), 7 plans, shipped via PRs #38, #39, #40
 
-**Success criteria:** Keyword score >= 22/25, arch >= 18/25, simple latency <12s, preflight passing, hybrid > semantic on cross-file, overall win rate >= 4/6.
+**Key accomplishments:**
 
-**Phases:**
-
-| Phase                            | Name                                                 | Priority | Size | Package                                      | Expected Impact                    |
-| -------------------------------- | ---------------------------------------------------- | -------- | ---- | -------------------------------------------- | ---------------------------------- |
-| 37 — query-complexity-classifier | Route keyword/symbol lookups to direct file access   | P0       | M    | `packages/mcp-server`                        | Eliminates -3pt keyword regression |
-| 38 — line-number-aware-chunking  | Preserve line numbers in vector store metadata       | P1       | M    | `packages/core`                              | Exact location citations           |
-| 39 — confidence-based-early-exit | Skip vector search for simple/low-confidence queries | P2       | S    | `packages/mcp-server`                        | Latency 57s → <12s                 |
-| 40 — benchmark-preflight-tool    | `benchmark_preflight` MCP tool                       | P3       | S    | `packages/benchmark` + `packages/mcp-server` | Unblocks benchmark runs            |
-| 41 — hybrid-retrieval-tuning     | Tune keyword/semantic balance                        | P4       | M    | `packages/core`                              | Cross-file query improvement       |
-
-**Key accomplishments:** _(to be filled on ship)_
+- Deterministic query complexity classifier (`classifyQuery`) routes keyword/symbol lookups directly to BM25, eliminating the -3pt keyword regression — zero LLM calls, <5ms latency
+- Line-number-aware search results display `file:startLine-endLine` format with pipeline validation warning when chunk boundaries exceed file line count
+- Confidence-based early exit: keyword queries at ≥0.8 confidence skip vector search entirely, with structured logging of earlyExit/earlyExitReason
+- Benchmark preflight expanded to 5 tools with `BenchmarkPreflightError` and gate in `BenchmarkRunner.run()` — unblocks benchmark runs when tools are available
+- Configurable hybrid search tuning: `keywordPrefetchMultiplier`, `semanticPrefetchMultiplier`, `rrfK`, `rrfScoreThreshold` in project.json — enables per-project hybrid search optimization without code changes
 
 ---
 

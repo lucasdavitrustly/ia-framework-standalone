@@ -2,6 +2,42 @@
 
 ---
 
+## v1.6 — RAG Retrieval Quality Improvements (2026-05-18)
+
+**Phases:** 37–41 (5 phases, 7 plans)
+**Duration:** ~3 days (2026-05-15 – 2026-05-18)
+**PRs:** #38 (Phase 37), #39 (Phases 38+39), #40 (Phases 40+41)
+
+### What Was Built
+
+| Phase | Feature                                                                                                                                                                                          | Plans |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- |
+| 37    | Query Complexity Classifier — deterministic regex-based `classifyQuery()` routing keyword/symbol queries to BM25, integrated into both search handlers with fallback-to-semantic on zero results | 2     |
+| 38    | Line-Number-Aware Chunking — `file:startLine-endLine` display in MCP results, pipeline validation warning for out-of-bounds chunks                                                               | 1     |
+| 39    | Confidence-Based Early Exit — `earlyExitConfidence` config field (default 0.8), structured logging of earlyExit/earlyExitReason in search handlers                                               | 1     |
+| 40    | Benchmark Preflight Tool — expanded from 3→5 tools, `BenchmarkPreflightError` class, preflight gate in `BenchmarkRunner.run()` with `skipPreflight` option                                       | 2     |
+| 41    | Hybrid Retrieval Tuning — 4 config fields (`rrfK`, `rrfScoreThreshold`, `keywordPrefetchMultiplier`, `semanticPrefetchMultiplier`) wired through SearchEngine to Qdrant                          | 1     |
+
+### What Went Well
+
+- **Benchmark-driven development** — requirements derived directly from A/B benchmark results gave clear, measurable targets
+- **Small focused phases** — each phase was S or M size, shipped independently, easy to review
+- **TDD discipline** — all phases had tests first, no regressions introduced
+- **Fast velocity** — 5 phases in 3 days with clean separation of concerns
+
+### What Didn't Go Well
+
+- **Phase 39 merge gap** — PR #39 was titled "Phase 38" but branch contained both 38 and 39. The squash-merge only brought phase 38 code to main; phase 39 code stayed on the branch unmerged until caught during milestone completion
+- **No milestone audit** — skipped formal audit before archiving; caught the merge gap during archive process instead
+
+### Lessons Learned
+
+1. When shipping multiple phases on one branch, verify ALL phase code lands on main after PR merge (especially with squash-merge)
+2. Run `/gsd-verify-phase` after each PR merge, not just after local completion
+3. Branch naming should reflect all phases included (e.g., `phase-38-39-*` not `phase-38-*`)
+
+---
+
 ## v1.4 — RAG Quality & Token Control (2026-04-30)
 
 **Phases:** 30–31 (2 phases, 5 plans)
