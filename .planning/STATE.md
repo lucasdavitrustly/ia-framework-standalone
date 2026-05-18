@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 38 shipped — PR #39
-last_updated: '2026-05-15T20:00:00.000Z'
-last_activity: 2026-05-15
+stopped_at: Phases 40-41 shipped — PR #40
+last_updated: '2026-05-18T00:00:00.000Z'
+last_activity: 2026-05-18
 progress:
   total_phases: 35
   completed_phases: 35
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** Phase 40 completed; ready to ship or start Phase 41
+**Current focus:** v1.6 milestone complete — all phases shipped
 
 ## Current Position
 
-Phase: 40 (completed, ready to ship)
-Plan: 40-01 completed
+Phase: 41 (shipped — PR #40)
+Plan: All complete
 
 ## Velocity Summary
 
@@ -36,8 +36,8 @@ Plan: 40-01 completed
 | 37    | query-complexity-classifier | P0       | M    | packages/mcp-server                      | context gathered |
 | 38    | line-number-aware-chunking  | P1       | M    | packages/core                            | shipped PR #39   |
 | 39    | confidence-based-early-exit | P2       | S    | packages/mcp-server                      | shipped PR #39   |
-| 40    | benchmark-preflight-tool    | P3       | S    | packages/benchmark + packages/mcp-server | completed        |
-| 41    | hybrid-retrieval-tuning     | P4       | M    | packages/core                            | pending          |
+| 40    | benchmark-preflight-tool    | P3       | S    | packages/benchmark + packages/mcp-server | shipped PR #40   |
+| 41    | hybrid-retrieval-tuning     | P4       | M    | packages/core                            | shipped PR #40   |
 
 **v1.0:** 11 phases, 34 plans, ~14 min/plan, ~7 hours total
 **v1.1:** 7 phases, 17 plans
@@ -73,7 +73,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-05-15
-Stopped at: Phase 40 completed — ready to ship or start Phase 41
-Resume file: .planning/phases/40-benchmark-preflight-tool/40-01-SUMMARY.md
-Next options: /gsd-ship or /gsd-plan-phase 41
+Last activity: 2026-05-18
+Stopped at: v1.6 milestone complete — all phases shipped
+Resume file: .planning/milestones/v1.6-ROADMAP.md
+Next options: /gsd-complete-milestone or /gsd-progress
