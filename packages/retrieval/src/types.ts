@@ -188,6 +188,10 @@ export interface SearchEngineConfig {
   keywordPrefetchMultiplier?: number | undefined;
   /** Prefetch multiplier for semantic/dense branches in hybrid search (default: 3). Higher = more semantic influence. */
   semanticPrefetchMultiplier?: number | undefined;
+  /** Elbow detection: truncate results when score drops by more than this ratio (0-1). Undefined = disabled. */
+  elbowDropThreshold?: number | undefined;
+  /** Minimum results to keep when elbow detection triggers (default: 1). */
+  elbowMinResults?: number | undefined;
   /** Optional dependency graph for expanding results along import edges */
   dependencyGraph?:
     | {

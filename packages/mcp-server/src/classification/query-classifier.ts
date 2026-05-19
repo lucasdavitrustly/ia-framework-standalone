@@ -6,7 +6,7 @@
  * No LLM calls — pure pattern matching for speed and predictability.
  */
 
-export type QueryType = 'keyword' | 'semantic';
+export type QueryType = 'keyword' | 'semantic' | 'existence';
 
 export interface QueryClassification {
   type: QueryType;
@@ -18,6 +18,7 @@ export interface ClassificationRules {
   symbolPatterns?: RegExp[];
   lookupVerbs?: string[];
   maxKeywordWords?: number;
+  existencePatterns?: RegExp[];
 }
 
 export const DEFAULT_RULES: ClassificationRules = {
@@ -29,6 +30,13 @@ export const DEFAULT_RULES: ClassificationRules = {
   ],
   lookupVerbs: ['find', 'where', 'locate', 'show', 'get', 'what is'],
   maxKeywordWords: 6,
+  existencePatterns: [
+    /^does\s+(this|the|it|the\s+\w+)\s+(project\s+)?(use|have|contain|include|implement)/i,
+    /^is\s+there\s+(a|an|any)/i,
+    /^are\s+there\s+(any|some)/i,
+    /^does\s+it\s+have/i,
+    /^does\s+the\s+codebase\s+(use|have|contain|implement)/i,
+  ],
 };
 
 /**
@@ -49,7 +57,15 @@ export function classifyQuery(query: string, rules?: ClassificationRules): Query
     symbolPatterns: rules?.symbolPatterns ?? DEFAULT_RULES.symbolPatterns!,
     lookupVerbs: rules?.lookupVerbs ?? DEFAULT_RULES.lookupVerbs!,
     maxKeywordWords: rules?.maxKeywordWords ?? DEFAULT_RULES.maxKeywordWords!,
+    existencePatterns: rules?.existencePatterns ?? DEFAULT_RULES.existencePatterns!,
   };
+
+  // 0. Existence patterns — "does this use X?", "is there a Y?"
+  for (const pattern of mergedRules.existencePatterns) {
+    if (pattern.test(query)) {
+      return { type: 'existence', reason: 'existence-pattern', confidence: 0.85 };
+    }
+  }
 
   // 1. Quoted strings
   if (/["'][^"']+["']/.test(query)) {

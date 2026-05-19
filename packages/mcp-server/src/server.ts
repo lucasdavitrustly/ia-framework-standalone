@@ -73,7 +73,51 @@ export function createMcpServer(config: McpServerConfig): McpServer {
   registerSearchCodebaseHybridTool(server, config.searchEngine);
   registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);
-  registerBenchmarkPreflightTool(server, config.searchEngine);
+
+  // Build composite preflight engine with optional capabilities
+  const preflightEngine: Parameters<typeof registerBenchmarkPreflightTool>[1] = {
+    search: (query) => config.searchEngine.search(query),
+    searchWithExpansion: (query, options) =>
+      config.searchEngine.searchWithExpansion(query, options),
+    ...('searchHybrid' in config.searchEngine
+      ? {
+          searchHybrid: (query: { text: string; limit?: number }) =>
+            (
+              config.searchEngine as {
+                searchHybrid: (q: {
+                  text: string;
+                  limit?: number;
+                }) => Promise<import('@ia-framework/retrieval').RetrievalResult[]>;
+              }
+            ).searchHybrid(query),
+        }
+      : {}),
+    getFile: (path) => config.searchEngine.getFile(path),
+    ...(config.metricsStore && config.projectRoot
+      ? {
+          getModuleDependencies: async () => {
+            const graph = config.metricsStore!.getModuleGraph(config.projectRoot!);
+            if (!graph) throw new Error('Module graph not indexed');
+            return graph;
+          },
+        }
+      : {}),
+    ...(config.dbConfigPath
+      ? {
+          queryDatabase: async (sql: string) => {
+            const { loadDbConfig, PostgresSource } = await import('@ia-framework/db-context');
+            const dbConfig = await loadDbConfig(config.dbConfigPath!);
+            const source = new PostgresSource(dbConfig);
+            try {
+              return await source.executeQuery(sql);
+            } finally {
+              await source.close();
+            }
+          },
+        }
+      : {}),
+  };
+  registerBenchmarkPreflightTool(server, preflightEngine);
 
   // Register Maven module dependencies tool if metricsStore + projectRoot available
   if (config.metricsStore && config.projectRoot) {

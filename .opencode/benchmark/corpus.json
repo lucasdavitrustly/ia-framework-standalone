@@ -9,19 +9,19 @@
     {
       "id": "function-keyword",
       "category": "keyword",
-      "prompt": "Where is the main entry point of the application defined? Show me the exact file and function.",
+      "prompt": "When we need to process an entry how this is made?",
       "context": "Tests exact file/function lookup capability"
     },
     {
       "id": "deps-cross-file",
       "category": "cross-file",
-      "prompt": "How do the database models relate to the API routes? Trace the data flow from request to database.",
+      "prompt": "How a entry is persisted in the database?",
       "context": "Tests understanding of cross-module relationships"
     },
     {
       "id": "impact-complex",
       "category": "complex",
-      "prompt": "If I wanted to add a new API endpoint that requires authentication, what files would I need to modify and what patterns should I follow based on existing code?",
+      "prompt": "If want to add new payment-processor in the ACH, what would I need to modify and what patterns should I follow based on existing code?",
       "context": "Tests multi-step reasoning about codebase patterns"
     },
     {

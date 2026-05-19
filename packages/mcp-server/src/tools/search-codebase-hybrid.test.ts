@@ -238,3 +238,40 @@ describe('CEX — confidence-based early exit (hybrid)', () => {
     expect(text).toContain('keyword-routed');
   });
 });
+
+describe('searchCodebaseHybridHandler - confidence gate', () => {
+  it('returns "no relevant code found" when best result score is below confidenceThreshold', async () => {
+    const lowResult = makeResult({ chunkId: 'low-h1', score: 0.012 });
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([lowResult]),
+      searchWithFallback: vi.fn(),
+    };
+
+    const output = await searchCodebaseHybridHandler(
+      engine,
+      { query: 'nonexistent pattern' },
+      { confidenceThreshold: 0.02 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('No relevant code found');
+    expect((output.structuredContent as any).confidence_gated).toBe(true);
+    expect(engine.searchWithFallback).not.toHaveBeenCalled();
+  });
+
+  it('returns results normally when best score is above confidenceThreshold', async () => {
+    const goodResult = makeResult({ chunkId: 'good-h1', score: 0.03 });
+    const engine = {
+      searchHybrid: vi.fn().mockResolvedValue([goodResult]),
+    };
+
+    const output = await searchCodebaseHybridHandler(
+      engine,
+      { query: 'payment service' },
+      { confidenceThreshold: 0.02 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('Hybrid search results for');
+  });
+});

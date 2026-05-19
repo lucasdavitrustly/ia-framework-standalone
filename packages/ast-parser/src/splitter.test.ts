@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { splitOversizedChunks } from './splitter.js';
 import type { CodeChunk } from './types.js';
 
-function makeChunk(overrides: Partial<CodeChunk> & { startLine: number; endLine: number; content: string }): CodeChunk {
+function makeChunk(
+  overrides: Partial<CodeChunk> & { startLine: number; endLine: number; content: string },
+): CodeChunk {
   return {
     id: `test-${overrides.startLine}-${overrides.endLine}`,
     filePath: '/test/file.ts',
@@ -232,5 +234,82 @@ describe('splitOversizedChunks', () => {
     for (const line of bodyLines) {
       expect(coveredLines.has(line)).toBe(true);
     }
+  });
+});
+
+describe('splitOversizedChunks - method boundary splitting', () => {
+  function generateClass(methodCount: number, linesPerMethod: number): string {
+    const lines = ['export class PaymentService {'];
+    for (let m = 1; m <= methodCount; m++) {
+      lines.push(`  public method${m}(): void {`);
+      for (let l = 1; l <= linesPerMethod; l++) {
+        lines.push(`    const x${l} = process(${l});`);
+      }
+      lines.push('  }');
+      lines.push('');
+    }
+    lines.push('}');
+    return lines.join('\n');
+  }
+
+  it('splits class chunk at method boundaries instead of fixed intervals', () => {
+    // 5 methods × 50 lines each = ~260 body lines — exceeds 200 limit
+    const content = generateClass(5, 50);
+    const lineCount = content.split('\n').length;
+    const chunk = makeChunk({
+      startLine: 1,
+      endLine: lineCount,
+      content,
+      chunkType: 'class',
+      name: 'PaymentService',
+    });
+
+    const result = splitOversizedChunks([chunk], 200);
+
+    // Should split at method boundaries, not at exactly 200 lines
+    expect(result.length).toBeGreaterThan(1);
+    // Each sub-chunk should start with the class signature
+    for (const sub of result) {
+      expect(sub.content).toContain('export class PaymentService {');
+      expect(sub.parentName).toBe('PaymentService');
+    }
+    // Each sub-chunk name should reflect method grouping
+    for (const sub of result) {
+      expect(sub.name).toContain('PaymentService$');
+    }
+  });
+
+  it('keeps class with small methods in one chunk if under limit', () => {
+    // 3 methods × 10 lines each = ~40 body lines — under 200 limit
+    const content = generateClass(3, 10);
+    const lineCount = content.split('\n').length;
+    const chunk = makeChunk({
+      startLine: 1,
+      endLine: lineCount,
+      content,
+      chunkType: 'class',
+      name: 'SmallService',
+    });
+
+    const result = splitOversizedChunks([chunk], 200);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(chunk);
+  });
+
+  it('falls back to fixed splitting for non-class chunks', () => {
+    // Large function without method boundaries
+    const content = generateLargeFunction(300);
+    const lineCount = content.split('\n').length;
+    const chunk = makeChunk({
+      startLine: 1,
+      endLine: lineCount,
+      content,
+      chunkType: 'function',
+      name: 'bigFunction',
+    });
+
+    const result = splitOversizedChunks([chunk], 200);
+    // Should still split (fixed interval)
+    expect(result.length).toBeGreaterThan(1);
   });
 });

@@ -34,7 +34,8 @@
     "@ia-framework/retrieval": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
     "@qdrant/js-client-rest": "^1.13.0",
-    "commander": "^13.0.0"
+    "commander": "^13.0.0",
+    "tinyglobby": "^0.2.10"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

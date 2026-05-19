@@ -24,3 +24,5 @@ export type {
   LlmChunkingOptions,
   CachedChunkEntry,
 } from './strategies/index.js';
+export { scanMavenModuleGraph } from './maven-graph-scanner.js';
+export type { MavenGraphScannerOptions } from './maven-graph-scanner.js';

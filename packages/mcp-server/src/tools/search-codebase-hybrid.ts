@@ -95,6 +95,8 @@ export async function searchCodebaseHybridHandler(
     maxTokensPerCall?: number | undefined;
     defaultScoreThreshold?: number | undefined;
     earlyExitConfidence?: number | undefined;
+    /** Confidence gate: if best result score < this, return "no relevant code found" and skip fallback. */
+    confidenceThreshold?: number | undefined;
   },
 ): Promise<ToolOutput> {
   const startTime = Date.now();
@@ -210,6 +212,25 @@ export async function searchCodebaseHybridHandler(
     fallbackNote =
       `Note: hybrid retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
       'Returning indexed semantic search results instead.';
+  }
+
+  // Confidence gate: if configured and best result is below threshold, reject immediately
+  if (options?.confidenceThreshold !== undefined && results.length > 0) {
+    const bestScore = Math.max(...results.map((r) => r.score));
+    if (bestScore < options.confidenceThreshold) {
+      const gateText =
+        `Conclusion: the indexed hybrid search did not return strong evidence for this query.\n\n` +
+        `No relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`;
+      return {
+        content: [{ type: 'text', text: gateText }],
+        structuredContent: {
+          confidence_gated: true,
+          best_score: bestScore,
+          threshold: options.confidenceThreshold,
+          answered: false,
+        },
+      };
+    }
   }
 
   // Score threshold filtering — for hybrid, use input override only (RRF scores are rank-based, not 0-1)

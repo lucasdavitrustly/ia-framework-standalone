@@ -1,8 +1,10 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { writeFile, access, unlink } from 'node:fs/promises';
-import { loadConfig, createLogger } from '@ia-framework/core';
+import { writeFile, access, unlink, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { loadConfig, createLogger, MavenModuleParser } from '@ia-framework/core';
+import { MetricsStore } from '@ia-framework/observability';
 import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { IndexingPipeline, LlmChunkingStrategy, isOllamaReachable } from '@ia-framework/indexer';
@@ -538,6 +540,43 @@ Browse available models: https://ollama.com/search
             config.embedding.model,
             options.strategy === 'llm' ? PROMPT_CONTENT_HASH : undefined,
           );
+
+          // Build & persist Maven module graph if target is a Maven project
+          const rootPomPath = join(config.targetProjectPath, 'pom.xml');
+          if (existsSync(rootPomPath)) {
+            try {
+              const { glob } = (await import('tinyglobby' as string)) as {
+                glob: (
+                  patterns: string[],
+                  opts: { cwd: string; ignore: string[]; absolute?: boolean },
+                ) => Promise<string[]>;
+              };
+              const pomFiles = await glob(['**/pom.xml'], {
+                cwd: config.targetProjectPath,
+                ignore: ['**/target/**', '**/node_modules/**'],
+              });
+
+              const parser = new MavenModuleParser();
+              const modules = await Promise.all(
+                pomFiles.map(async (relativePath: string) => {
+                  const fullPath = join(config.targetProjectPath, relativePath);
+                  const content = await readFile(fullPath, 'utf-8');
+                  return parser.parsePom(content, relativePath);
+                }),
+              );
+
+              const moduleGraph = parser.buildModuleGraph(modules);
+              const metricsDbPath = join(frameworkDir, 'metrics.sqlite');
+              const metricsStore = new MetricsStore(metricsDbPath);
+              metricsStore.saveModuleGraph(config.targetProjectPath, moduleGraph.toJSON());
+              metricsStore.close();
+
+              logger.info({ moduleCount: modules.length }, 'Maven module graph persisted');
+              console.log(`  ✓ Maven module graph: ${modules.length} modules`);
+            } catch (mavenErr) {
+              logger.warn({ error: mavenErr }, 'Failed to build Maven module graph — skipping');
+            }
+          }
         } catch (error) {
           console.error(`\n\u2717 Indexing failed: ${String(error)}`);
           logger.error({ error }, 'Indexing failed');

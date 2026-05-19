@@ -139,6 +139,7 @@ async function main(): Promise<void> {
     configPath,
     dbConfigPath,
     defaultExpansionHops: expansionHops,
+    projectRoot: config.targetProjectPath,
   });
 
   const transport = new StdioServerTransport();

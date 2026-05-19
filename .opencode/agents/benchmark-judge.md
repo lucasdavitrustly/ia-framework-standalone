@@ -130,6 +130,17 @@ You MUST output in EXACTLY this format:
 **Response B**: <comma-separated flagged entity names, or "none">
 ```
 
+## Target Project Context
+
+The prompt may include a `## Target Project Context` section describing the
+project being evaluated (language, framework, module names, description). Use
+this section to calibrate your factual accuracy and hallucination assessments:
+
+- Do NOT penalize claims that align with the described target project technology.
+- Do NOT confuse the benchmark framework (TypeScript) with the target project.
+- If a response describes technologies consistent with the Target Project Context,
+  treat those claims as plausible unless directly contradicted by Verified Entities.
+
 ## Rules
 
 - NEVER guess which response used MCP/RAG. Evaluate on content merit only.

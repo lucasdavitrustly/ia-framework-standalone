@@ -151,4 +151,37 @@ describe('classifyQuery', () => {
       expect(result.reason).toBe('symbol-camelcase');
     });
   });
+
+  describe('existence queries', () => {
+    it('classifies "does this use X" as existence', () => {
+      const result = classifyQuery('does this project use Redis');
+      expect(result.type).toBe('existence');
+      expect(result.reason).toBe('existence-pattern');
+      expect(result.confidence).toBeGreaterThanOrEqual(0.8);
+    });
+
+    it('classifies "is there a" as existence', () => {
+      const result = classifyQuery('is there a retry mechanism');
+      expect(result.type).toBe('existence');
+      expect(result.reason).toBe('existence-pattern');
+    });
+
+    it('classifies "does it have" as existence', () => {
+      const result = classifyQuery('does it have circuit breaker');
+      expect(result.type).toBe('existence');
+      expect(result.reason).toBe('existence-pattern');
+    });
+
+    it('classifies "are there any" as existence', () => {
+      const result = classifyQuery('are there any unit tests for payment');
+      expect(result.type).toBe('existence');
+      expect(result.reason).toBe('existence-pattern');
+    });
+
+    it('classifies "does the codebase use" as existence', () => {
+      const result = classifyQuery('does the codebase use dependency injection');
+      expect(result.type).toBe('existence');
+      expect(result.reason).toBe('existence-pattern');
+    });
+  });
 });

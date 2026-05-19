@@ -424,6 +424,101 @@ describe('CEX — confidence-based early exit', () => {
   });
 });
 
+describe('searchCodebaseHandler - confidence gate', () => {
+  it('returns "no relevant code found" when best result score is below confidenceThreshold', async () => {
+    const lowScoreResult = makeResult({ chunkId: 'low-1', score: 0.55 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([lowScoreResult]),
+      search: vi.fn().mockResolvedValue([lowScoreResult]),
+      searchWithFallback: vi.fn(),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'payment gateway retry logic' },
+      { confidenceThreshold: 0.65 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('No relevant code found');
+    expect(text).toContain('Do not guess or hallucinate');
+    // Should NOT call fallback when confidence gate triggers
+    expect(engine.searchWithFallback).not.toHaveBeenCalled();
+  });
+
+  it('returns results normally when best result score is above confidenceThreshold', async () => {
+    const highScoreResult = makeResult({ chunkId: 'high-1', score: 0.8 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([highScoreResult]),
+      search: vi.fn().mockResolvedValue([highScoreResult]),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service' },
+      { confidenceThreshold: 0.65 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('Code results for');
+    expect(text).toContain('myFunction');
+  });
+
+  it('does not apply confidence gate when confidenceThreshold is not configured', async () => {
+    const lowScoreResult = makeResult({ chunkId: 'low-2', score: 0.55 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([lowScoreResult]),
+      search: vi.fn().mockResolvedValue([lowScoreResult]),
+    };
+
+    // No confidenceThreshold in observability config
+    const output = await searchCodebaseHandler(engine, { query: 'some query' }, {});
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    // Should still return results since score 0.55 > default scoreThreshold 0.5
+    expect(text).toContain('Code results for');
+  });
+
+  it('sets confidence_gated: true in structuredContent when gate triggers', async () => {
+    const lowScoreResult = makeResult({ chunkId: 'low-3', score: 0.6 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([lowScoreResult]),
+      search: vi.fn().mockResolvedValue([lowScoreResult]),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'unknown pattern' },
+      { confidenceThreshold: 0.7 },
+    );
+
+    expect(output.structuredContent).toBeDefined();
+    expect((output.structuredContent as any).confidence_gated).toBe(true);
+    expect((output.structuredContent as any).answered).toBe(false);
+  });
+
+  it('confidence gate applies BEFORE score threshold filtering', async () => {
+    // Result with score 0.55 — above default scoreThreshold (0.5) but below confidenceThreshold (0.65)
+    const result = makeResult({ chunkId: 'mid-1', score: 0.55 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+      searchWithFallback: vi.fn(),
+    };
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'something obscure' },
+      { confidenceThreshold: 0.65 },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('No relevant code found');
+    // Fallback should NOT be tried
+    expect(engine.searchWithFallback).not.toHaveBeenCalled();
+  });
+});
+
 describe('formatResult - line number display', () => {
   it('includes :startLine-endLine in header with named chunk', () => {
     const result = makeResult({

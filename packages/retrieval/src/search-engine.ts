@@ -8,6 +8,7 @@ import type {
 import { analyzeRetrievalQuery } from './query-intelligence.js';
 import { mmrRerank, classifyQueryLambda } from './mmr.js';
 import { getRelatedTerms } from './search-synonyms.js';
+import { applyElbowTruncation } from './elbow-detection.js';
 
 type VectorSearchResult = {
   id: string;
@@ -208,10 +209,25 @@ export class SearchEngine {
       // TODO: Add pino debug log: MMR: {rawCandidates.length} candidates → {limit} results
       const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit });
       // Apply domain bonuses after MMR so diversity is not overridden by rerankResults
-      return rerankResults(mmrResult, query);
+      const reranked = rerankResults(mmrResult, query);
+      // Elbow detection: truncate at significant score drops
+      if (this.config.elbowDropThreshold !== undefined) {
+        return applyElbowTruncation(reranked, {
+          dropThreshold: this.config.elbowDropThreshold,
+          minResults: this.config.elbowMinResults ?? 1,
+        });
+      }
+      return reranked;
     }
 
-    return rerankResults(rawCandidates, query).slice(0, limit);
+    const sliced = rerankResults(rawCandidates, query).slice(0, limit);
+    if (this.config.elbowDropThreshold !== undefined) {
+      return applyElbowTruncation(sliced, {
+        dropThreshold: this.config.elbowDropThreshold,
+        minResults: this.config.elbowMinResults ?? 1,
+      });
+    }
+    return sliced;
   }
 
   /**

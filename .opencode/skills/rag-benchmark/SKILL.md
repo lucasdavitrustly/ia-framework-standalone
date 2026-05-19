@@ -103,6 +103,23 @@ To eliminate bias:
 3. After scoring, the orchestrator de-randomizes the results
 4. Position is randomized per-prompt (not fixed across all prompts)
 
+### Target Project Context Injection
+
+The orchestrator MUST prepend a `## Target Project Context` section to every
+judge prompt. This section is derived from `.ia-framework/project.json` and
+the project detector output. It should contain:
+
+```
+## Target Project Context
+- Language: <primary language(s)>
+- Framework: <detected frameworks>
+- Description: <brief project description>
+- Modules: <list of top-level modules/packages>
+```
+
+This prevents the judge from confusing the benchmark framework's technology
+(TypeScript) with the target project's technology (e.g., Java/Spring Boot).
+
 ## Execution Fairness
 
 To ensure fair comparison:

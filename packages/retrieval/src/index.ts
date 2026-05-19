@@ -18,3 +18,5 @@ export type {
 } from './multi-collection-search-engine.js';
 export { mmrRerank, classifyQueryLambda, jaccardSimilarity, cosineSimilarity } from './mmr.js';
 export type { MmrOptions } from './mmr.js';
+export { applyElbowTruncation } from './elbow-detection.js';
+export type { ElbowOptions } from './elbow-detection.js';

@@ -74,9 +74,7 @@ function splitChunk(chunk: CodeChunk, maxLines: number): CodeChunk[] {
     const segmentEndLine = segmentStartLine + segmentLines.length - 1;
 
     const partIndex = subChunks.length + 1;
-    const partName = chunk.name
-      ? `${chunk.name}$part${partIndex}`
-      : `part${partIndex}`;
+    const partName = chunk.name ? `${chunk.name}$part${partIndex}` : `part${partIndex}`;
 
     subChunks.push({
       id: makeChunkId(chunk.filePath, segmentStartLine, segmentEndLine),
@@ -100,15 +98,115 @@ function splitChunk(chunk: CodeChunk, maxLines: number): CodeChunk[] {
 }
 
 /**
+ * Detect method boundaries within a class body.
+ * Returns line indices (0-based within bodyLines) where methods start.
+ */
+function detectMethodBoundaries(bodyLines: string[]): number[] {
+  const boundaries: number[] = [];
+  // Match method signatures: access modifiers, async, static, etc.
+  const methodPattern =
+    /^\s+(public|private|protected|static|async|abstract|override|\*)\s+|^\s+\w+\s*\(|^\s+(get|set)\s+\w+/;
+
+  for (let i = 0; i < bodyLines.length; i++) {
+    const line = bodyLines[i]!;
+    if (
+      methodPattern.test(line) &&
+      (line.includes('(') || line.includes('{')) &&
+      !line.trim().startsWith('//') &&
+      !line.trim().startsWith('*')
+    ) {
+      boundaries.push(i);
+    }
+  }
+
+  return boundaries;
+}
+
+/**
+ * Split a class chunk at method boundaries, grouping methods to stay within maxLines.
+ */
+function splitClassAtMethodBoundaries(chunk: CodeChunk, maxLines: number): CodeChunk[] {
+  const { signature, bodyStartIndex } = extractSignature(chunk.content);
+  const body = chunk.content.slice(bodyStartIndex);
+  const bodyLines = body.split('\n');
+
+  const boundaries = detectMethodBoundaries(bodyLines);
+
+  // If no method boundaries detected or only one method, fall back to fixed split
+  if (boundaries.length <= 1) {
+    return splitChunk(chunk, maxLines);
+  }
+
+  const signatureLineCount = signature.split('\n').length;
+  const subChunks: CodeChunk[] = [];
+  let groupStart = 0;
+
+  for (let i = 1; i <= boundaries.length; i++) {
+    const nextBoundary = i < boundaries.length ? boundaries[i]! : bodyLines.length;
+    const groupLines = nextBoundary - groupStart;
+
+    // If adding the next method would exceed maxLines, flush current group
+    if (groupLines > maxLines && i > 1) {
+      const segmentLines = bodyLines.slice(groupStart, boundaries[i - 1]!);
+      const segmentContent = signature + '\n' + segmentLines.join('\n');
+      const segmentStartLine = chunk.startLine + signatureLineCount + groupStart;
+      const segmentEndLine = segmentStartLine + segmentLines.length - 1;
+      const partIndex = subChunks.length + 1;
+
+      subChunks.push({
+        id: makeChunkId(chunk.filePath, segmentStartLine, segmentEndLine),
+        filePath: chunk.filePath,
+        relativePath: chunk.relativePath,
+        language: chunk.language,
+        chunkType: chunk.chunkType,
+        name: `${chunk.name}$part${partIndex}`,
+        content: segmentContent,
+        startLine: segmentStartLine,
+        endLine: segmentEndLine,
+        imports: chunk.imports,
+        exports: [],
+        parentName: chunk.name,
+      });
+
+      groupStart = boundaries[i - 1]!;
+    }
+  }
+
+  // Flush remaining
+  if (groupStart < bodyLines.length) {
+    const segmentLines = bodyLines.slice(groupStart);
+    const segmentContent = signature + '\n' + segmentLines.join('\n');
+    const segmentStartLine = chunk.startLine + signatureLineCount + groupStart;
+    const segmentEndLine = segmentStartLine + segmentLines.length - 1;
+    const partIndex = subChunks.length + 1;
+
+    subChunks.push({
+      id: makeChunkId(chunk.filePath, segmentStartLine, segmentEndLine),
+      filePath: chunk.filePath,
+      relativePath: chunk.relativePath,
+      language: chunk.language,
+      chunkType: chunk.chunkType,
+      name: `${chunk.name}$part${partIndex}`,
+      content: segmentContent,
+      startLine: segmentStartLine,
+      endLine: segmentEndLine,
+      imports: chunk.imports,
+      exports: [],
+      parentName: chunk.name,
+    });
+  }
+
+  // If we couldn't split meaningfully (e.g. single huge method), fall back
+  return subChunks.length > 1 ? subChunks : splitChunk(chunk, maxLines);
+}
+
+/**
  * Post-process chunks from any parser: split any chunk exceeding
  * `maxChunkLines` into smaller sub-chunks with context preservation.
  *
  * Chunks within the limit are passed through unchanged.
  */
-export function splitOversizedChunks(
-  chunks: CodeChunk[],
-  maxChunkLines?: number,
-): CodeChunk[] {
+export function splitOversizedChunks(chunks: CodeChunk[], maxChunkLines?: number): CodeChunk[] {
   const limit = maxChunkLines ?? DEFAULT_MAX_CHUNK_LINES;
 
   // No splitting if limit is 0 or negative (disabled)
@@ -120,6 +218,8 @@ export function splitOversizedChunks(
     const lineCount = chunk.endLine - chunk.startLine + 1;
     if (lineCount <= limit) {
       result.push(chunk);
+    } else if (chunk.chunkType === 'class') {
+      result.push(...splitClassAtMethodBoundaries(chunk, limit));
     } else {
       result.push(...splitChunk(chunk, limit));
     }

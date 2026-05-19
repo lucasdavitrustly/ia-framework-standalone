@@ -52,6 +52,9 @@ export interface ObservabilityConfig {
   defaultScoreThreshold?: number | undefined;
   /** Confidence threshold for keyword early exit (0-1, default 0.8). */
   earlyExitConfidence?: number | undefined;
+  /** Confidence gate: if the best result score is below this, return "no relevant code found"
+   *  and skip fallback entirely. Prevents low-quality chunks from being injected. Undefined = disabled. */
+  confidenceThreshold?: number | undefined;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -396,6 +399,24 @@ export async function searchCodebaseHandler(
   }
 
   const latencyMs = Date.now() - startTime;
+
+  // Confidence gate: if configured and best result is below threshold, reject immediately
+  // This prevents low-quality chunks from being injected even when they pass scoreThreshold.
+  // Skips fallback entirely to avoid suggesting irrelevant code.
+  if (observability?.confidenceThreshold !== undefined && results.length > 0) {
+    const bestScore = Math.max(...results.map((r) => r.score));
+    if (bestScore < observability.confidenceThreshold) {
+      const gateText =
+        `Conclusion: the indexed search did not return strong evidence for this query.\n\n` +
+        `No relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`;
+      return toTextResult(gateText, {
+        confidence_gated: true,
+        best_score: bestScore,
+        threshold: observability.confidenceThreshold,
+        answered: false,
+      });
+    }
+  }
 
   // Score threshold filtering (client-side, per D-01, D-02, D-03)
   // Hierarchy-expanded results (expansionSource === 'hierarchy') are excluded from threshold
