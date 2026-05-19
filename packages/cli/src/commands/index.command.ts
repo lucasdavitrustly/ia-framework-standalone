@@ -297,6 +297,39 @@ Browse available models: https://ollama.com/search
           }
 
           const pipeline = new IndexingPipeline();
+
+          // Build Maven module graph BEFORE indexing so chunks get mavenModule metadata
+          let mavenModuleGraph: import('@ia-framework/core').ModuleGraph | undefined;
+          const rootPomPath = join(config.targetProjectPath, 'pom.xml');
+          if (existsSync(rootPomPath)) {
+            try {
+              const { glob } = (await import('tinyglobby' as string)) as {
+                glob: (
+                  patterns: string[],
+                  opts: { cwd: string; ignore: string[]; absolute?: boolean },
+                ) => Promise<string[]>;
+              };
+              const pomFiles = await glob(['**/pom.xml'], {
+                cwd: config.targetProjectPath,
+                ignore: ['**/target/**', '**/node_modules/**'],
+              });
+
+              const parser = new MavenModuleParser();
+              const modules = await Promise.all(
+                pomFiles.map(async (relativePath: string) => {
+                  const fullPath = join(config.targetProjectPath, relativePath);
+                  const content = await readFile(fullPath, 'utf-8');
+                  return parser.parsePom(content, relativePath);
+                }),
+              );
+
+              mavenModuleGraph = parser.buildModuleGraph(modules);
+              logger.info({ moduleCount: modules.length }, 'Maven module graph built for indexing');
+              console.log(`  ✓ Maven module graph: ${modules.length} modules (will enrich chunks)`);
+            } catch (mavenErr) {
+              logger.warn({ error: mavenErr }, 'Failed to build Maven module graph — skipping');
+            }
+          }
           const BAR_WIDTH = 20;
 
           // LLM strategy setup: Ollama verification, model management, strategy creation
@@ -449,6 +482,7 @@ Browse available models: https://ollama.com/search
                 dependencyGraph,
                 embeddingConcurrency: config.indexing?.embeddingConcurrency,
                 chunkingStrategy,
+                mavenModuleGraph,
               },
               (progress: IndexingProgress) => {
                 Object.assign(lastProgress, progress);
@@ -541,40 +575,16 @@ Browse available models: https://ollama.com/search
             options.strategy === 'llm' ? PROMPT_CONTENT_HASH : undefined,
           );
 
-          // Build & persist Maven module graph if target is a Maven project
-          const rootPomPath = join(config.targetProjectPath, 'pom.xml');
-          if (existsSync(rootPomPath)) {
+          // Persist Maven module graph to SQLite (built before indexing)
+          if (mavenModuleGraph) {
             try {
-              const { glob } = (await import('tinyglobby' as string)) as {
-                glob: (
-                  patterns: string[],
-                  opts: { cwd: string; ignore: string[]; absolute?: boolean },
-                ) => Promise<string[]>;
-              };
-              const pomFiles = await glob(['**/pom.xml'], {
-                cwd: config.targetProjectPath,
-                ignore: ['**/target/**', '**/node_modules/**'],
-              });
-
-              const parser = new MavenModuleParser();
-              const modules = await Promise.all(
-                pomFiles.map(async (relativePath: string) => {
-                  const fullPath = join(config.targetProjectPath, relativePath);
-                  const content = await readFile(fullPath, 'utf-8');
-                  return parser.parsePom(content, relativePath);
-                }),
-              );
-
-              const moduleGraph = parser.buildModuleGraph(modules);
               const metricsDbPath = join(frameworkDir, 'metrics.sqlite');
               const metricsStore = new MetricsStore(metricsDbPath);
-              metricsStore.saveModuleGraph(config.targetProjectPath, moduleGraph.toJSON());
+              metricsStore.saveModuleGraph(config.targetProjectPath, mavenModuleGraph.toJSON());
               metricsStore.close();
-
-              logger.info({ moduleCount: modules.length }, 'Maven module graph persisted');
-              console.log(`  ✓ Maven module graph: ${modules.length} modules`);
+              logger.info('Maven module graph persisted to SQLite');
             } catch (mavenErr) {
-              logger.warn({ error: mavenErr }, 'Failed to build Maven module graph — skipping');
+              logger.warn({ error: mavenErr }, 'Failed to persist Maven module graph');
             }
           }
         } catch (error) {
