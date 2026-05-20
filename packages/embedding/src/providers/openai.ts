@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from '../interface.js';
+import type { EmbeddingProvider, EmbeddingTaskType } from '../interface.js';
 
 interface OpenAIEmbedResponse {
   data: Array<{ embedding: number[]; index: number }>;
@@ -10,6 +10,7 @@ export interface OpenAIProviderConfig {
   apiKey: string;
   baseUrl?: string | undefined;
   dimensions: number;
+  prefixes?: { document: string; query: string } | undefined;
 }
 
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
@@ -18,24 +19,33 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly prefixes: { document: string; query: string } | undefined;
 
   constructor(config: OpenAIProviderConfig) {
     this.model = config.model;
     this.dimensions = config.dimensions;
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.openai.com';
+    this.prefixes = config.prefixes;
   }
 
-  async embedBatch(texts: string[]): Promise<number[][]> {
+  private applyPrefix(texts: string[], taskType?: EmbeddingTaskType): string[] {
+    if (!taskType || !this.prefixes) return texts;
+    const prefix = this.prefixes[taskType];
+    return texts.map((t) => prefix + t);
+  }
+
+  async embedBatch(texts: string[], taskType?: EmbeddingTaskType): Promise<number[][]> {
     if (texts.length === 0) return [];
 
+    const input = this.applyPrefix(texts, taskType);
     const response = await fetch(`${this.baseUrl}/v1/embeddings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({ model: this.model, input: texts }),
+      body: JSON.stringify({ model: this.model, input }),
     });
 
     if (!response.ok) {
@@ -44,12 +54,11 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     }
 
     const result = (await response.json()) as OpenAIEmbedResponse;
-    // Sort by index to ensure order matches input
     return result.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
   }
 
-  async embed(text: string): Promise<number[]> {
-    const results = await this.embedBatch([text]);
+  async embed(text: string, taskType?: EmbeddingTaskType): Promise<number[]> {
+    const results = await this.embedBatch([text], taskType);
     const first = results[0];
     if (!first) throw new Error('No embedding returned from OpenAI');
     return first;
@@ -57,7 +66,6 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
   estimateTokens(text: string): number {
     if (!text) return 0;
-    // Rough estimate: ~4 chars per token
     return Math.ceil(text.length / 4);
   }
 }

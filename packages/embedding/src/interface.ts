@@ -1,4 +1,11 @@
 /**
+ * Task type for embedding calls.
+ * 'document' — text being indexed/stored.
+ * 'query' — text being used for retrieval search.
+ */
+export type EmbeddingTaskType = 'document' | 'query';
+
+/**
  * Provider-agnostic interface for generating text/code embeddings.
  * Implementations: OpenAIEmbeddingProvider, OllamaEmbeddingProvider
  */
@@ -13,15 +20,17 @@ export interface EmbeddingProvider {
   /**
    * Embed a single text string.
    * Returns the embedding vector as an array of floats.
+   * @param taskType - optional task type to apply configured prefix
    */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, taskType?: EmbeddingTaskType): Promise<number[]>;
 
   /**
    * Embed multiple texts in one batch call.
    * More efficient than calling embed() repeatedly.
    * Returns array of vectors in same order as inputs.
+   * @param taskType - optional task type to apply configured prefix
    */
-  embedBatch(texts: string[]): Promise<number[][]>;
+  embedBatch(texts: string[], taskType?: EmbeddingTaskType): Promise<number[][]>;
 
   /**
    * Rough token estimate for budget tracking.

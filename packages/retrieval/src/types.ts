@@ -69,7 +69,7 @@ export interface RetrievalResult {
 export interface SearchEngineConfig {
   /** Embedding provider to embed queries */
   embeddingProvider: {
-    embed(text: string): Promise<number[]>;
+    embed(text: string, taskType?: 'document' | 'query'): Promise<number[]>;
     dimensions: number;
   };
   /** Vector store to search against */

@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from '../interface.js';
+import type { EmbeddingProvider, EmbeddingTaskType } from '../interface.js';
 
 interface OllamaEmbedResponse {
   embeddings: number[][];
@@ -8,6 +8,7 @@ export interface OllamaProviderConfig {
   model: string;
   baseUrl?: string | undefined;
   dimensions: number;
+  prefixes?: { document: string; query: string } | undefined;
 }
 
 export class OllamaEmbeddingProvider implements EmbeddingProvider {
@@ -15,20 +16,29 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   readonly model: string;
   readonly dimensions: number;
   private readonly baseUrl: string;
+  private readonly prefixes: { document: string; query: string } | undefined;
 
   constructor(config: OllamaProviderConfig) {
     this.model = config.model;
     this.dimensions = config.dimensions;
     this.baseUrl = config.baseUrl ?? 'http://localhost:11434';
+    this.prefixes = config.prefixes;
   }
 
-  async embedBatch(texts: string[]): Promise<number[][]> {
+  private applyPrefix(texts: string[], taskType?: EmbeddingTaskType): string[] {
+    if (!taskType || !this.prefixes) return texts;
+    const prefix = this.prefixes[taskType];
+    return texts.map((t) => prefix + t);
+  }
+
+  async embedBatch(texts: string[], taskType?: EmbeddingTaskType): Promise<number[][]> {
     if (texts.length === 0) return [];
 
+    const input = this.applyPrefix(texts, taskType);
     const response = await fetch(`${this.baseUrl}/api/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.model, input: texts }),
+      body: JSON.stringify({ model: this.model, input }),
     });
 
     if (!response.ok) {
@@ -40,8 +50,8 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     return result.embeddings;
   }
 
-  async embed(text: string): Promise<number[]> {
-    const results = await this.embedBatch([text]);
+  async embed(text: string, taskType?: EmbeddingTaskType): Promise<number[]> {
+    const results = await this.embedBatch([text], taskType);
     const first = results[0];
     if (!first) throw new Error('No embedding returned from Ollama');
     return first;
@@ -49,7 +59,6 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   estimateTokens(text: string): number {
     if (!text) return 0;
-    // Rough estimate: ~4 chars per token
     return Math.ceil(text.length / 4);
   }
 }

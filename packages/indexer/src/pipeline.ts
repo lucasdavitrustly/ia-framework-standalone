@@ -126,8 +126,8 @@ async function embedBatchWithRetry(
       const codeTexts = batch.map((c) => c.content);
       // Text and code embeddings run in parallel within each batch
       const [textVectors, codeVectors] = await Promise.all([
-        provider.embedBatch(textDescriptions),
-        provider.embedBatch(codeTexts),
+        provider.embedBatch(textDescriptions, 'document'),
+        provider.embedBatch(codeTexts, 'document'),
       ]);
       // Build VectorPoints from results
       for (let j = 0; j < batch.length; j++) {

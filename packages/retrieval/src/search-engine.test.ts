@@ -79,7 +79,7 @@ describe('SearchEngine', () => {
   test('Test 1: search() calls embeddingProvider.embed() with the query text', async () => {
     await engine.search({ text: 'authentication middleware' });
 
-    expect(getMockEmbed(config)).toHaveBeenCalledWith('authentication middleware');
+    expect(getMockEmbed(config)).toHaveBeenCalledWith('authentication middleware', 'query');
   });
 
   test('Test 2: search() calls vectorStore.search() twice — once for text, once for code', async () => {

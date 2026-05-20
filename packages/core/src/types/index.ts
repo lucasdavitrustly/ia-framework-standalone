@@ -112,6 +112,8 @@ export interface EmbeddingProviderConfig {
   apiKey?: string | undefined;
   /** Number of dimensions in the embedding output */
   dimensions?: number | undefined;
+  /** Optional task-type prefixes prepended to text before embedding (model-specific) */
+  prefixes?: { document: string; query: string } | undefined;
 }
 
 /**

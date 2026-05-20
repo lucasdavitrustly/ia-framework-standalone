@@ -160,7 +160,7 @@ export class SearchEngine {
     const searchLimit = limit * (this.config.mmrCandidateMultiplier ?? 3); // over-fetch for MMR (per D-06)
 
     // Embed the query once (same vector for both searches)
-    const queryVector = await embeddingProvider.embed(query.text);
+    const queryVector = await embeddingProvider.embed(query.text, 'query');
 
     // Search both named vectors in parallel
     const [textResults, codeResults] = await Promise.all([
@@ -501,7 +501,7 @@ export class SearchEngine {
     const limit = query.limit ?? this.config.defaultLimit ?? 10;
 
     // Embed the query text into a dense vector
-    const denseVector = await embeddingProvider.embed(query.text);
+    const denseVector = await embeddingProvider.embed(query.text, 'query');
 
     // Compute TF sparse vector from the query text (client-side BM25 input)
     const sparseVector = computeTermFrequencySparseVector(query.text);

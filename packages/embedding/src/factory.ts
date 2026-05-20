@@ -26,6 +26,7 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig): Embedd
         apiKey: config.apiKey ?? '',
         baseUrl: config.baseUrl,
         dimensions,
+        prefixes: config.prefixes,
       });
 
     case 'ollama':
@@ -33,6 +34,7 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig): Embedd
         model: config.model,
         baseUrl: config.baseUrl,
         dimensions,
+        prefixes: config.prefixes,
       });
 
     default: {
