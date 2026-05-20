@@ -94,6 +94,8 @@ async function main(): Promise<void> {
         vectorStore,
         // Only wire dependency graph to AST engines — LLM chunks have empty imports/exports
         dependencyGraph: candidate.name === 'ast' ? dependencyGraph : undefined,
+        elbowDropThreshold: 0.15,
+        elbowMinResults: 2,
       });
       collectionEngines.push({ name: candidate.name, engine });
       logger.info(

@@ -252,7 +252,7 @@ function logClassification(
     query: string;
     classification: QueryClassification;
     classificationLatencyMs: number;
-    route: 'keyword' | 'semantic' | 'keyword-fallback-semantic';
+    route: 'keyword' | 'semantic' | 'keyword-fallback-semantic' | 'existence';
     totalLatencyMs: number;
     resultCount: number;
     earlyExit?: boolean | undefined;
@@ -361,6 +361,54 @@ export async function searchCodebaseHandler(
       const text = `${guardrailLead}\n\n${templatePrefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${keywordResults.length} results | ${latencyMs}ms`;
 
       return toTextResult(text, { answered: true, route: 'keyword' });
+    }
+  }
+
+  // Existence query route: "does X exist?", "is there a Y?" — return structured found/not-found
+  if (classification.type === 'existence') {
+    let existenceResults: RetrievalResult[];
+
+    // Use hybrid search if available for better exact-match detection, else semantic
+    if (engine.searchWithFallback) {
+      const fallbackResult = await engine.searchWithFallback(
+        { text: input.query, limit: 5 },
+        { enableFallback: false },
+      );
+      existenceResults = fallbackResult.results;
+    } else {
+      existenceResults = await engine.search({
+        text: input.query,
+        limit: 5,
+      });
+    }
+
+    const latencyMs = Date.now() - startTime;
+    const highConfidence = existenceResults.filter((r) => r.score > 0.6);
+
+    observability?.metricsStore &&
+      logClassification(observability, {
+        query: input.query,
+        classification,
+        classificationLatencyMs,
+        route: 'existence',
+        totalLatencyMs: latencyMs,
+        resultCount: existenceResults.length,
+      });
+
+    if (highConfidence.length > 0) {
+      const sections = highConfidence.map((r, i) => formatResult(r, i + 1));
+      const text = `## Existence check: "${input.query}"\n\n**Found.** ${highConfidence.length} relevant ${highConfidence.length === 1 ? 'match' : 'matches'} in the codebase (best score: ${highConfidence[0]!.score.toFixed(2)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${highConfidence.length} results | ${latencyMs}ms`;
+      return toTextResult(text, { answered: true, route: 'existence' });
+    } else {
+      // Not found — show what the codebase has instead (top results regardless of score)
+      const topResults = existenceResults.slice(0, 3);
+      const sections = topResults.map((r, i) => formatResult(r, i + 1));
+      const alternativesText =
+        topResults.length > 0
+          ? `\n\nThe closest matches found were:\n\n${sections.join('\n\n')}`
+          : '';
+      const text = `## Existence check: "${input.query}"\n\n**Not found.** No high-confidence matches in the indexed codebase.${alternativesText}\n\n---\nSearch: existence-routed | 0 confident results (${existenceResults.length} total checked) | ${latencyMs}ms`;
+      return toTextResult(text, { answered: true, route: 'existence' });
     }
   }
 
@@ -532,10 +580,17 @@ export async function searchCodebaseHandler(
       resultCount: results.length,
     });
 
+  // RAG-sufficient signaling: when results are high-confidence, hint the LLM
+  // to use this context before exploring files further
+  let ragSufficientNote: string | undefined;
+  if (results.length >= 3 && results[0]?.score !== undefined && results[0].score > 0.75) {
+    ragSufficientNote = `[Retrieved ${results.length} high-confidence results (best: ${results[0].score.toFixed(2)}). Consider using this context before exploring files further.]`;
+  }
+
   return buildSearchResponse(
     input,
     results,
-    fallbackNote,
+    ragSufficientNote ?? fallbackNote,
     undefined,
     input.use_template,
     capMeta,

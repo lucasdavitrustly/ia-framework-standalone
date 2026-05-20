@@ -69,8 +69,13 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     tokenCounter: config.tokenCounter,
     sessionId: config.sessionId,
     defaultExpansionHops: config.defaultExpansionHops,
+    confidenceThreshold: 0.65,
+    defaultScoreThreshold: 0.6,
   });
-  registerSearchCodebaseHybridTool(server, config.searchEngine);
+  registerSearchCodebaseHybridTool(server, config.searchEngine, {
+    defaultScoreThreshold: 0.02,
+    confidenceThreshold: 0.025,
+  });
   registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);
 

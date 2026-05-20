@@ -382,7 +382,11 @@ export async function searchCodebaseHybridHandler(
 /**
  * Register the search_codebase_hybrid tool on an MCP server.
  */
-export function registerSearchCodebaseHybridTool(server: McpServer, engine: HybridEngine): void {
+export function registerSearchCodebaseHybridTool(
+  server: McpServer,
+  engine: HybridEngine,
+  options?: { defaultScoreThreshold?: number; confidenceThreshold?: number },
+): void {
   server.registerTool(
     'search_codebase_hybrid',
     {
@@ -415,7 +419,7 @@ export function registerSearchCodebaseHybridTool(server: McpServer, engine: Hybr
       },
     },
     async (input) => {
-      return searchCodebaseHybridHandler(engine, input);
+      return searchCodebaseHybridHandler(engine, input, options);
     },
   );
 }
