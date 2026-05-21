@@ -52,25 +52,25 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 
 | Requirement | Phase | Status  |
 | ----------- | ----- | ------- |
-| CONF-01     | —     | Pending |
-| CONF-02     | —     | Pending |
-| CONF-03     | —     | Pending |
-| CONF-04     | —     | Pending |
-| INDX-01     | —     | Pending |
-| INDX-02     | —     | Pending |
-| INDX-03     | —     | Pending |
-| SRCH-01     | —     | Pending |
-| SRCH-02     | —     | Pending |
-| SRCH-03     | —     | Pending |
-| SRCH-04     | —     | Pending |
+| CONF-01     | 42    | Pending |
+| CONF-02     | 42    | Pending |
+| CONF-03     | 42    | Pending |
+| CONF-04     | 42    | Pending |
+| INDX-01     | 43    | Pending |
+| INDX-02     | 43    | Pending |
+| INDX-03     | 43    | Pending |
+| SRCH-01     | 44    | Pending |
+| SRCH-02     | 45    | Pending |
+| SRCH-03     | 44    | Pending |
+| SRCH-04     | 44    | Pending |
 
 **Coverage:**
 
 - v1 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11 ⚠️
+- Mapped to phases: 11 ✓
+- Unmapped: 0
 
 ---
 
 _Requirements defined: 2026-05-21_
-_Last updated: 2026-05-21 after initial definition_
+_Last updated: 2026-05-21 after roadmap creation_

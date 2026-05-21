@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Multi-Repo Indexing
-status: defining-requirements
-stopped_at: Milestone v1.7 started
+status: ready-to-plan
+stopped_at: Roadmap created — 4 phases (42-45)
 last_updated: '2026-05-21T00:00:00.000Z'
 last_activity: 2026-05-21
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-21)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** v1.7 Multi-Repo Indexing — defining requirements
+**Current focus:** v1.7 Multi-Repo Indexing — Phase 42 ready to plan
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 42 of 45 (Config & Repo Registry)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-21 — Milestone v1.7 started
+Status: Ready to plan
+Last activity: 2026-05-21 — Roadmap created
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Velocity Summary
 
@@ -44,11 +46,9 @@ Last activity: 2026-05-21 — Milestone v1.7 started
 
 All decisions are logged in PROJECT.md Key Decisions table.
 
-- RRF threshold default 0.015 — post-retrieval filtering (Qdrant doesn't support server-side RRF threshold)
-- Rerank bonuses apply before threshold — boosted chunks survive
-- [Phase 02]: Engine.scrollForHierarchy is optional to avoid breaking existing Engine implementations
-- [Phase 02]: expandHierarchy uses BFS deduplication by chunkId to prevent cycles and duplicate results
-- [Phase 32-relevance-score-threshold]: Client-side score filtering with 0.5 default; hybrid has no default (RRF scores are rank-based); hierarchy-expanded results exempted from threshold
+- Single Qdrant collection + `repoId` payload field (not separate collections per repo)
+- SQLite graph extension with `source_repo`/`target_repo` columns for cross-repo edges
+- Support both `targetProjectPath` (legacy) and `repos[]` (new) config formats
 
 ### Pending Todos
 
@@ -56,17 +56,11 @@ None.
 
 ### Blockers/Concerns
 
-None.
-
-### Quick Tasks Completed
-
-| #          | Description                                                                        | Date       | Commit  | Directory                                                                                                           |
-| ---------- | ---------------------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| 260416-fkg | Add LLM chunking model config to project.json init, dashboard settings, and README | 2026-04-16 | d8badcf | [260416-fkg-add-llm-chunking-model-config-to-project](./quick/260416-fkg-add-llm-chunking-model-config-to-project/) |
+- Phase 45 (Cross-Repo Graph): Language-specific import resolution has edge cases (Maven groupId mapping, TS package.json exports, Python module paths) — may need research spike during planning
 
 ## Session Continuity
 
 Last activity: 2026-05-21
-Stopped at: Milestone v1.7 started — defining requirements
+Stopped at: Roadmap created — ready to plan Phase 42
 Resume file: N/A
-Next options: Define requirements → create roadmap
+Next: `/gsd-plan-phase 42`
