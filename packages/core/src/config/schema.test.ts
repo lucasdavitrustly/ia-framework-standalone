@@ -209,6 +209,100 @@ describe('RetrievalConfigSchema — classificationRules', () => {
   });
 });
 
+// ─── RepoEntrySchema ─────────────────────────────────────────────────────────
+
+describe('RepoEntrySchema', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const getSchema = () => require('./schema.js').RepoEntrySchema;
+
+  it('accepts minimal valid entry with only path', () => {
+    const schema = getSchema();
+    const result = schema.parse({ path: '../my-repo' });
+    expect(result.path).toBe('../my-repo');
+  });
+
+  it('accepts full entry with all fields', () => {
+    const schema = getSchema();
+    const result = schema.parse({
+      path: '../my-repo',
+      name: 'my-repo',
+      provides: ['@org/pkg'],
+      profile: { languages: ['typescript'], frameworks: [], packageManager: 'pnpm' },
+    });
+    expect(result.path).toBe('../my-repo');
+    expect(result.name).toBe('my-repo');
+    expect(result.provides).toEqual(['@org/pkg']);
+    expect(result.profile).toBeDefined();
+  });
+
+  it('rejects entry with empty path', () => {
+    const schema = getSchema();
+    expect(() => schema.parse({ path: '' })).toThrow();
+  });
+
+  it('rejects entry with name containing uppercase letters', () => {
+    const schema = getSchema();
+    expect(() => schema.parse({ path: '../repo', name: 'MyRepo' })).toThrow();
+  });
+
+  it('rejects entry with name containing spaces', () => {
+    const schema = getSchema();
+    expect(() => schema.parse({ path: '../repo', name: 'my repo' })).toThrow();
+  });
+});
+
+// ─── ProjectConfigSchema — multi-repo ────────────────────────────────────────
+
+describe('ProjectConfigSchema — multi-repo format', () => {
+  const minimalEmbedding = { provider: 'openai' as const, model: 'text-embedding-3-small' };
+  const minimalVectorStore = { host: 'localhost', port: 6333, collectionName: 'test' };
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const getSchema = () => require('./schema.js').ProjectConfigSchema;
+
+  it('accepts old format with targetProjectPath only', () => {
+    const schema = getSchema();
+    const result = schema.parse({
+      targetProjectPath: '/foo',
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.targetProjectPath).toBe('/foo');
+  });
+
+  it('accepts new format with repos[] only', () => {
+    const schema = getSchema();
+    const result = schema.parse({
+      repos: [{ path: '../a' }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.repos).toHaveLength(1);
+  });
+
+  it('rejects config with both targetProjectPath and repos', () => {
+    const schema = getSchema();
+    expect(() =>
+      schema.parse({
+        targetProjectPath: '/foo',
+        repos: [{ path: '../a' }],
+        embedding: minimalEmbedding,
+        vectorStore: minimalVectorStore,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects config with neither targetProjectPath nor repos', () => {
+    const schema = getSchema();
+    expect(() =>
+      schema.parse({
+        embedding: minimalEmbedding,
+        vectorStore: minimalVectorStore,
+      }),
+    ).toThrow();
+  });
+});
+
 describe('RetrievalConfigSchema — earlyExitConfidence', () => {
   it('accepts earlyExitConfidence: 0.8 and parses correctly', () => {
     const result = RetrievalConfigSchema.parse({ earlyExitConfidence: 0.8 });
