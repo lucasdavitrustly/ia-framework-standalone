@@ -108,11 +108,27 @@ export const RetrievalConfigSchema = z.object({
   multiHop: MultiHopConfigSchema,
 });
 
-export const ProjectConfigSchema = z.object({
-  targetProjectPath: z.string().min(1),
-  embedding: EmbeddingProviderConfigSchema,
-  vectorStore: VectorStoreConfigSchema,
-  indexing: IndexingConfigSchema.optional(),
+export const RepoEntrySchema = z.object({
+  path: z.string().min(1),
+  name: z
+    .string()
+    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+    .optional(),
+  provides: z.array(z.string()).optional(),
   profile: ProjectProfileSchema.optional(),
-  retrieval: RetrievalConfigSchema.optional(),
 });
+
+export const ProjectConfigSchema = z
+  .object({
+    targetProjectPath: z.string().min(1).optional(),
+    repos: z.array(RepoEntrySchema).min(1).optional(),
+    embedding: EmbeddingProviderConfigSchema,
+    vectorStore: VectorStoreConfigSchema,
+    indexing: IndexingConfigSchema.optional(),
+    profile: ProjectProfileSchema.optional(),
+    retrieval: RetrievalConfigSchema.optional(),
+  })
+  .refine(
+    (d) => Boolean(d.targetProjectPath) !== Boolean(d.repos),
+    'Config must have exactly one of targetProjectPath or repos (not both, not neither)',
+  );

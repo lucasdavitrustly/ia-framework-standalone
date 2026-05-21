@@ -3,7 +3,8 @@ import {
   IndexingConfigSchema,
   LlmConfigSchema,
   RetrievalConfigSchema,
-  ClassificationRulesSchema,
+  RepoEntrySchema,
+  ProjectConfigSchema,
 } from './schema.js';
 
 describe('IndexingConfigSchema — embeddingConcurrency', () => {
@@ -212,18 +213,13 @@ describe('RetrievalConfigSchema — classificationRules', () => {
 // ─── RepoEntrySchema ─────────────────────────────────────────────────────────
 
 describe('RepoEntrySchema', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const getSchema = () => require('./schema.js').RepoEntrySchema;
-
   it('accepts minimal valid entry with only path', () => {
-    const schema = getSchema();
-    const result = schema.parse({ path: '../my-repo' });
+    const result = RepoEntrySchema.parse({ path: '../my-repo' });
     expect(result.path).toBe('../my-repo');
   });
 
   it('accepts full entry with all fields', () => {
-    const schema = getSchema();
-    const result = schema.parse({
+    const result = RepoEntrySchema.parse({
       path: '../my-repo',
       name: 'my-repo',
       provides: ['@org/pkg'],
@@ -236,18 +232,15 @@ describe('RepoEntrySchema', () => {
   });
 
   it('rejects entry with empty path', () => {
-    const schema = getSchema();
-    expect(() => schema.parse({ path: '' })).toThrow();
+    expect(() => RepoEntrySchema.parse({ path: '' })).toThrow();
   });
 
   it('rejects entry with name containing uppercase letters', () => {
-    const schema = getSchema();
-    expect(() => schema.parse({ path: '../repo', name: 'MyRepo' })).toThrow();
+    expect(() => RepoEntrySchema.parse({ path: '../repo', name: 'MyRepo' })).toThrow();
   });
 
   it('rejects entry with name containing spaces', () => {
-    const schema = getSchema();
-    expect(() => schema.parse({ path: '../repo', name: 'my repo' })).toThrow();
+    expect(() => RepoEntrySchema.parse({ path: '../repo', name: 'my repo' })).toThrow();
   });
 });
 
@@ -257,12 +250,8 @@ describe('ProjectConfigSchema — multi-repo format', () => {
   const minimalEmbedding = { provider: 'openai' as const, model: 'text-embedding-3-small' };
   const minimalVectorStore = { host: 'localhost', port: 6333, collectionName: 'test' };
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const getSchema = () => require('./schema.js').ProjectConfigSchema;
-
   it('accepts old format with targetProjectPath only', () => {
-    const schema = getSchema();
-    const result = schema.parse({
+    const result = ProjectConfigSchema.parse({
       targetProjectPath: '/foo',
       embedding: minimalEmbedding,
       vectorStore: minimalVectorStore,
@@ -271,8 +260,7 @@ describe('ProjectConfigSchema — multi-repo format', () => {
   });
 
   it('accepts new format with repos[] only', () => {
-    const schema = getSchema();
-    const result = schema.parse({
+    const result = ProjectConfigSchema.parse({
       repos: [{ path: '../a' }],
       embedding: minimalEmbedding,
       vectorStore: minimalVectorStore,
@@ -281,9 +269,8 @@ describe('ProjectConfigSchema — multi-repo format', () => {
   });
 
   it('rejects config with both targetProjectPath and repos', () => {
-    const schema = getSchema();
     expect(() =>
-      schema.parse({
+      ProjectConfigSchema.parse({
         targetProjectPath: '/foo',
         repos: [{ path: '../a' }],
         embedding: minimalEmbedding,
@@ -293,9 +280,8 @@ describe('ProjectConfigSchema — multi-repo format', () => {
   });
 
   it('rejects config with neither targetProjectPath nor repos', () => {
-    const schema = getSchema();
     expect(() =>
-      schema.parse({
+      ProjectConfigSchema.parse({
         embedding: minimalEmbedding,
         vectorStore: minimalVectorStore,
       }),
