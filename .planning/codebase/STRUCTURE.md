@@ -1,167 +1,217 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-04-02
-
-**Scope:** `packages/benchmark` — RAG retrieval quality benchmarking system and its integration points
+**Analysis Date:** 2026-05-21
 
 ## Directory Layout
 
 ```
-packages/benchmark/
-├── src/
-│   ├── types.ts                  # Pure domain interfaces (no implementation)
-│   ├── corpus.ts                 # Corpus loading, validation, scaffolding
-│   ├── corpus.test.ts            # Tests for corpus module
-│   ├── benchmark-runner.ts       # Query execution engine + metric computation
-│   ├── benchmark-runner.test.ts  # Tests for runner
-│   ├── benchmark-store.ts        # SQLite persistence (better-sqlite3)
-│   ├── benchmark-store.test.ts   # Tests for store
-│   └── index.ts                  # Barrel re-exports (public API)
-├── dist/                         # Built output (tsup → ESM + DTS)
-│   ├── index.js                  # Bundled ESM
-│   ├── index.js.map              # Source map
-│   └── index.d.ts                # Type declarations
-├── package.json                  # @ia-framework/benchmark
-├── tsconfig.json                 # Extends root tsconfig.base.json
-└── tsup.config.ts                # Build config (ESM, DTS, sourcemap, node22)
-```
-
-## Integration Points (Other Packages)
-
-```
-packages/cli/src/commands/
-└── benchmark.command.ts          # CLI commands: run, list, history, compare
-
-packages/dashboard-api/src/
-├── server.ts                     # Creates BenchmarkStore, passes to app
-├── app.ts                        # Mounts benchmarks router at /api/benchmarks
-└── routes/
-    └── benchmarks.ts             # GET /api/benchmarks, GET /api/benchmarks/:runId
-
-apps/dashboard/src/api/
-└── client.ts                     # Frontend API client (getBenchmarks, getBenchmarkRun)
+ia-framework/
+├── packages/               # Library packages (core domain logic)
+│   ├── core/               # Shared types, config, logging
+│   ├── ast-parser/         # Tree-sitter code chunking
+│   ├── embedding/          # Embedding provider abstraction
+│   ├── vector-store/       # Qdrant client wrapper
+│   ├── retrieval/          # Search engine, reranking, RRF
+│   ├── indexer/            # Indexing pipeline + strategies
+│   ├── mcp-server/         # MCP protocol server + tools
+│   ├── cli/                # Commander-based CLI
+│   ├── observability/      # Metrics, token counting
+│   ├── dashboard-api/      # Hono HTTP API for dashboard
+│   ├── project-detector/   # Target project auto-detection
+│   ├── db-context/         # PostgreSQL schema indexing
+│   └── benchmark/          # RAG quality evaluation
+├── apps/                   # Application packages
+│   └── dashboard/          # React SPA (Vite)
+├── scripts/                # Dev/build helper scripts
+├── spike/                  # Experimental prototypes
+│   └── llm-chunking/       # LLM chunking spike
+├── docs/                   # Documentation
+├── manager/                # Manager utilities
+├── .planning/              # GSD workflow artifacts
+│   ├── codebase/           # Architecture docs (this file)
+│   ├── phases/             # Phase plans (01-41+)
+│   └── quick/              # Quick task plans
+├── .ia-framework/          # Framework runtime state (for self-indexing)
+├── docker-compose.yml      # Qdrant + dashboard containers
+├── turbo.json              # Turborepo task config
+├── pnpm-workspace.yaml     # Workspace package locations
+├── tsconfig.base.json      # Shared TS config
+├── eslint.config.js        # Shared ESLint flat config
+├── .prettierrc             # Prettier config
+├── install.sh              # One-shot installer script
+└── package.json            # Root workspace package
 ```
 
 ## Directory Purposes
 
-**`packages/benchmark/src/`:**
-- Purpose: Core benchmark library — types, logic, persistence
-- Contains: TypeScript source files and co-located test files
-- Key files:
-  - `types.ts` — All domain interfaces
-  - `benchmark-runner.ts` — Query execution and metric computation
-  - `benchmark-store.ts` — SQLite read/write operations
-  - `corpus.ts` — Corpus file I/O and Zod validation
-  - `index.ts` — Public API barrel
+**`packages/core/`:**
 
-**`packages/benchmark/dist/`:**
-- Purpose: Build output consumed by other packages
-- Contains: Bundled ESM JavaScript, source maps, TypeScript declarations
-- Generated: Yes (by `tsup`)
-- Committed: Yes (workspace dependency resolution)
+- Purpose: Foundation types and utilities shared by all packages
+- Contains: Config loader/schema, logger, types, Maven parser, query intelligence
+- Key files: `src/index.ts` (barrel), `src/config/loader.ts`, `src/config/schema.ts`, `src/types/index.ts`
+
+**`packages/retrieval/`:**
+
+- Purpose: Search orchestration layer — the brain of the retrieval system
+- Contains: SearchEngine, MultiCollectionSearchEngine, reranking algos (MMR, BM25, RRF), dependency graph, elbow detection
+- Key files: `src/search-engine.ts`, `src/multi-collection-search-engine.ts`, `src/mmr.ts`, `src/rrf.ts`, `src/dependency-graph.ts`
+
+**`packages/indexer/`:**
+
+- Purpose: Converts source code into indexed vector chunks
+- Contains: Pipeline orchestrator, chunking strategies, file walker, incremental logic, concept generator
+- Key files: `src/pipeline.ts`, `src/strategies/ast-strategy.ts`, `src/strategies/llm-strategy.ts`, `src/strategies/types.ts`
+
+**`packages/mcp-server/`:**
+
+- Purpose: AI-facing interface — exposes retrieval as MCP tools
+- Contains: Server setup, tool modules, query classification, prompt templates
+- Key files: `src/bin.ts` (entry), `src/server.ts` (factory), `src/tools/search-codebase.ts`, `src/tools/search-codebase-hybrid.ts`
+
+**`packages/cli/`:**
+
+- Purpose: Developer-facing interface for all framework operations
+- Contains: Command modules using Commander.js
+- Key files: `src/bin.ts` (entry), `src/commands/index.command.ts`, `src/commands/init.command.ts`
+
+**`packages/dashboard-api/`:**
+
+- Purpose: HTTP API backend for monitoring dashboard
+- Contains: Hono app, route handlers, config watcher, search history
+- Key files: `src/server.ts`, `src/app.ts`, `src/routes/`
+
+**`apps/dashboard/`:**
+
+- Purpose: React frontend for monitoring and tuning
+- Contains: Pages, components, API client layer
+- Key files: `src/App.tsx`, `src/main.tsx`, `src/pages/`, `src/components/`
 
 ## Key File Locations
 
 **Entry Points:**
-- `packages/benchmark/src/index.ts`: Library barrel — all public exports
-- `packages/cli/src/commands/benchmark.command.ts`: CLI entry — `benchmarkCommand()` function
+
+- `packages/cli/src/bin.ts`: CLI entry (runs as `ia-framework`)
+- `packages/mcp-server/src/bin.ts`: MCP server entry (spawned by OpenCode)
+- `packages/dashboard-api/src/server.ts`: Dashboard API entry
+- `apps/dashboard/src/main.tsx`: Dashboard frontend entry
+- `install.sh`: First-time setup script
 
 **Configuration:**
-- `packages/benchmark/tsup.config.ts`: Build configuration (ESM-only, node22 target)
-- `packages/benchmark/tsconfig.json`: TypeScript config (extends root)
-- `packages/benchmark/package.json`: Package manifest with `@ia-framework/retrieval` workspace dependency
+
+- `turbo.json`: Build task graph
+- `pnpm-workspace.yaml`: Workspace package list
+- `tsconfig.base.json`: Shared TypeScript settings
+- `eslint.config.js`: Linting rules
+- `.prettierrc`: Formatting rules
+- `docker-compose.yml`: Container orchestration
+- `.env.example`: Required environment variables template
 
 **Core Logic:**
-- `packages/benchmark/src/benchmark-runner.ts`: Execution engine — iterates queries, calls search, computes metrics
-- `packages/benchmark/src/benchmark-store.ts`: SQLite persistence — schema creation, transactional writes, queries
-- `packages/benchmark/src/corpus.ts`: Corpus loading with Zod validation and file scaffolding
+
+- `packages/indexer/src/pipeline.ts`: Main indexing pipeline
+- `packages/retrieval/src/search-engine.ts`: Core search logic
+- `packages/retrieval/src/multi-collection-search-engine.ts`: Multi-collection orchestration
+- `packages/mcp-server/src/server.ts`: MCP server factory
+- `packages/core/src/config/loader.ts`: Config loading
 
 **Testing:**
-- `packages/benchmark/src/corpus.test.ts`: 6 tests — load/validate/scaffold corpus files
-- `packages/benchmark/src/benchmark-runner.test.ts`: 7 tests — hit/miss/rank/baseline/latency
-- `packages/benchmark/src/benchmark-store.test.ts`: 6 tests — save/get/list/infinity-roundtrip/close
 
-**API Routes:**
-- `packages/dashboard-api/src/routes/benchmarks.ts`: Hono router exposing benchmark data
-
-**Frontend Client:**
-- `apps/dashboard/src/api/client.ts`: Typed fetch wrapper for benchmark endpoints
+- Co-located with source: `*.test.ts` next to `*.ts`
+- Dedicated test dirs: `packages/*/src/__tests__/`
 
 ## Naming Conventions
 
 **Files:**
-- Domain modules: `kebab-case.ts` (e.g., `benchmark-runner.ts`, `benchmark-store.ts`)
-- Test files: `{module-name}.test.ts` co-located with source (e.g., `benchmark-runner.test.ts`)
-- Types-only files: `types.ts`
-- Barrel exports: `index.ts`
+
+- `kebab-case.ts`: All source files (e.g., `search-engine.ts`, `file-walker.ts`)
+- `*.test.ts`: Test files co-located with source
+- `*.command.ts`: CLI command modules
+- `index.ts`: Barrel exports per package
 
 **Directories:**
-- Package names: `kebab-case` (e.g., `packages/benchmark`)
-- Source code: always in `src/`
 
-**Exports:**
-- Classes: PascalCase (e.g., `BenchmarkRunner`, `BenchmarkStore`)
-- Functions: camelCase (e.g., `loadCorpus`, `scaffoldExampleCorpus`)
-- Interfaces: PascalCase (e.g., `BenchmarkQuery`, `QueryResult`)
-- Error classes: PascalCase + `Error` suffix (e.g., `CorpusNotFoundError`)
-- Zod schemas: PascalCase + `Schema` suffix (e.g., `BenchmarkQueriesFileSchema`)
+- `kebab-case/`: All directories
+- `src/`: Source code root in every package
+- `dist/`: Build output (gitignored)
+
+**Packages:**
+
+- Scoped: `@ia-framework/<name>` (internal workspace references)
+- Names match directory: `packages/core` → `@ia-framework/core`
 
 ## Where to Add New Code
 
-**New Benchmark Metric:**
-- Add type to `packages/benchmark/src/types.ts` (on `QueryResult` or `BenchmarkRun`)
-- Compute in `packages/benchmark/src/benchmark-runner.ts` `run()` method
-- Persist in `packages/benchmark/src/benchmark-store.ts` (add column, update insert/select)
-- Display in `packages/cli/src/commands/benchmark.command.ts` print functions
-- Test in `packages/benchmark/src/benchmark-runner.test.ts`
+**New MCP Tool:**
 
-**New CLI Subcommand (e.g., `benchmark delete`):**
-- Add function in `packages/cli/src/commands/benchmark.command.ts` following existing pattern
-- Register in `benchmarkCommand()` at bottom of file via `benchmark.addCommand()`
+- Implementation: `packages/mcp-server/src/tools/<tool-name>.ts`
+- Tests: `packages/mcp-server/src/tools/<tool-name>.test.ts`
+- Register in: `packages/mcp-server/src/server.ts`
 
-**New Store Query (e.g., filter runs by config):**
-- Add method to `BenchmarkStore` in `packages/benchmark/src/benchmark-store.ts`
-- Add test in `packages/benchmark/src/benchmark-store.test.ts`
-- Export through `packages/benchmark/src/index.ts` (already exported as class)
+**New CLI Command:**
 
-**New Dashboard Endpoint:**
-- Add route in `packages/dashboard-api/src/routes/benchmarks.ts`
-- Add client method in `apps/dashboard/src/api/client.ts`
+- Implementation: `packages/cli/src/commands/<name>.command.ts`
+- Tests: `packages/cli/src/commands/<name>.command.test.ts`
+- Register in: `packages/cli/src/bin.ts`
 
-**New Corpus Validation Rule:**
-- Modify Zod schema in `packages/benchmark/src/corpus.ts` `BenchmarkQuerySchema`
-- Add test case in `packages/benchmark/src/corpus.test.ts`
+**New Retrieval Algorithm:**
+
+- Implementation: `packages/retrieval/src/<algorithm>.ts`
+- Tests: `packages/retrieval/src/<algorithm>.test.ts`
+- Export from: `packages/retrieval/src/index.ts`
+
+**New Chunking Strategy:**
+
+- Implementation: `packages/indexer/src/strategies/<name>-strategy.ts`
+- Tests: `packages/indexer/src/strategies/<name>-strategy.test.ts`
+- Interface: `packages/indexer/src/strategies/types.ts`
+
+**New Embedding Provider:**
+
+- Implementation: `packages/embedding/src/providers/<name>.ts`
+- Register in: `packages/embedding/src/factory.ts`
+
+**New Dashboard Route:**
+
+- Implementation: `packages/dashboard-api/src/routes/<name>.ts`
+- Tests: `packages/dashboard-api/src/routes/<name>.test.ts`
+- Mount in: `packages/dashboard-api/src/app.ts`
+
+**New Dashboard Page:**
+
+- Page: `apps/dashboard/src/pages/<Name>.tsx`
+- Components: `apps/dashboard/src/components/<feature>/`
+
+**New Shared Type/Utility:**
+
+- Implementation: `packages/core/src/types/` or relevant subdirectory
+- Export from: `packages/core/src/index.ts`
 
 ## Special Directories
 
-**`dist/`:**
-- Purpose: tsup build output (ESM + DTS + sourcemaps)
-- Generated: Yes (`pnpm build` / `turbo build`)
-- Committed: Yes (required for workspace cross-package resolution)
+**`.ia-framework/`:**
 
-**`.turbo/`:**
-- Purpose: Turborepo build cache and logs
-- Generated: Yes
-- Committed: No (in .gitignore)
+- Purpose: Runtime state for self-indexing (project.json, metrics.sqlite, graph.sqlite)
+- Generated: Yes (by `ia-framework init`)
+- Committed: Partially (project.json yes, \*.sqlite no)
 
-**`node_modules/`:**
-- Purpose: Package dependencies (pnpm workspace symlinks)
-- Generated: Yes (`pnpm install`)
+**`.planning/`:**
+
+- Purpose: GSD workflow artifacts (phase plans, quick tasks, codebase docs)
+- Generated: Yes (by GSD commands)
+- Committed: Yes
+
+**`dist/`** (in each package):
+
+- Purpose: Compiled JavaScript output
+- Generated: Yes (by `turbo build` / `tsup`)
 - Committed: No
 
-## Data Files
+**`spike/`:**
 
-**`{targetProject}/.ia-framework/benchmark-queries.json`:**
-- Purpose: Benchmark corpus — user-defined queries with expected results
-- Created by: `scaffoldExampleCorpus()` on first `benchmark run`
-- Edited by: User (must customize for their codebase)
-- Format: JSON validated by `BenchmarkQueriesFileSchema`
-
-**`{targetProject}/.ia-framework/benchmarks.sqlite`:**
-- Purpose: Persistent storage for all benchmark runs and query results
-- Created by: `BenchmarkStore` constructor (auto-creates tables)
-- Shared by: CLI (read/write), Dashboard API (read-only)
+- Purpose: Experimental prototypes and research code
+- Generated: No (manually created)
+- Committed: Yes
 
 ---
 
-*Structure analysis: 2026-04-02*
+_Structure analysis: 2026-05-21_
