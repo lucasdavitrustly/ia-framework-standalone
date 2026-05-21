@@ -87,7 +87,7 @@ export const RetrievalConfigSchema = z.object({
   /** Top-K results for auto-context injection (v2) */
   autoContextTopK: z.number().int().min(1).max(20).default(5),
   /** Soft token budget cap per search tool call. Results trimmed from bottom when exceeded. 0 = unlimited. Default: 40000. */
-  maxTokensPerCall: z.number().int().min(0).default(40000),
+  maxTokensPerCall: z.number().int().positive().optional(),
   /** Default minimum relevance score threshold. Results below this are filtered out. */
   scoreThreshold: z.number().min(0).max(1).optional(),
   /** Classification rules for query complexity classifier */
