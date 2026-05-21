@@ -10,11 +10,13 @@ export type {
   VectorStoreConfig,
   IndexingConfig,
   RetrievalConfig,
+  RepoEntry,
   ProjectConfig,
 } from './types/index.js';
 
 // Config
 export { loadConfig, validateConfig, ConfigNotFoundError } from './config/loader.js';
+export { RepoRegistry } from './config/registry.js';
 export {
   ProjectConfigSchema,
   EmbeddingProviderConfigSchema,
