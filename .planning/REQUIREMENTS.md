@@ -9,10 +9,10 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 
 ### Configuration
 
-- [ ] **CONF-01**: Developer can configure multiple repo paths in project.json as an array
+- [x] **CONF-01**: Developer can configure multiple repo paths in project.json as an array
 - [ ] **CONF-02**: Each repo entry is independently auto-detected for language, framework, and build tools
 - [ ] **CONF-03**: Repo `provides` field auto-populated from package.json name or pom.xml artifactId
-- [ ] **CONF-04**: Existing single-path project.json config migrates seamlessly (backward compat)
+- [x] **CONF-04**: Existing single-path project.json config migrates seamlessly (backward compat)
 
 ### Indexing
 
@@ -52,10 +52,10 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 
 | Requirement | Phase | Status  |
 | ----------- | ----- | ------- |
-| CONF-01     | 42    | Pending |
+| CONF-01     | 42    | Complete |
 | CONF-02     | 42    | Pending |
 | CONF-03     | 42    | Pending |
-| CONF-04     | 42    | Pending |
+| CONF-04     | 42    | Complete |
 | INDX-01     | 43    | Pending |
 | INDX-02     | 43    | Pending |
 | INDX-03     | 43    | Pending |

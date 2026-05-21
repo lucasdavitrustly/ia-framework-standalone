@@ -78,11 +78,11 @@ See archived roadmaps in `.planning/milestones/`:
 3. Repo `provides` field is auto-populated from package.json name or pom.xml artifactId
 4. Existing single-path project.json (with `targetProjectPath`) continues to work without manual migration
 
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 
-- [ ] 42-01-PLAN.md — Schema + RepoRegistry class with backward-compat normalization
+- [x] 42-01-PLAN.md — Schema + RepoRegistry class with backward-compat normalization
 - [ ] 42-02-PLAN.md — Per-repo detection (profile + provides auto-population)
 
 ### Phase 43: Per-Repo Indexing
@@ -141,7 +141,7 @@ Plans:
 | 39. Confidence-Based Early Exit | v1.5      | 1/1            | Complete    | 2026-05-15 |
 | 40. Benchmark Preflight Tool    | v1.6      | 1/1            | Complete    | 2026-05-18 |
 | 41. Hybrid Retrieval Tuning     | v1.6      | 1/1            | Complete    | 2026-05-18 |
-| 42. Config & Repo Registry      | v1.7      | 0/?            | Not started | -          |
+| 42. Config & Repo Registry      | v1.7      | 1/2 | In Progress|  |
 | 43. Per-Repo Indexing           | v1.7      | 0/?            | Not started | -          |
 | 44. Unified Search & MCP        | v1.7      | 0/?            | Not started | -          |
 | 45. Cross-Repo Dependency Graph | v1.7      | 0/?            | Not started | -          |
