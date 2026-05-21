@@ -77,7 +77,13 @@ See archived roadmaps in `.planning/milestones/`:
 2. Each repo entry shows auto-detected language, framework, and build tools after detection
 3. Repo `provides` field is auto-populated from package.json name or pom.xml artifactId
 4. Existing single-path project.json (with `targetProjectPath`) continues to work without manual migration
-   **Plans**: TBD
+
+**Plans:** 2 plans
+
+Plans:
+
+- [ ] 42-01-PLAN.md — Schema + RepoRegistry class with backward-compat normalization
+- [ ] 42-02-PLAN.md — Per-repo detection (profile + provides auto-population)
 
 ### Phase 43: Per-Repo Indexing
 
