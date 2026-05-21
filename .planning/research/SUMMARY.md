@@ -1,160 +1,162 @@
 # Project Research Summary
 
-**Project:** ia-framework v1.2 — Chunking Tuning & Retrieval Quality
-**Domain:** RAG Quality Optimization — systematic tuning of existing LLM chunking and retrieval components
-**Researched:** 2026-04-22
+**Project:** ia-framework v1.7 — Multi-Repo Indexing
+**Domain:** Cross-repository RAG indexing extension
+**Researched:** 2026-05-21
 **Confidence:** HIGH
 
 ## Executive Summary
 
-v1.2 is a **tuning milestone**, not a features milestone. The entire stack is already in place from v1.0/v1.1 — no new dependencies are needed. The work is prompt engineering (better chunk boundaries and summaries), fixing a critical score-filtering bug (RRF scores treated as cosine similarities), and building dashboard visibility to make tuning data-driven. The goal is pushing MRR past 0.7 through systematic iteration on existing components.
+Multi-repo indexing is an **extension** of a mature single-repo RAG system (41 phases of prior development), not a greenfield build. The research unanimously concludes that **no new runtime dependencies are needed** — the existing stack (Qdrant payloads, better-sqlite3 dependency graph, Zod config, tree-sitter, chokidar) already supports multi-repo when parameterized by a `repoId` field. The recommended approach is payload-based multi-tenancy in shared Qdrant collections with a new `RepoRegistry` normalization layer.
 
-The recommended approach is **benchmark-first**: establish a frozen, reproducible baseline before touching any prompts or filters. The single highest-impact fix is the RRF score threshold bug — the current `scoreThreshold: 0.3` silently drops ALL results from hybrid/RRF searches because RRF scores are rank-based fractions (~0.0–0.1), not cosine similarities. After that, prompt engineering with per-query failure diagnosis is the main MRR lever. Dashboard tuning views (chunk inspector, score distributions) accelerate the iteration loop from ~10 cycles to 2-3.
+The critical path is: Config schema migration → Repo-tagged payloads → Unified search → Cross-repo dependency graph. The architecture is deliberately additive — all changes maintain backward compatibility with existing single-repo installations. Cross-repo dependency resolution (following imports across repo boundaries) is the hardest problem and the only area requiring a potential research spike during implementation.
 
-Key risks: overfitting prompts to the 30-query benchmark corpus, tuning without reproducible baselines (LLM non-determinism), and score filtering that kills recall on hard queries. All are preventable with discipline — holdout validation sets, temperature=0 for benchmarks, and measuring Hit@K alongside MRR.
+The top risk is **breaking existing users** by changing the config contract. This is mitigated by supporting both `targetProjectPath` (legacy single string) and `repos[]` (new array) formats simultaneously, with auto-normalization internally. Secondary risks include point ID collisions across repos with identical file paths and relevance dilution when searching across many repos.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No new dependencies. All v1.2 work uses the existing stack: Ollama SDK for LLM chunking prompts, Qdrant for vector storage, Recharts for dashboard charts, Vitest for benchmarks, Zod for validation. The only "new" code is prompt strings, a ~50-line score filter function, and dashboard React views. See [STACK.md](./STACK.md) for full details.
+No new libraries. All multi-repo capability comes from schema extensions and logic changes to existing code. See [STACK.md](./STACK.md) for full analysis.
 
-**Core technologies (all existing):**
+**Key decisions:**
 
-- **Ollama SDK** (`^0.6.3`): LLM chunking prompt iteration — change prompts, not code
-- **Recharts** (`^3.x`): Score histograms, scatter plots, threshold visualization for tuning views
-- **better-sqlite3**: Store prompt version metadata, per-query benchmark results, score distributions
+- **Single Qdrant collection + `repoId` payload field** — not separate collections per repo (avoids N² search paths)
+- **SQLite graph extension** — add `source_repo`/`target_repo` columns, keep single DB for cross-repo edge queries
+- **Explicit `provides` config** — user declares what each repo exports (package names), no magical auto-detection
 
 ### Expected Features
 
-See [FEATURES.md](./FEATURES.md) for detailed analysis with dependency graph and prioritization matrix.
+See [FEATURES.md](./FEATURES.md) for full dependency graph and complexity assessment.
 
-**Must have (P0-P1 — table stakes for v1.2):**
+**Must have (table stakes):**
 
-- Fix RRF score threshold bug — currently filtering all hybrid results (P0, active bug)
-- Prompt boundary improvements — few-shot examples, class grouping, min chunk size (P1)
-- Prompt summary improvements — intent-focused, domain terminology (P1)
-- Prompt versioning — track which prompt produced which chunks (P1)
-- Chunk overlap/gap detection — validate LLM chunk coverage (P1)
-- Baseline + validation benchmarks — establish reproducible MRR before tuning (P1)
+- Multi-path config in project.json (declare repos to index)
+- Per-repo auto-detection (each repo may be different stack)
+- Unified search across all repos with source attribution
+- Independent re-indexing per repo
+- MCP tools return repo origin
 
-**Should have (P2 — differentiators):**
+**Should have (differentiators):**
 
-- Chunking quality inspector — view chunks alongside source code
-- Score distribution analysis — histograms of candidate scores
-- Filtering effectiveness view — returned vs. filtered with near-misses
-- Prompt A/B testing workflow — CLI-driven comparison
-- Summary quality scoring — heuristic quality checks
+- Cross-repo dependency graph (follow imports across boundaries)
+- Repo-scoped search filter
+- Unified dependency expansion across repos
 
-**Defer (P3/v1.3+):**
+**Defer (v2+):**
 
-- Score gap detection, cross-encoder reranking, auto-tuning thresholds, multi-model testing
+- Cross-repo module graph (Maven multi-module across repos — niche)
+- Repo priority/weighting (no schema impact, easy to add later)
 
 ### Architecture Approach
 
-Three workstreams (prompt engineering, score filtering, dashboard views) touch different packages but share the benchmark feedback loop. New code is minimal: `PromptRegistry` in indexer, `ScoreFilter` in retrieval, tuning routes in dashboard-api, and React tuning views. All changes integrate into existing component boundaries with no architectural shifts. Key decision: apply score filtering **after** RRF merge, not before, since pre-merge and post-merge scores are on different scales. See [ARCHITECTURE.md](./ARCHITECTURE.md) for full patterns, anti-patterns, and build order.
+Payload-based multi-tenancy with a RepoRegistry normalization layer. Every component is MODIFIED, not replaced. One new class (`RepoRegistry`) normalizes single/multi-repo configs. See [ARCHITECTURE.md](./ARCHITECTURE.md) for full component boundaries, data flows, and build order.
 
-**New components:**
+**Major components (modified):**
 
-1. **PromptRegistry** (indexer) — named prompt template CRUD, stored as `.ia-framework/prompts.json`
-2. **ScoreFilter** (retrieval) — adaptive filtering: relative threshold, gap detection
-3. **Tuning API routes** (dashboard-api) — REST endpoints for prompt/chunk/filter management
-4. **Tuning views** (dashboard) — chunk inspector, filter tuner, benchmark comparison
+1. **Config Schema + RepoRegistry** — normalize both config formats, manage repo definitions
+2. **Indexing Pipeline** — iterate repos, tag chunks with repoId, per-repo state isolation
+3. **SearchEngine** — optional repo filter, result attribution
+4. **DependencyGraph** — cross-repo expansion via explicit edges
+5. **MCP Server** — optional `repo` param on tools, formatted output with repo prefix
 
 ### Critical Pitfalls
 
-See [PITFALLS.md](./PITFALLS.md) for all 12 pitfalls with full prevention strategies.
+See [PITFALLS.md](./PITFALLS.md) for all 13 pitfalls with prevention strategies.
 
-1. **Tuning without stable baseline** — Freeze corpus, set temperature=0, run 3x, store per-query results before any changes
-2. **Global prompt changes without per-query diagnosis** — Analyze WHY specific queries fail before changing prompts; categorize failures by type (boundary, summary, embedding, threshold)
-3. **Score threshold killing recall** — RRF scores ≠ cosine; use mode-aware thresholds; measure Hit@K impact before and after
-4. **Overfitting to 30-query corpus** — Hold out 20% validation set; add diverse query types; spot-check in dashboard
-5. **Chunk boundary changes invalidating embeddings** — Always full re-index after prompt changes; version prompts in Qdrant metadata; keep old collection alive until new one benchmarks better
+1. **Breaking single-repo config** — Support both formats; auto-normalize legacy `targetProjectPath` to `repos[0]`
+2. **Point ID collision** — Include repoId in hash input for Qdrant point IDs
+3. **False dependency edges** — Separate per-repo graphs + explicit cross-repo edge registration
+4. **Re-index cascade** — Per-repo indexing state, separate chokidar instances
+5. **MCP tool contract breakage** — All `repo` params optional; omitted = search all repos
 
 ## Implications for Roadmap
 
-Based on combined research, the following phase structure respects dependency ordering, isolates risk, and groups related work.
+### Phase 1: Config & Types Foundation
 
-### Phase 1: Baseline & Bug Fixes
+**Rationale:** Everything depends on the config schema. Must solve backward compatibility first.
+**Delivers:** `RepoConfigSchema`, `repoId` in types, `RepoRegistry` class, config auto-migration
+**Addresses:** Multi-path config, backward compat
+**Avoids:** Pitfall 1 (breaking existing users), Pitfall 2 (ID collisions — design IDs here)
 
-**Rationale:** Nothing else is measurable without a stable baseline. The RRF threshold bug is actively harming results.
-**Delivers:** Reproducible benchmark baseline, fixed hybrid search, prompt versioning infrastructure, chunk validation
-**Addresses:** Fix RRF threshold bug (P0), baseline benchmarks (P1), prompt versioning (P1), chunk overlap/gap detection (P1)
-**Avoids:** Pitfall 1 (no stable baseline), Pitfall 5 (unversioned chunks), Pitfall 10 (no version control)
+### Phase 2: Per-Repo Indexing Pipeline
 
-### Phase 2: Prompt Engineering
+**Rationale:** Data must exist before search can work. Indexing pipeline needs to iterate repos and tag chunks.
+**Delivers:** Repo-tagged Qdrant payloads, per-repo indexing state, payload index on `repoId`
+**Addresses:** Independent re-indexing, per-repo detection
+**Avoids:** Pitfall 4 (re-index cascade), Pitfall 13 (concurrent race conditions)
 
-**Rationale:** Prompt quality is the #1 MRR lever. Requires baseline from Phase 1 and versioning infrastructure.
-**Delivers:** Improved chunk boundaries and summaries, measurable MRR improvement toward 0.7
-**Addresses:** Boundary improvements (P1), summary improvements (P1), summary quality scoring (P2), A/B testing workflow (P2)
-**Avoids:** Pitfall 2 (blind global changes), Pitfall 4 (overfitting), Pitfall 6 (summary length tradeoff)
+### Phase 3: Search & MCP Tool Updates
 
-### Phase 3: Score Filtering Refinement
+**Rationale:** With indexed multi-repo data, enable querying. MCP tools are the user-facing surface.
+**Delivers:** Unified search with repo filter, repo attribution in results, updated MCP tool schemas
+**Addresses:** Unified search, repo-scoped filter, MCP repo origin
+**Avoids:** Pitfall 5 (ambiguous results), Pitfall 8 (relevance dilution), Pitfall 10 (contract breakage)
 
-**Rationale:** After prompt quality is improved, filtering refinement squeezes additional MRR. Includes quick win of RRF k-constant tuning.
-**Delivers:** Mode-aware adaptive thresholds, optimized RRF k parameter, score distribution data collection
-**Addresses:** Dynamic threshold per mode (P3), score gap detection (P3)
-**Avoids:** Pitfall 3 (threshold killing recall), Pitfall 7 (untuned RRF k)
+### Phase 4: Cross-Repo Dependency Graph
 
-### Phase 4: Dashboard Tuning Views
+**Rationale:** Hardest problem, depends on multi-repo data existing. Import resolution across boundaries is language-specific.
+**Delivers:** Cross-repo edge resolution, `getNeighborFilesAcrossRepos`, package-to-repo mapping
+**Addresses:** Cross-repo dependency graph, unified expansion
+**Avoids:** Pitfall 3 (false edges from path resolution)
 
-**Rationale:** Highest value after core tuning is done — makes future iteration faster. Depends on tuning API routes and data from Phases 1-3.
-**Delivers:** Chunk inspector, score distributions, filtering effectiveness, prompt comparison views
-**Addresses:** All P2 dashboard features (chunking inspector, score analysis, filtering view, prompt comparison)
-**Avoids:** Pitfall 8 (aggregate-only display), Pitfall 9 (ignoring AST collection — show per-collection metrics)
+### Phase 5: Dashboard & Benchmark Updates
+
+**Rationale:** Polish and observability. Not blocking core functionality.
+**Delivers:** Per-repo metrics in dashboard, benchmark corpus format extension
+**Addresses:** Per-repo visibility, benchmark accuracy
+**Avoids:** Pitfall 11 (corpus assumes single repo), Pitfall 12 (no per-repo metrics)
 
 ### Phase Ordering Rationale
 
-- **Phase 1 first** because everything depends on reproducible measurement and the RRF bug fix is a P0
-- **Phase 2 before 3** because better chunks have higher MRR impact than better filtering — prompt engineering is the #1 lever
-- **Phase 3 before 4** because filtering refinement is backend-only and produces the score distribution data that dashboard views need
-- **Phase 4 last** because dashboard views are visibility, not MRR improvement — they accelerate future tuning cycles but don't move MRR directly
+- Config → Indexing → Search → Graph follows strict data dependency
+- All 4 research files independently agree on this ordering
+- Cross-repo graph isolated to Phase 4 (highest risk, only needed for differentiators)
+- Dashboard/benchmarks last (display-only, no downstream dependents)
 
 ### Research Flags
 
 **Phases likely needing deeper research during planning:**
 
-- **Phase 2 (Prompt Engineering):** Inherently iterative — specific prompt text depends on per-query failure analysis done during execution. Plan the process and tooling, not the exact prompts.
+- **Phase 4 (Cross-Repo Graph):** Language-specific import resolution across repos has edge cases (Maven groupId mapping, TypeScript package.json exports, Python module paths)
 
 **Phases with standard patterns (skip research-phase):**
 
-- **Phase 1 (Baseline & Bug Fixes):** Bug fix + config infrastructure — code locations identified, changes are straightforward
-- **Phase 3 (Score Filtering):** Parameter tuning with sweep — standard IR practice, ~50 lines of new code
-- **Phase 4 (Dashboard Views):** CRUD dashboard views — standard React + REST + Recharts patterns
+- **Phase 1 (Config):** Pure Zod schema work, well-understood
+- **Phase 2 (Indexing):** Existing pipeline + loop; additive
+- **Phase 3 (Search/MCP):** Qdrant payload filtering is documented and validated
+- **Phase 5 (Dashboard):** Display-only changes
 
 ## Confidence Assessment
 
-| Area         | Confidence | Notes                                                                                                     |
-| ------------ | ---------- | --------------------------------------------------------------------------------------------------------- |
-| Stack        | **HIGH**   | No new deps — all verified in v1.0/v1.1 research                                                          |
-| Features     | **HIGH**   | Based on direct codebase analysis, existing MRR data, and clear prioritization                            |
-| Architecture | **HIGH**   | Integration points identified via code inspection; minimal new components; anti-patterns documented       |
-| Pitfalls     | **HIGH**   | System-specific pitfalls from known architecture; standard IR methodology; concrete prevention strategies |
+| Area         | Confidence | Notes                                                         |
+| ------------ | ---------- | ------------------------------------------------------------- |
+| Stack        | **HIGH**   | No new deps — all capabilities verified in existing codebase  |
+| Features     | **HIGH**   | Based on existing architecture + Sourcegraph patterns         |
+| Architecture | **HIGH**   | Derived from actual codebase analysis (code paths identified) |
+| Pitfalls     | **HIGH**   | All derived from known system internals, not speculative      |
 
 **Overall confidence:** **HIGH**
 
 ### Gaps to Address
 
-- **Optimal prompt text:** Cannot be researched in advance — requires iterative experimentation with per-query diagnosis during Phase 2
-- **RRF k-constant optimal value:** Requires parameter sweep during Phase 3 — literature default k=60 may not be optimal for code search
-- **AST chunking quality baseline:** All v1.2 research focuses on LLM chunking; AST collection MRR should be measured independently in Phase 1 (Pitfall 9)
-- **Benchmark corpus diversity:** Current 30 queries may be skewed toward certain patterns — need to assess and diversify during Phase 1
+- **Python cross-repo import resolution:** No standard package.json equivalent; needs explicit mapping config. Address during Phase 4 planning.
+- **Scale at 10+ repos:** Qdrant collection size and SQLite graph performance untested. Monitor during Phase 2.
+- **Config migration testing:** Need integration test with real v1.6 config files to validate auto-migration.
 
 ## Sources
 
 ### Primary (HIGH confidence)
 
-- Existing codebase: `packages/retrieval/src/search-engine.ts`, `packages/indexer/src/strategies/prompt.ts`, `llm-chunker.ts`
-- Qdrant docs (Context7) — RRF fusion score behavior, rank-based not cosine
-- `.planning/research/MRR-IMPROVEMENT-RESEARCH.md` — prior retrieval quality research
-- `.planning/PROJECT.md` — v1.2 scope definition, MRR > 0.7 target
+- Existing ia-framework codebase (41 phases of validated architecture)
+- Qdrant payload filtering documentation (indexed fields, efficient string match)
+- `.planning/PROJECT.md` v1.7 milestone definition
 
 ### Secondary (MEDIUM confidence)
 
-- RRF fusion literature (Cormack, Clarke & Buettcher 2009) — k=60 default, domain-dependent
-- Standard IR evaluation methodology — holdout sets, reproducibility requirements
+- Sourcegraph cross-repository code intelligence model (design inspiration)
 
 ---
 
-_Research completed: 2026-04-22_
+_Research completed: 2026-05-21_
 _Ready for roadmap: yes_
