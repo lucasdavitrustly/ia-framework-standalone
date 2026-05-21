@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Multi-Repo Indexing
 status: unknown
-stopped_at: Completed 42-01-PLAN.md
-last_updated: "2026-05-21T19:43:50.748Z"
+stopped_at: Completed 42-02-PLAN.md
+last_updated: "2026-05-21T19:51:41.052Z"
 last_activity: 2026-05-21
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -46,6 +46,7 @@ All decisions are logged in PROJECT.md Key Decisions table.
 - SQLite graph extension with `source_repo`/`target_repo` columns for cross-repo edges
 - Support both `targetProjectPath` (legacy) and `repos[]` (new) config formats
 - [Phase 42-config-repo-registry]: Used Zod .refine() for mutual exclusion between targetProjectPath and repos[]
+- [Phase 42-config-repo-registry]: File-existence heuristics for detection (no YAML/XML parser deps)
 
 ### Pending Todos
 
@@ -58,6 +59,6 @@ None.
 ## Session Continuity
 
 Last activity: 2026-05-21
-Stopped at: Completed 42-01-PLAN.md
+Stopped at: Completed 42-02-PLAN.md
 Resume file: None
 Next: `/gsd-plan-phase 42`
