@@ -16,25 +16,16 @@
 
 ---
 
-## v1.5 RAG Retrieval Quality Improvements (Active)
+## v1.5 RAG Retrieval Quality Improvements (Shipped: 2026-05-15)
 
-**Goal:** Eliminate context pollution causing MCP to be a net negative (-3% quality, +20% cost). A/B benchmark showed RAG injecting irrelevant context causes hallucination on negative queries and inflates token usage without quality gain.
+**Phases completed:** 4 phases (32, 37–39), 5 plans
 
-**Benchmark baseline:** MCP is net negative — -3% quality, +20% cost, 2/6 win rate. Negative query test showed 2x irrelevant tokens injected causing hallucination.
+**Key accomplishments:**
 
-**Success criteria:** MCP win rate >= 4/6, no hallucination flags, <= +30% token overhead.
-
-**Phases:**
-
-| Phase                          | Name                                       | Priority | Size | Package               | Expected Impact                                         |
-| ------------------------------ | ------------------------------------------ | -------- | ---- | --------------------- | ------------------------------------------------------- |
-| 32 — relevance-score-threshold | Score threshold >= 0.5 with null fallback  | P0       | S    | `packages/mcp-server` | Eliminates hallucination on negative/irrelevant queries |
-| 33 — reranking-layer           | Re-ranking before context injection        | P1       | M    | `packages/core`       | Filters low-relevance chunks, improves precision        |
-| 34 — context-budget-caps       | Token caps per query type                  | P2       | S    | `packages/mcp-server` | Reduces token waste on simple queries                   |
-| 35 — index-code-patterns       | Index code examples/patterns               | P3       | M    | `packages/core`       | Improves actionability of retrieved context             |
-| 36 — query-type-classification | Query classification for retrieval routing | P4       | L    | `packages/mcp-server` | Skip retrieval entirely for negative/simple queries     |
-
-**Key accomplishments:** _(to be filled on ship)_
+- Configurable relevance score threshold (≥0.5) with anti-hallucination null fallback eliminates context pollution on negative queries
+- Deterministic query complexity classifier (`classifyQuery`) routes keyword/symbol lookups to BM25 — zero LLM calls, <5ms latency
+- Line-number-aware search results display `file:startLine-endLine` with pipeline validation warnings
+- Confidence-based early exit: keyword queries at ≥0.8 confidence skip vector search entirely with structured logging
 
 ---
 

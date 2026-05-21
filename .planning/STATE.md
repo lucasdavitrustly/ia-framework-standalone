@@ -20,7 +20,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30)
 
 **Core value:** AI that actually understands the codebase — better context means better code output.
-**Current focus:** v1.6 milestone complete — all phases shipped
+**Current focus:** v1.6 milestone complete — all phases shipped. Next: v1.7 planning.
 
 ## Current Position
 
