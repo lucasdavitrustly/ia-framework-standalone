@@ -17,6 +17,7 @@ export type {
 // Config
 export { loadConfig, validateConfig, ConfigNotFoundError } from './config/loader.js';
 export { RepoRegistry } from './config/registry.js';
+export { detectRepoProfile, detectRepoProvides } from './config/detector.js';
 export {
   ProjectConfigSchema,
   EmbeddingProviderConfigSchema,

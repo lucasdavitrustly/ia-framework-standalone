@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { RepoRegistry } from './registry.js';
 import type { ProjectConfig } from '../types/index.js';
 
@@ -137,5 +140,79 @@ describe('RepoRegistry — lookup', () => {
     };
     const registry = RepoRegistry.fromConfig(config, '/config');
     expect(registry.size).toBe(3);
+  });
+});
+
+describe('RepoRegistry.detect()', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'registry-detect-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('populates profile for a repo with package.json', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({ name: 'my-app', dependencies: { react: '*' } }),
+    );
+    const config: ProjectConfig = {
+      repos: [{ path: tmpDir }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const registry = RepoRegistry.fromConfig(config, '/config');
+    await registry.detect();
+    const entry = registry.getRepos()[0]!;
+    expect(entry.profile).toBeDefined();
+    expect(entry.profile?.languages).toContain('typescript');
+    expect(entry.profile?.frameworks).toContain('react');
+  });
+
+  it('populates provides from package.json name', async () => {
+    await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: '@org/my-lib' }));
+    const config: ProjectConfig = {
+      repos: [{ path: tmpDir }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const registry = RepoRegistry.fromConfig(config, '/config');
+    await registry.detect();
+    const entry = registry.getRepos()[0]!;
+    expect(entry.provides).toContain('@org/my-lib');
+  });
+
+  it('leaves profile undefined for a repo with a non-existent path (D-13)', async () => {
+    const config: ProjectConfig = {
+      repos: [{ path: '/non/existent/xyz-12345', name: 'missing' }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const registry = RepoRegistry.fromConfig(config, '/config');
+    await registry.detect(); // should not throw
+    const entry = registry.getRepo('missing');
+    expect(entry?.profile).toBeUndefined();
+    expect(entry?.provides).toBeUndefined();
+  });
+
+  it('toJSON() serializes entries with populated profile and provides', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({ name: 'serialized-pkg', dependencies: {} }),
+    );
+    const config: ProjectConfig = {
+      repos: [{ path: tmpDir }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const registry = RepoRegistry.fromConfig(config, '/config');
+    await registry.detect();
+    const json = registry.toJSON();
+    expect(json).toHaveLength(1);
+    expect(json[0]!.provides).toContain('serialized-pkg');
+    expect(json[0]!.profile?.languages).toContain('typescript');
   });
 });

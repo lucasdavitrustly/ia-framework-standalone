@@ -1,5 +1,6 @@
 import { resolve, basename } from 'node:path';
 import type { ProjectConfig, RepoEntry } from '../types/index.js';
+import { detectRepoProfile, detectRepoProvides } from './detector.js';
 
 function toKebabCase(str: string): string {
   return str
@@ -53,5 +54,32 @@ export class RepoRegistry {
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * Run per-repo detection for all entries.
+   * Populates `profile` and `provides` fields on each RepoEntry.
+   * Entries with non-existent paths are skipped gracefully (D-13).
+   */
+  async detect(): Promise<void> {
+    for (const entry of this.entries.values()) {
+      const profile = await detectRepoProfile(entry.path);
+      if (profile) entry.profile = profile;
+      const provides = await detectRepoProvides(entry.path);
+      if (provides.length > 0) entry.provides = provides;
+    }
+  }
+
+  /**
+   * Serialize the registry back to project.json repos[] format (D-11).
+   * Includes populated profile and provides fields.
+   */
+  toJSON(): RepoEntry[] {
+    return [...this.entries.values()].map((entry) => ({
+      path: entry.path,
+      name: entry.name,
+      ...(entry.provides !== undefined ? { provides: entry.provides } : {}),
+      ...(entry.profile !== undefined ? { profile: entry.profile } : {}),
+    }));
   }
 }
