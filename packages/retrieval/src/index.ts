@@ -20,3 +20,9 @@ export { mmrRerank, classifyQueryLambda, jaccardSimilarity, cosineSimilarity } f
 export type { MmrOptions } from './mmr.js';
 export { applyElbowTruncation } from './elbow-detection.js';
 export type { ElbowOptions } from './elbow-detection.js';
+export { bm25Rerank } from './bm25-reranker.js';
+export type { Bm25RerankOptions } from './bm25-reranker.js';
+export { extractSymbols } from './symbol-extractor.js';
+export type { ExtractedSymbols } from './symbol-extractor.js';
+export { multiHopExpand } from './multi-hop.js';
+export type { MultiHopConfig, MultiHopEngine } from './multi-hop.js';

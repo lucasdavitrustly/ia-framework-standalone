@@ -42,6 +42,12 @@ export function applyTokenCap(results: RetrievalResult[], maxTokens: number): To
     return { results: [], tokenCapApplied: false, resultsTrimmed: 0, totalTokens: 0 };
   }
 
+  // 0 = unlimited — return all results with total token count
+  if (maxTokens === 0) {
+    const totalTokens = results.reduce((sum, r) => sum + estimateTokens(r.content), 0);
+    return { results: [...results], tokenCapApplied: false, resultsTrimmed: 0, totalTokens };
+  }
+
   const included: RetrievalResult[] = [];
   let runningTokens = 0;
 

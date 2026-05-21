@@ -47,6 +47,8 @@ vi.mock('@ia-framework/core', async (importOriginal) => {
 // ── Mock @ia-framework/ast-parser ───────────────────────────────────────────
 vi.mock('@ia-framework/ast-parser', () => ({
   parseFile: mockParseFile,
+  extractCalls: () => undefined,
+  buildCalledByIndex: () => new Map(),
 }));
 
 // ── Mock incremental helpers ─────────────────────────────────────────────────
@@ -166,10 +168,16 @@ describe('IndexingPipeline', () => {
     );
   });
 
-  it('Test 2: run() calls embeddingProvider.embedBatch() with chunk content strings', async () => {
+  it('Test 2: run() calls embeddingProvider.embedBatch() with text descriptions and code content', async () => {
     await pipeline.run(makeConfig());
 
-    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(['function testFn() {}']);
+    // First call: text descriptions (auto-generated from chunk metadata)
+    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.any(String)]),
+      'document',
+    );
+    // Second call: raw code content
+    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(['function testFn() {}'], 'document');
   });
 
   it('Test 3: run() calls vectorStore.upsertBatch() with VectorPoints having both textVector and codeVector', async () => {

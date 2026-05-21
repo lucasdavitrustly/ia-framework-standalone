@@ -1,6 +1,7 @@
 import type { EmbeddingProvider } from '@ia-framework/embedding';
 import type { VectorStore, VectorPoint, ChunkPayload } from '@ia-framework/vector-store';
 import type { CodeChunk } from '@ia-framework/ast-parser';
+import { extractCalls, buildCalledByIndex } from '@ia-framework/ast-parser';
 import type { ContextSource } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
 import { readFile } from 'node:fs/promises';
@@ -24,6 +25,7 @@ import {
   inferPackageName,
   inferMavenModule,
 } from './retrieval-metadata.js';
+import { detectConcepts, generateConceptChunks } from './concept-generator.js';
 import type { ModuleGraph } from '@ia-framework/core';
 
 const logger = createLogger('indexer');
@@ -118,6 +120,10 @@ async function embedBatchWithRetry(
   results: VectorPoint[],
   maxRetries = 1,
   mavenModuleGraph?: ModuleGraph | undefined,
+  callMeta?: Map<
+    string,
+    { defines?: string | undefined; calls?: string[] | undefined; calledBy?: string[] | undefined }
+  >,
 ): Promise<void> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -151,8 +157,19 @@ async function embedBatchWithRetry(
           modulePath: inferModulePath(chunk.relativePath),
           packageName: inferPackageName(chunk.relativePath, chunk.content),
           layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
+          chunkIndex: chunk.chunkIndex,
+          totalChunks: chunk.totalChunks,
           indexedAt: new Date().toISOString(),
         };
+        // Call-chain metadata enrichment
+        if (callMeta) {
+          const meta = callMeta.get(chunk.id);
+          if (meta) {
+            if (meta.defines) payload.defines = [meta.defines];
+            payload.calls = meta.calls;
+            payload.calledBy = meta.calledBy;
+          }
+        }
         // Maven module enrichment (per D-05)
         if (mavenModuleGraph) {
           const mavenMod = inferMavenModule(chunk.relativePath, mavenModuleGraph);
@@ -294,6 +311,17 @@ export class IndexingPipeline {
           projectRoot: targetProjectPath,
           signal,
         });
+
+        // Assign chunk ordering metadata for adjacent-chunk retrieval
+        const totalChunks = chunks.length;
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          if (chunk) {
+            chunk.chunkIndex = i;
+            chunk.totalChunks = totalChunks;
+          }
+        }
+
         allChunks.push(...chunks);
 
         // Validate line numbers against actual file line count (LNC-05)
@@ -334,6 +362,36 @@ export class IndexingPipeline {
       // Check for cancellation after each file
       if (signal?.aborted) {
         throw new Error('Indexing cancelled');
+      }
+    }
+
+    // Call-chain extraction: extract defines/calls for each chunk, then build calledBy index
+    const callInfoMap = new Map<string, { defines: string; calls: string[] }>();
+    for (const chunk of allChunks) {
+      const info = extractCalls(chunk.content, chunk.language, chunk.name ?? undefined);
+      if (info) {
+        callInfoMap.set(chunk.id, info);
+      }
+    }
+    const calledByIndex = buildCalledByIndex([...callInfoMap.values()]);
+    // Enrich chunks with call metadata (stored as transient properties for payload building)
+    const chunkCallMeta = new Map<
+      string,
+      {
+        defines?: string | undefined;
+        calls?: string[] | undefined;
+        calledBy?: string[] | undefined;
+      }
+    >();
+    for (const chunk of allChunks) {
+      const info = callInfoMap.get(chunk.id);
+      if (info) {
+        const calledBy = calledByIndex.get(info.defines);
+        chunkCallMeta.set(chunk.id, {
+          defines: info.defines,
+          calls: info.calls.length > 0 ? info.calls : undefined,
+          calledBy: calledBy && calledBy.length > 0 ? calledBy : undefined,
+        });
       }
     }
 
@@ -380,6 +438,7 @@ export class IndexingPipeline {
               vectorPoints,
               1,
               config.mavenModuleGraph,
+              chunkCallMeta,
             );
           } catch {
             // Retry exhausted — skip batch
@@ -435,6 +494,8 @@ export class IndexingPipeline {
                 modulePath: inferModulePath(chunk.relativePath),
                 packageName: inferPackageName(chunk.relativePath, chunk.content),
                 layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
+                chunkIndex: chunk.chunkIndex,
+                totalChunks: chunk.totalChunks,
                 indexedAt: chunk.indexedAt,
               };
               vectorPoints.push({
@@ -462,6 +523,54 @@ export class IndexingPipeline {
     for (let i = 0; i < vectorPoints.length; i += storeBatchSize) {
       const batch = vectorPoints.slice(i, i + storeBatchSize);
       await vectorStore.upsertBatch(batch);
+    }
+
+    // Cross-cutting concept generation (post-store)
+    // Enrich chunks with layerHints for concept detection, then generate aspect chunks
+    const enrichedForConcepts = allChunks.map((chunk) => ({
+      ...chunk,
+      layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
+    }));
+    const detectedConcepts = detectConcepts(enrichedForConcepts);
+    if (detectedConcepts.length > 0) {
+      const conceptChunks = generateConceptChunks(detectedConcepts, targetProjectPath);
+      logger.info(
+        {
+          conceptCount: conceptChunks.length,
+          totalSources: conceptChunks.reduce((s, c) => s + c.sourceCount, 0),
+        },
+        'Generated cross-cutting concept chunks',
+      );
+
+      // Embed and store concept chunks
+      const conceptPoints: VectorPoint[] = [];
+      for (const { chunk } of conceptChunks) {
+        const description = chunk.content.split('\n').slice(0, 5).join(' ');
+        const [textVector, codeVector] = await Promise.all([
+          embeddingProvider.embed(description),
+          embeddingProvider.embed(chunk.content.slice(0, 2000)),
+        ]);
+        const sparseVector = computeTermFrequencySparseVector(chunk.content);
+        const payload: ChunkPayload = {
+          chunkId: chunk.id,
+          filePath: chunk.filePath,
+          relativePath: chunk.relativePath,
+          language: chunk.language,
+          chunkType: chunk.chunkType,
+          name: chunk.name,
+          content: chunk.content,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          imports: chunk.imports,
+          exports: chunk.exports,
+          indexedAt: new Date().toISOString(),
+        };
+        conceptPoints.push({ id: chunk.id, payload, textVector, codeVector, sparseVector });
+      }
+      for (let i = 0; i < conceptPoints.length; i += storeBatchSize) {
+        const batch = conceptPoints.slice(i, i + storeBatchSize);
+        await vectorStore.upsertBatch(batch);
+      }
     }
 
     // Save incremental state

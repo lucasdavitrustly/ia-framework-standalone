@@ -43,6 +43,10 @@ export interface ChunkMetadata {
   packageName?: string | undefined;
   /** Heuristic architectural roles inferred from path and content */
   layerHints?: string[] | undefined;
+  /** Zero-based index of this chunk within its file */
+  chunkIndex?: number | undefined;
+  /** Total number of chunks in the same file */
+  totalChunks?: number | undefined;
   /** Git commit hash at time of indexing */
   indexedAt: string;
 }

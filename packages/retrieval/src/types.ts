@@ -59,6 +59,16 @@ export interface RetrievalResult {
   interfaces?: string[] | undefined;
   /** True if this is an inner/nested class */
   isInnerClass?: boolean | undefined;
+  /** Zero-based index of this chunk within its file */
+  chunkIndex?: number | undefined;
+  /** Total number of chunks in the same file */
+  totalChunks?: number | undefined;
+  /** Method/function names this chunk defines */
+  defines?: string[] | undefined;
+  /** Method names called within this chunk */
+  calls?: string[] | undefined;
+  /** Methods that call this chunk's defined method */
+  calledBy?: string[] | undefined;
   /** Expansion source tag (e.g., 'hierarchy') for expanded results */
   expansionSource?: string | undefined;
 }

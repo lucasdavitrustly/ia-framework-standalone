@@ -33,6 +33,11 @@ type VectorSearchResult = {
     superclass?: string | undefined;
     interfaces?: string[] | undefined;
     isInnerClass?: boolean | undefined;
+    chunkIndex?: number | undefined;
+    totalChunks?: number | undefined;
+    defines?: string[] | undefined;
+    calls?: string[] | undefined;
+    calledBy?: string[] | undefined;
   };
 };
 
@@ -58,6 +63,11 @@ function toRetrievalResult(
     superclass: raw.payload.superclass,
     interfaces: raw.payload.interfaces,
     isInnerClass: raw.payload.isInnerClass,
+    chunkIndex: raw.payload.chunkIndex,
+    totalChunks: raw.payload.totalChunks,
+    defines: raw.payload.defines,
+    calls: raw.payload.calls,
+    calledBy: raw.payload.calledBy,
     score: raw.score,
     matchedVector,
   };
@@ -318,6 +328,90 @@ export class SearchEngine {
     });
 
     return results.map((raw) => toRetrievalResult(raw, 'text'));
+  }
+
+  /**
+   * Fetch adjacent chunks (before/after) for a given chunk, using chunkIndex metadata.
+   * Returns chunks ordered by chunkIndex. Useful for expanding context around a match.
+   */
+  async getAdjacentChunks(
+    relativePath: string,
+    chunkIndex: number,
+    totalChunks: number,
+    radius: number = 1,
+  ): Promise<RetrievalResult[]> {
+    const { embeddingProvider, vectorStore } = this.config;
+
+    // Compute adjacent indices within bounds
+    const indices: number[] = [];
+    for (let i = chunkIndex - radius; i <= chunkIndex + radius; i++) {
+      if (i >= 0 && i < totalChunks && i !== chunkIndex) {
+        indices.push(i);
+      }
+    }
+    if (indices.length === 0) return [];
+
+    const filter = {
+      must: [
+        { key: 'relativePath', match: { value: relativePath } },
+        { key: 'chunkIndex', match: { any: indices } },
+      ],
+    };
+
+    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
+    const results = await vectorStore.search(zeroVector, {
+      vectorName: 'text',
+      limit: indices.length,
+      filter,
+    });
+
+    return results
+      .map((raw) => ({ ...toRetrievalResult(raw, 'text'), expansionSource: 'adjacent' as const }))
+      .sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
+  }
+
+  /**
+   * Expand call chain: given results with `calls` or `calledBy` metadata,
+   * fetch chunks that define the called methods or callers.
+   * Uses the `defines` payload field to find related chunks.
+   */
+  async expandCallChain(
+    results: RetrievalResult[],
+    direction: 'calls' | 'calledBy' | 'both' = 'both',
+  ): Promise<RetrievalResult[]> {
+    const { embeddingProvider, vectorStore } = this.config;
+    const seenIds = new Set(results.map((r) => r.chunkId));
+
+    // Collect method names to look up
+    const targetNames = new Set<string>();
+    for (const r of results) {
+      const payload = r as RetrievalResult & { calls?: string[]; calledBy?: string[] };
+      if ((direction === 'calls' || direction === 'both') && payload.calls) {
+        for (const name of payload.calls) targetNames.add(name);
+      }
+      if ((direction === 'calledBy' || direction === 'both') && payload.calledBy) {
+        for (const name of payload.calledBy) targetNames.add(name);
+      }
+    }
+
+    if (targetNames.size === 0) return [];
+
+    // Search for chunks that define these methods
+    const filter = {
+      must: [{ key: 'defines', match: { any: [...targetNames] } }],
+    };
+
+    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
+    const hits = await vectorStore.search(zeroVector, {
+      vectorName: 'text',
+      limit: Math.min(targetNames.size * 2, 20),
+      filter,
+    });
+
+    return hits
+      .map((raw) => toRetrievalResult(raw, 'text'))
+      .filter((r) => !seenIds.has(r.chunkId))
+      .map((r) => ({ ...r, expansionSource: 'call-chain' as const }));
   }
 
   /**

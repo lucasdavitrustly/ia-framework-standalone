@@ -6,7 +6,7 @@
  * No LLM calls — pure pattern matching for speed and predictability.
  */
 
-export type QueryType = 'keyword' | 'semantic' | 'existence';
+export type QueryType = 'keyword' | 'semantic' | 'existence' | 'aggregation';
 
 export interface QueryClassification {
   type: QueryType;
@@ -19,6 +19,7 @@ export interface ClassificationRules {
   lookupVerbs?: string[];
   maxKeywordWords?: number;
   existencePatterns?: RegExp[];
+  aggregationPatterns?: RegExp[];
 }
 
 export const DEFAULT_RULES: ClassificationRules = {
@@ -36,6 +37,12 @@ export const DEFAULT_RULES: ClassificationRules = {
     /^are\s+there\s+(any|some)/i,
     /^does\s+it\s+have/i,
     /^does\s+the\s+codebase\s+(use|have|contain|implement)/i,
+  ],
+  aggregationPatterns: [
+    /^(find|list|show|get|what are)\s+(all|every)\s/i,
+    /^(where are|show me)\s+(all|every)\s/i,
+    /\ball\s+(the\s+)?(endpoints|routes|controllers|services|tests|interfaces|types|models|schemas|handlers|hooks|components|modules|classes|functions|methods|middlewares?|providers?|repositories|factories|decorators?|validators?|guards?)/i,
+    /^how many\s/i,
   ],
 };
 
@@ -58,9 +65,17 @@ export function classifyQuery(query: string, rules?: ClassificationRules): Query
     lookupVerbs: rules?.lookupVerbs ?? DEFAULT_RULES.lookupVerbs!,
     maxKeywordWords: rules?.maxKeywordWords ?? DEFAULT_RULES.maxKeywordWords!,
     existencePatterns: rules?.existencePatterns ?? DEFAULT_RULES.existencePatterns!,
+    aggregationPatterns: rules?.aggregationPatterns ?? DEFAULT_RULES.aggregationPatterns!,
   };
 
-  // 0. Existence patterns — "does this use X?", "is there a Y?"
+  // 0a. Aggregation patterns — "find all X", "list all endpoints", "how many"
+  for (const pattern of mergedRules.aggregationPatterns) {
+    if (pattern.test(query)) {
+      return { type: 'aggregation', reason: 'aggregation-pattern', confidence: 0.9 };
+    }
+  }
+
+  // 0b. Existence patterns — "does this use X?", "is there a Y?"
   for (const pattern of mergedRules.existencePatterns) {
     if (pattern.test(query)) {
       return { type: 'existence', reason: 'existence-pattern', confidence: 0.85 };

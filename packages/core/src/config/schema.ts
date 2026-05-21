@@ -55,6 +55,30 @@ export const ClassificationRulesSchema = z
   })
   .optional();
 
+export const RerankingConfigSchema = z
+  .object({
+    /** Enable BM25 re-ranking after initial retrieval (default: true) */
+    enabled: z.boolean().default(true),
+    /** Number of results to keep after re-ranking (default: 10) */
+    topK: z.number().int().min(1).max(50).default(10),
+    /** Prefetch multiplier: retrieve topK * prefetchMultiplier results before re-ranking (default: 3) */
+    prefetchMultiplier: z.number().int().min(1).max(10).default(3),
+  })
+  .optional();
+
+export const MultiHopConfigSchema = z
+  .object({
+    /** Enable multi-hop retrieval: extract symbols from results and do a second pass (default: true) */
+    enabled: z.boolean().default(true),
+    /** Max symbols to extract per hop for second-pass retrieval (default: 5) */
+    maxSymbols: z.number().int().min(1).max(20).default(5),
+    /** Expand on method calls referenced in retrieved chunks (default: true) */
+    expandMethodCalls: z.boolean().default(true),
+    /** Expand on class hierarchies (extends/implements) (default: true) */
+    expandHierarchy: z.boolean().default(true),
+  })
+  .optional();
+
 export const RetrievalConfigSchema = z.object({
   /** Retrieval mode: mcp-only (default), auto-context (v2), combined (v2) */
   mode: RetrievalModeSchema.default('mcp-only'),
@@ -62,8 +86,8 @@ export const RetrievalConfigSchema = z.object({
   expansionHops: z.union([z.literal(0), z.literal(1), z.literal(2)]).default(1),
   /** Top-K results for auto-context injection (v2) */
   autoContextTopK: z.number().int().min(1).max(20).default(5),
-  /** Soft token budget cap per search tool call. Results trimmed from bottom when exceeded. */
-  maxTokensPerCall: z.number().int().positive().optional(),
+  /** Soft token budget cap per search tool call. Results trimmed from bottom when exceeded. 0 = unlimited. Default: 40000. */
+  maxTokensPerCall: z.number().int().min(0).default(40000),
   /** Default minimum relevance score threshold. Results below this are filtered out. */
   scoreThreshold: z.number().min(0).max(1).optional(),
   /** Classification rules for query complexity classifier */
@@ -78,6 +102,10 @@ export const RetrievalConfigSchema = z.object({
   keywordPrefetchMultiplier: z.number().min(1).max(10).optional(),
   /** Prefetch multiplier for semantic (dense) branches (default: 3). Higher = more semantic influence. */
   semanticPrefetchMultiplier: z.number().min(1).max(10).optional(),
+  /** BM25 re-ranking configuration */
+  reranking: RerankingConfigSchema,
+  /** Multi-hop retrieval configuration */
+  multiHop: MultiHopConfigSchema,
 });
 
 export const ProjectConfigSchema = z.object({

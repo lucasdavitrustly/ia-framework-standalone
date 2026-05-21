@@ -1,11 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { bm25Rerank, multiHopExpand } from '@ia-framework/retrieval';
 import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
 import { applyTokenCap } from './token-cap.js';
+import { classifyBudget } from './adaptive-budget.js';
 import { classifyQuery } from '../classification/index.js';
 import type { QueryClassification } from '../classification/index.js';
 
@@ -25,6 +27,24 @@ type Engine = {
   ): Promise<FallbackSearchResult>;
   /** Scroll for chunks that match a class/interface name for hierarchy traversal */
   scrollForHierarchy?(name: string, chunkType: string): Promise<RetrievalResult[]>;
+  /** Scroll for chunks that implement/extend a given class or interface (walk DOWN) */
+  scrollForImplementations?(name: string): Promise<RetrievalResult[]>;
+  /** Scroll for chunks by their name field (for multi-hop class lookups) */
+  scrollByName?(name: string): Promise<RetrievalResult[]>;
+  /** Scroll for chunks that define a given method (for multi-hop method lookups) */
+  scrollByDefines?(methodName: string): Promise<RetrievalResult[]>;
+  /** Fetch adjacent chunks by file path and chunk index */
+  getAdjacentChunks?(
+    relativePath: string,
+    chunkIndex: number,
+    totalChunks: number,
+    radius?: number,
+  ): Promise<RetrievalResult[]>;
+  /** Expand call chain: find chunks that define called methods or callers */
+  expandCallChain?(
+    results: RetrievalResult[],
+    direction?: 'calls' | 'calledBy' | 'both',
+  ): Promise<RetrievalResult[]>;
 };
 
 export interface SearchCodebaseInput {
@@ -209,35 +229,68 @@ async function expandHierarchy(
   results: RetrievalResult[],
   maxHops: number,
 ): Promise<RetrievalResult[]> {
-  if (!engine.scrollForHierarchy || maxHops === 0) return [];
+  if ((!engine.scrollForHierarchy && !engine.scrollForImplementations) || maxHops === 0) return [];
 
   const seenIds = new Set(results.map((r) => r.chunkId));
   const expanded: RetrievalResult[] = [];
 
-  // Collect seeds: results that have a superclass
-  let frontier: Array<{ name: string; chunkType: string }> = [];
-  for (const r of results) {
-    if (r.superclass) {
-      frontier.push({ name: r.superclass, chunkType: r.chunkType });
-    }
-  }
+  // Walk UP: collect seeds from superclass references
+  let upFrontier: Array<{ name: string; chunkType: string }> = [];
+  // Walk DOWN: collect seeds from class/interface names to find implementors
+  let downFrontier: string[] = [];
 
-  for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
-    const nextFrontier: Array<{ name: string; chunkType: string }> = [];
-    for (const { name, chunkType } of frontier) {
-      const hits = await engine.scrollForHierarchy(name, chunkType);
-      for (const hit of hits) {
-        if (!seenIds.has(hit.chunkId)) {
-          seenIds.add(hit.chunkId);
-          const tagged: RetrievalResult = { ...hit, expansionSource: 'hierarchy' };
-          expanded.push(tagged);
-          if (tagged.superclass) {
-            nextFrontier.push({ name: tagged.superclass, chunkType: tagged.chunkType });
-          }
+  for (const r of results) {
+    if (r.superclass && engine.scrollForHierarchy) {
+      upFrontier.push({ name: r.superclass, chunkType: r.chunkType });
+    }
+    // Seed downward expansion from interfaces and class names
+    if (engine.scrollForImplementations) {
+      if (r.chunkType === 'class' || r.chunkType === 'interface') {
+        if (r.name) downFrontier.push(r.name);
+      }
+      if (r.interfaces) {
+        for (const iface of r.interfaces) {
+          downFrontier.push(iface);
         }
       }
     }
-    frontier = nextFrontier;
+  }
+
+  // Walk UP superclass chains
+  if (engine.scrollForHierarchy) {
+    for (let hop = 0; hop < maxHops && upFrontier.length > 0; hop++) {
+      const nextFrontier: Array<{ name: string; chunkType: string }> = [];
+      for (const { name, chunkType } of upFrontier) {
+        const hits = await engine.scrollForHierarchy(name, chunkType);
+        for (const hit of hits) {
+          if (!seenIds.has(hit.chunkId)) {
+            seenIds.add(hit.chunkId);
+            const tagged: RetrievalResult = { ...hit, expansionSource: 'hierarchy' };
+            expanded.push(tagged);
+            if (tagged.superclass) {
+              nextFrontier.push({ name: tagged.superclass, chunkType: tagged.chunkType });
+            }
+          }
+        }
+      }
+      upFrontier = nextFrontier;
+    }
+  }
+
+  // Walk DOWN: find implementations/subclasses (1 hop only to limit cost)
+  if (engine.scrollForImplementations && downFrontier.length > 0) {
+    // Dedupe frontier names
+    const uniqueNames = [...new Set(downFrontier)];
+    // Limit to first 5 names to avoid excessive scrolling
+    for (const name of uniqueNames.slice(0, 5)) {
+      const hits = await engine.scrollForImplementations(name);
+      for (const hit of hits) {
+        if (!seenIds.has(hit.chunkId)) {
+          seenIds.add(hit.chunkId);
+          expanded.push({ ...hit, expansionSource: 'hierarchy' });
+        }
+      }
+    }
   }
 
   return expanded;
@@ -252,7 +305,7 @@ function logClassification(
     query: string;
     classification: QueryClassification;
     classificationLatencyMs: number;
-    route: 'keyword' | 'semantic' | 'keyword-fallback-semantic' | 'existence';
+    route: 'keyword' | 'semantic' | 'keyword-fallback-semantic' | 'existence' | 'aggregation';
     totalLatencyMs: number;
     resultCount: number;
     earlyExit?: boolean | undefined;
@@ -328,7 +381,26 @@ export async function searchCodebaseHandler(
         });
     } else {
       // Keyword route succeeded — format and return directly
-      // Skip score threshold (D-10), skip token cap (D-10)
+      // BM25 re-rank keyword results for better relevance ordering
+      if (keywordResults.length > (input.limit ?? 10)) {
+        keywordResults = bm25Rerank(keywordResults, input.query, {
+          topK: input.limit ?? 10,
+          vectorScoreWeight: 0.3, // keyword route: lean more on BM25
+        });
+      }
+      // Apply token cap (budget enforcement applies to all routes — adaptive)
+      const keywordBudget = classifyBudget(input.query);
+      const keywordMaxTokens = observability?.maxTokensPerCall ?? keywordBudget.tokenBudget;
+      let cappedKeywordResults = keywordResults;
+      let keywordCapMeta: { token_cap_applied: true; results_trimmed: number } | undefined;
+      if (keywordMaxTokens > 0) {
+        const cap = applyTokenCap(keywordResults, keywordMaxTokens);
+        cappedKeywordResults = cap.results;
+        if (cap.tokenCapApplied) {
+          keywordCapMeta = { token_cap_applied: true, results_trimmed: cap.resultsTrimmed };
+        }
+      }
+
       const latencyMs = Date.now() - startTime;
       const earlyExitThreshold = observability?.earlyExitConfidence ?? 0.8;
       const isEarlyExit = classification.confidence >= earlyExitThreshold;
@@ -347,7 +419,7 @@ export async function searchCodebaseHandler(
         });
 
       // D-07: same response format as semantic results
-      const sections = keywordResults.map((r, i) => formatResult(r, i + 1));
+      const sections = cappedKeywordResults.map((r, i) => formatResult(r, i + 1));
 
       // Template injection still applies if enabled
       let templatePrefix = '';
@@ -357,10 +429,10 @@ export async function searchCodebaseHandler(
         if (template) templatePrefix = `${template}\n\n`;
       }
 
-      const guardrailLead = `Conclusion: found ${keywordResults.length} evidence-backed ${keywordResults.length === 1 ? 'match' : 'matches'}.`;
-      const text = `${guardrailLead}\n\n${templatePrefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${keywordResults.length} results | ${latencyMs}ms`;
+      const guardrailLead = `Conclusion: found ${cappedKeywordResults.length} evidence-backed ${cappedKeywordResults.length === 1 ? 'match' : 'matches'}.`;
+      const text = `${guardrailLead}\n\n${templatePrefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${cappedKeywordResults.length} results | ${latencyMs}ms`;
 
-      return toTextResult(text, { answered: true, route: 'keyword' });
+      return toTextResult(text, { answered: true, route: 'keyword', ...keywordCapMeta });
     }
   }
 
@@ -412,6 +484,88 @@ export async function searchCodebaseHandler(
     }
   }
 
+  // Aggregation route: breadth-first retrieval for "find all X" queries
+  if (classification.type === 'aggregation') {
+    const aggregationLimit = Math.max((input.limit ?? 10) * 3, 30); // Fetch 3x more results
+    const aggregationThreshold = 0.35; // Lower threshold for breadth
+
+    let aggResults: RetrievalResult[];
+    try {
+      aggResults = await engine.searchWithExpansion(
+        { text: input.query, limit: aggregationLimit, scoreThreshold: aggregationThreshold },
+        { hops: 0 }, // No expansion — breadth over depth
+      );
+    } catch {
+      aggResults = await engine.search({
+        text: input.query,
+        limit: aggregationLimit,
+        scoreThreshold: aggregationThreshold,
+      });
+    }
+
+    // Deduplicate by file — keep best chunk per file
+    const byFile = new Map<string, RetrievalResult>();
+    for (const r of aggResults) {
+      const existing = byFile.get(r.relativePath);
+      if (!existing || r.score > existing.score) {
+        byFile.set(r.relativePath, r);
+      }
+    }
+    let deduped = Array.from(byFile.values()).sort((a, b) => b.score - a.score);
+
+    // Apply token cap
+    const aggBudget = classifyBudget(input.query);
+    const aggMaxTokens = observability?.maxTokensPerCall ?? aggBudget.tokenBudget;
+    if (aggMaxTokens > 0) {
+      const cap = applyTokenCap(deduped, aggMaxTokens);
+      deduped = cap.results;
+    }
+
+    // Group by directory for structured output
+    const byDir = new Map<string, RetrievalResult[]>();
+    for (const r of deduped) {
+      const dir = r.relativePath.split('/').slice(0, -1).join('/') || '.';
+      if (!byDir.has(dir)) byDir.set(dir, []);
+      byDir.get(dir)!.push(r);
+    }
+
+    const latencyMs = Date.now() - startTime;
+
+    // Format grouped output
+    const groupSections: string[] = [];
+    for (const [dir, items] of Array.from(byDir.entries()).sort(
+      (a, b) => b[1].length - a[1].length,
+    )) {
+      const itemLines = items.map((r) => {
+        const name = r.name || r.relativePath.split('/').pop() || 'unknown';
+        return `  - **${name}** \`${r.relativePath}\` (score: ${r.score.toFixed(2)})`;
+      });
+      groupSections.push(`### ${dir}/\n${itemLines.join('\n')}`);
+    }
+
+    observability?.metricsStore &&
+      logClassification(observability, {
+        query: input.query,
+        classification,
+        classificationLatencyMs,
+        route: 'aggregation',
+        totalLatencyMs: latencyMs,
+        resultCount: deduped.length,
+      });
+
+    let templatePrefix = '';
+    if (input.use_template !== false) {
+      const detectedIntent = detectIntent(input.query);
+      const template = getTemplate(detectedIntent);
+      if (template) templatePrefix = `${template}\n\n`;
+    }
+
+    const guardrailLead = `Conclusion: found ${deduped.length} unique files matching this pattern across ${byDir.size} ${byDir.size === 1 ? 'directory' : 'directories'}.`;
+    const text = `${guardrailLead}\n\n${templatePrefix}## Aggregated results for: "${input.query}"\n\n${groupSections.join('\n\n')}\n\n---\nSearch: aggregation-routed | ${deduped.length} unique files (${aggResults.length} total chunks scanned) | ${latencyMs}ms`;
+
+    return toTextResult(text, { answered: true, route: 'aggregation' });
+  }
+
   // Semantic path continues below (existing code unchanged)
 
   // Determine expansion hops: input overrides config default
@@ -435,6 +589,51 @@ export async function searchCodebaseHandler(
       const hierarchyResults = await expandHierarchy(engine, results, clampedHops);
       results = [...results, ...hierarchyResults];
     }
+    // Adjacent chunk expansion: auto-expand context for top results that have chunk ordering metadata
+    if (engine.getAdjacentChunks && clampedHops > 0) {
+      const seenIds = new Set(results.map((r) => r.chunkId));
+      const adjacentResults: RetrievalResult[] = [];
+      // Only expand top 3 results to limit cost
+      const expandCandidates = results
+        .filter(
+          (r) => r.chunkIndex !== undefined && r.totalChunks !== undefined && r.totalChunks > 1,
+        )
+        .slice(0, 3);
+      for (const candidate of expandCandidates) {
+        const adjacent = await engine.getAdjacentChunks(
+          candidate.relativePath,
+          candidate.chunkIndex!,
+          candidate.totalChunks!,
+        );
+        for (const adj of adjacent) {
+          if (!seenIds.has(adj.chunkId)) {
+            seenIds.add(adj.chunkId);
+            adjacentResults.push(adj);
+          }
+        }
+      }
+      if (adjacentResults.length > 0) {
+        results = [...results, ...adjacentResults];
+      }
+    }
+    // Call-chain expansion: find chunks that define methods called by top results (or callers)
+    if (engine.expandCallChain && clampedHops > 0) {
+      const callChainResults = await engine.expandCallChain(results, 'both');
+      if (callChainResults.length > 0) {
+        results = [...results, ...callChainResults];
+      }
+    }
+    // Multi-hop expansion: extract symbols from results and fetch their definitions
+    if (clampedHops > 0 && (engine.scrollByName || engine.scrollByDefines)) {
+      const multiHopResults = await multiHopExpand(results, engine, {
+        maxSymbols: 15,
+        expandMethodCalls: !!engine.scrollByDefines,
+        expandHierarchy: !!engine.scrollByName,
+      });
+      if (multiHopResults.length > 0) {
+        results = [...results, ...multiHopResults];
+      }
+    }
   } catch (error) {
     results = await engine.search({
       text: input.query,
@@ -448,34 +647,68 @@ export async function searchCodebaseHandler(
 
   const latencyMs = Date.now() - startTime;
 
+  // BM25 re-ranking: re-rank non-expansion results using text relevance
+  // Applied before score threshold to improve ranking quality before cutoffs
+  const expansionResults = results.filter(
+    (r) =>
+      r.expansionSource === 'hierarchy' ||
+      r.expansionSource === 'adjacent' ||
+      r.expansionSource === 'multi-hop',
+  );
+  const directResults = results.filter(
+    (r) =>
+      r.expansionSource !== 'hierarchy' &&
+      r.expansionSource !== 'adjacent' &&
+      r.expansionSource !== 'multi-hop',
+  );
+  if (directResults.length > (input.limit ?? 10)) {
+    const reranked = bm25Rerank(directResults, input.query, {
+      topK: input.limit ?? 10,
+      vectorScoreWeight: 0.4,
+    });
+    results = [...reranked, ...expansionResults];
+  }
+
   // Confidence gate: if configured and best result is below threshold, reject immediately
   // This prevents low-quality chunks from being injected even when they pass scoreThreshold.
-  // Skips fallback entirely to avoid suggesting irrelevant code.
+  // Enhanced with negative-knowledge: show what WAS found so the LLM knows what's available.
   if (observability?.confidenceThreshold !== undefined && results.length > 0) {
     const bestScore = Math.max(...results.map((r) => r.score));
     if (bestScore < observability.confidenceThreshold) {
+      // Negative-knowledge: surface low-confidence results as "nearby but not matching"
+      const nearbyResults = results.sort((a, b) => b.score - a.score).slice(0, 5);
+      const nearbySection =
+        nearbyResults.length > 0
+          ? `\n\n**What the search DID find** (below confidence threshold ${observability.confidenceThreshold.toFixed(2)}):\n${nearbyResults.map((r) => `- \`${r.relativePath}\` — ${r.name || r.chunkType} (score: ${r.score.toFixed(2)})`).join('\n')}\n\nThese results were too weakly related to be trustworthy. The codebase may not contain what you're looking for, or try rephrasing the query.`
+          : '';
+
       const gateText =
         `Conclusion: the indexed search did not return strong evidence for this query.\n\n` +
-        `No relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`;
+        `No relevant code found for "${input.query}". Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information.${nearbySection}`;
       return toTextResult(gateText, {
         confidence_gated: true,
         best_score: bestScore,
         threshold: observability.confidenceThreshold,
+        nearby_count: nearbyResults.length,
         answered: false,
       });
     }
   }
 
   // Score threshold filtering (client-side, per D-01, D-02, D-03)
-  // Hierarchy-expanded results (expansionSource === 'hierarchy') are excluded from threshold
+  // Hierarchy-expanded and adjacent-expanded results are excluded from threshold
   // since they are structurally-related chunks, not relevance-ranked results.
   const scoreThreshold = input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5;
   let thresholdFiltered = false;
   if (scoreThreshold > 0) {
-    const directBefore = results.filter((r) => r.expansionSource !== 'hierarchy').length;
-    results = results.filter((r) => r.expansionSource === 'hierarchy' || r.score >= scoreThreshold);
-    const directAfter = results.filter((r) => r.expansionSource !== 'hierarchy').length;
-    // thresholdFiltered = true only when direct (non-hierarchy) results were present but all got filtered
+    const isExpansion = (r: RetrievalResult) =>
+      r.expansionSource === 'hierarchy' ||
+      r.expansionSource === 'adjacent' ||
+      r.expansionSource === 'multi-hop';
+    const directBefore = results.filter((r) => !isExpansion(r)).length;
+    results = results.filter((r) => isExpansion(r) || r.score >= scoreThreshold);
+    const directAfter = results.filter((r) => !isExpansion(r)).length;
+    // thresholdFiltered = true only when direct results were present but all got filtered
     thresholdFiltered = directBefore > 0 && directAfter === 0;
   }
 
@@ -502,8 +735,9 @@ export async function searchCodebaseHandler(
     }
   }
 
-  // Token budget cap (per D-02, D-05, D-06)
-  const maxTokens = observability?.maxTokensPerCall ?? 6000;
+  // Token budget cap — adaptive based on query complexity (per D-02, D-05, D-06)
+  const budgetClassification = classifyBudget(input.query);
+  const maxTokens = observability?.maxTokensPerCall ?? budgetClassification.tokenBudget;
 
   // D-06: 70/30 budget split when hierarchy expansion produced results
   const hierarchyCount = results.filter((r) => r.expansionSource === 'hierarchy').length;

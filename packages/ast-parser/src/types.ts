@@ -44,6 +44,10 @@ export interface CodeChunk {
   isInnerClass?: boolean | undefined;
   /** LLM-generated prose summary of this chunk, used for text embedding when available (per D-04) */
   description?: string | undefined;
+  /** 0-based position of this chunk within its source file */
+  chunkIndex?: number | undefined;
+  /** Total number of chunks produced from the same source file */
+  totalChunks?: number | undefined;
 }
 
 /**

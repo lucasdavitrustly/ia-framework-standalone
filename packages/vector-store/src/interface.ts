@@ -34,6 +34,16 @@ export interface ChunkPayload {
   qualityScore?: number | undefined;
   /** Maven module coordinates, populated for files inside a Maven project */
   mavenModule?: { groupId: string; artifactId: string; version: string } | undefined;
+  /** 0-based position of this chunk within its source file */
+  chunkIndex?: number | undefined;
+  /** Total number of chunks produced from the same source file */
+  totalChunks?: number | undefined;
+  /** Method/function names this chunk defines */
+  defines?: string[] | undefined;
+  /** Method/function names this chunk invokes */
+  calls?: string[] | undefined;
+  /** Method/function names that invoke something defined in this chunk */
+  calledBy?: string[] | undefined;
 }
 
 /**

@@ -1,10 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { bm25Rerank } from '@ia-framework/retrieval';
 import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
 import { applyTokenCap } from './token-cap.js';
+import { classifyBudget } from './adaptive-budget.js';
 import { classifyQuery } from '../classification/index.js';
 import type { QueryClassification } from '../classification/index.js';
 
@@ -144,7 +146,26 @@ export async function searchCodebaseHybridHandler(
       // Fall through to normal hybrid semantic path below
     } else {
       // Keyword route succeeded — format and return directly
-      // Skip score threshold (D-10), skip token cap (D-10)
+      // BM25 re-rank keyword results for better relevance ordering
+      if (keywordResults.length > (input.limit ?? 10)) {
+        keywordResults = bm25Rerank(keywordResults, input.query, {
+          topK: input.limit ?? 10,
+          vectorScoreWeight: 0.3,
+        });
+      }
+      // Apply token cap (budget enforcement — adaptive)
+      const keywordBudget = classifyBudget(input.query);
+      const keywordMaxTokens = options?.maxTokensPerCall ?? keywordBudget.tokenBudget;
+      let cappedKeywordResults = keywordResults;
+      let keywordCapMeta: { token_cap_applied: true; results_trimmed: number } | undefined;
+      if (keywordMaxTokens > 0) {
+        const cap = applyTokenCap(keywordResults, keywordMaxTokens);
+        cappedKeywordResults = cap.results;
+        if (cap.tokenCapApplied) {
+          keywordCapMeta = { token_cap_applied: true, results_trimmed: cap.resultsTrimmed };
+        }
+      }
+
       const latencyMs = Date.now() - startTime;
       const earlyExitThreshold = options?.earlyExitConfidence ?? 0.8;
       const isEarlyExit = classification.confidence >= earlyExitThreshold;
@@ -161,7 +182,7 @@ export async function searchCodebaseHybridHandler(
       });
 
       // D-07: same response format as semantic results
-      const sections = keywordResults.map((r, i) => formatResult(r, i + 1));
+      const sections = cappedKeywordResults.map((r, i) => formatResult(r, i + 1));
 
       let templatePrefix = '';
       if (input.use_template !== false) {
@@ -170,12 +191,12 @@ export async function searchCodebaseHybridHandler(
         if (template) templatePrefix = `${template}\n\n`;
       }
 
-      const conclusion = `Conclusion: found ${keywordResults.length} hybrid evidence-backed ${keywordResults.length === 1 ? 'match' : 'matches'}.`;
-      const text = `${conclusion}\n\n${templatePrefix}## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${keywordResults.length} results | ${latencyMs}ms`;
+      const conclusion = `Conclusion: found ${cappedKeywordResults.length} hybrid evidence-backed ${cappedKeywordResults.length === 1 ? 'match' : 'matches'}.`;
+      const text = `${conclusion}\n\n${templatePrefix}## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${cappedKeywordResults.length} results | ${latencyMs}ms`;
 
       return {
         content: [{ type: 'text', text }],
-        structuredContent: { answered: true, route: 'keyword' },
+        structuredContent: { answered: true, route: 'keyword', ...keywordCapMeta },
       };
     }
   }
@@ -214,19 +235,35 @@ export async function searchCodebaseHybridHandler(
       'Returning indexed semantic search results instead.';
   }
 
+  // BM25 re-ranking: reduce over-fetched results to topK with text relevance
+  if (results.length > (input.limit ?? 10)) {
+    results = bm25Rerank(results, input.query, {
+      topK: input.limit ?? 10,
+      vectorScoreWeight: 0.4,
+    });
+  }
+
   // Confidence gate: if configured and best result is below threshold, reject immediately
+  // Enhanced with negative-knowledge: show what WAS found so the LLM knows what's available.
   if (options?.confidenceThreshold !== undefined && results.length > 0) {
     const bestScore = Math.max(...results.map((r) => r.score));
     if (bestScore < options.confidenceThreshold) {
+      const nearbyResults = results.sort((a, b) => b.score - a.score).slice(0, 5);
+      const nearbySection =
+        nearbyResults.length > 0
+          ? `\n\n**What the search DID find** (below confidence threshold ${options.confidenceThreshold.toFixed(2)}):\n${nearbyResults.map((r) => `- \`${r.relativePath}\` — ${r.name || r.chunkType} (score: ${r.score.toFixed(2)})`).join('\n')}\n\nThese results were too weakly related to be trustworthy. The codebase may not contain what you're looking for, or try rephrasing the query.`
+          : '';
+
       const gateText =
         `Conclusion: the indexed hybrid search did not return strong evidence for this query.\n\n` +
-        `No relevant code found for this query. Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information for "${input.query}".`;
+        `No relevant code found for "${input.query}". Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information.${nearbySection}`;
       return {
         content: [{ type: 'text', text: gateText }],
         structuredContent: {
           confidence_gated: true,
           best_score: bestScore,
           threshold: options.confidenceThreshold,
+          nearby_count: nearbyResults.length,
           answered: false,
         },
       };
@@ -242,8 +279,9 @@ export async function searchCodebaseHybridHandler(
     hybridThresholdFiltered = preFilterCount > 0 && results.length === 0;
   }
 
-  // Token budget cap (per D-02) — no 70/30 split for hybrid (no separate hierarchy step)
-  const maxTokens = options?.maxTokensPerCall ?? 6000;
+  // Token budget cap (per D-02) — adaptive, no 70/30 split for hybrid (no separate hierarchy step)
+  const hybridBudget = classifyBudget(input.query);
+  const maxTokens = options?.maxTokensPerCall ?? hybridBudget.tokenBudget;
   const cap = applyTokenCap(results, maxTokens);
   results = cap.results;
   const tokenCapApplied = cap.tokenCapApplied;

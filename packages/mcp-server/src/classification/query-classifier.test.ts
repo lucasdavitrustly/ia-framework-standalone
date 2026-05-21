@@ -184,4 +184,43 @@ describe('classifyQuery', () => {
       expect(result.reason).toBe('existence-pattern');
     });
   });
+
+  describe('aggregation detection', () => {
+    it('classifies "find all endpoints" as aggregation', () => {
+      const result = classifyQuery('find all endpoints');
+      expect(result.type).toBe('aggregation');
+      expect(result.reason).toBe('aggregation-pattern');
+      expect(result.confidence).toBe(0.9);
+    });
+
+    it('classifies "list all controllers" as aggregation', () => {
+      const result = classifyQuery('list all controllers');
+      expect(result.type).toBe('aggregation');
+    });
+
+    it('classifies "show all the services" as aggregation', () => {
+      const result = classifyQuery('show all the services');
+      expect(result.type).toBe('aggregation');
+    });
+
+    it('classifies "what are all the interfaces" as aggregation', () => {
+      const result = classifyQuery('what are all the interfaces');
+      expect(result.type).toBe('aggregation');
+    });
+
+    it('classifies "where are all the tests" as aggregation', () => {
+      const result = classifyQuery('where are all the tests');
+      expect(result.type).toBe('aggregation');
+    });
+
+    it('classifies "how many routes" as aggregation', () => {
+      const result = classifyQuery('how many routes does this have');
+      expect(result.type).toBe('aggregation');
+    });
+
+    it('classifies "get every middleware" as aggregation', () => {
+      const result = classifyQuery('get every middleware');
+      expect(result.type).toBe('aggregation');
+    });
+  });
 });
