@@ -2,11 +2,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RetrievalResult } from '@ia-framework/retrieval';
+import { resolveImportToRepo } from '@ia-framework/core';
 import { parseRepoPath } from './get-file.js';
 
 type Engine = {
   getFile(path: string): Promise<RetrievalResult[]>;
   search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
+  /** Available repos for cross-repo import annotation */
+  repos?: Array<{ name: string; provides?: string[] | undefined }>;
 };
 
 export interface GetDependenciesInput {
@@ -72,8 +75,11 @@ export async function getDependenciesHandler(
 
   const multiRepo = repoGroups.size > 1 || (repoGroups.size === 1 && !repoGroups.has('_default'));
   const textParts: string[] = [];
-  const structuredDeps: Array<{ repo?: string | undefined; imports: string[]; exports: string[] }> =
-    [];
+  const structuredDeps: Array<{
+    repo?: string | undefined;
+    imports: Array<{ specifier: string; crossRepo?: string | undefined }>;
+    exports: string[];
+  }> = [];
 
   for (const [repoKey, groupResults] of repoGroups) {
     const allImports = new Set<string>();
@@ -88,7 +94,16 @@ export async function getDependenciesHandler(
       allImports.size > 0
         ? [...allImports]
             .sort()
-            .map((i) => `- ${i}`)
+            .map((i) => {
+              if (engine.repos) {
+                const resolution = resolveImportToRepo(
+                  i,
+                  engine.repos.filter((r) => r.name !== repoKey),
+                );
+                if (resolution) return `- ${i} [${resolution.targetRepo}]`;
+              }
+              return `- ${i}`;
+            })
             .join('\n')
         : '(none)';
 
@@ -108,7 +123,16 @@ export async function getDependenciesHandler(
 
     structuredDeps.push({
       repo: repoKey === '_default' ? undefined : repoKey,
-      imports: [...allImports].sort(),
+      imports: [...allImports].sort().map((i) => {
+        if (engine.repos) {
+          const resolution = resolveImportToRepo(
+            i,
+            engine.repos.filter((r) => r.name !== repoKey),
+          );
+          if (resolution) return { specifier: i, crossRepo: resolution.targetRepo };
+        }
+        return { specifier: i };
+      }),
       exports: [...allExports].sort(),
     });
   }
