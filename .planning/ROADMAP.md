@@ -95,7 +95,11 @@ Plans:
 1. Every indexed chunk in Qdrant has a `repoId` payload field identifying its source repo
 2. Developer can re-index one repo (via CLI `--repo` flag) without affecting other repos' chunks
 3. CLI `ia-framework index --repo <name>` indexes only the specified repo
-   **Plans**: TBD
+
+**Plans:** 2 plans
+
+- [ ] 43-01-PLAN.md — Add repoId to payload schema and wire through pipeline
+- [ ] 43-02-PLAN.md — CLI --repo flag with per-repo orchestration and backward compat
 
 ### Phase 44: Unified Search & MCP
 
@@ -141,7 +145,7 @@ Plans:
 | 39. Confidence-Based Early Exit | v1.5      | 1/1            | Complete    | 2026-05-15 |
 | 40. Benchmark Preflight Tool    | v1.6      | 1/1            | Complete    | 2026-05-18 |
 | 41. Hybrid Retrieval Tuning     | v1.6      | 1/1            | Complete    | 2026-05-18 |
-| 42. Config & Repo Registry      | v1.7      | 3/3 | Complete    | 2026-05-21 |
+| 42. Config & Repo Registry      | v1.7      | 3/3            | Complete    | 2026-05-21 |
 | 43. Per-Repo Indexing           | v1.7      | 0/?            | Not started | -          |
 | 44. Unified Search & MCP        | v1.7      | 0/?            | Not started | -          |
 | 45. Cross-Repo Dependency Graph | v1.7      | 0/?            | Not started | -          |
