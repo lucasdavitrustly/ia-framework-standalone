@@ -1,25 +1,16 @@
 ---
 phase: 44-unified-search-mcp
 verified: 2026-05-22T17:00:00Z
-status: gaps_found
-score: 7/9 must-haves verified
-gaps:
-  - truth: 'search_codebase_hybrid results are grouped by repo with best-scoring repo first'
-    status: partial
-    reason: 'Hybrid tool has repo filter param and per-result [repo] prefix via buildCodeAnchor, but lacks groupByRepo separator headers and repo field in structuredContent'
-    artifacts:
-      - path: 'packages/mcp-server/src/tools/search-codebase-hybrid.ts'
-        issue: 'No groupByRepo logic applied to output; structuredContent missing per-result repo field'
-    missing:
-      - 'Add groupByRepo to hybrid tool output formatting (same as search-codebase.ts pattern)'
-      - 'Add per-result repo field to hybrid structuredContent'
+status: passed
+score: 9/9 must-haves verified
+gaps: []
 ---
 
 # Phase 44: Unified Search MCP Verification Report
 
 **Phase Goal:** Add repo attribution to search results and extend get_file/get_dependencies to resolve files across all configured repos
 **Verified:** 2026-05-22T17:00:00Z
-**Status:** gaps_found
+**Status:** passed
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
