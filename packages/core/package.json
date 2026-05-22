@@ -21,11 +21,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "fast-xml-parser": "^5.7.2",
     "pino": "^9.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.0",
