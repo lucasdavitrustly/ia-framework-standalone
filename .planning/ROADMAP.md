@@ -161,4 +161,4 @@ Plans:
 | 42. Config & Repo Registry      | v1.7      | 3/3            | Complete    | 2026-05-21 |
 | 43. Per-Repo Indexing           | v1.7      | 2/2            | Complete    | 2026-05-22 |
 | 44. Unified Search & MCP        | v1.7      | 2/2            | Complete    | 2026-05-22 |
-| 45. Cross-Repo Dependency Graph | v1.7      | 3/3 | Complete   | 2026-05-22 |
+| 45. Cross-Repo Dependency Graph | v1.7      | 3/3 | Complete    | 2026-05-22 |
