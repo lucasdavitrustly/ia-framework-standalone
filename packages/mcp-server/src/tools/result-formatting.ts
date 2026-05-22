@@ -7,6 +7,7 @@ interface FormattableRetrievalResult {
   modulePath?: string | undefined;
   packageName?: string | undefined;
   layerHints?: string[] | undefined;
+  expansionRepo?: string | undefined;
 }
 
 export interface QueryIntent {
@@ -41,12 +42,17 @@ export function buildCodeAnchor(result: {
   endLine: number;
   name?: string | undefined;
   repoId?: string | undefined;
+  expansionRepo?: string | undefined;
 }): string {
   const lines = `${result.startLine}-${result.endLine}`;
   const repoPrefix = result.repoId ? `[${result.repoId}] ` : '';
+  const viaSuffix =
+    result.expansionRepo && result.expansionRepo !== result.repoId
+      ? ` [via ${result.expansionRepo}]`
+      : '';
   return result.name
-    ? `${repoPrefix}${result.relativePath}:${lines} (${result.name})`
-    : `${repoPrefix}${result.relativePath}:${lines}`;
+    ? `${repoPrefix}${result.relativePath}:${lines} (${result.name})${viaSuffix}`
+    : `${repoPrefix}${result.relativePath}:${lines}${viaSuffix}`;
 }
 
 export function formatRetrievalContext(result: FormattableRetrievalResult): string {
