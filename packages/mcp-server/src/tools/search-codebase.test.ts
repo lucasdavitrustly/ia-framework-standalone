@@ -519,6 +519,71 @@ describe('searchCodebaseHandler - confidence gate', () => {
   });
 });
 
+describe('searchCodebaseHandler - repo param and grouping', () => {
+  it('passes repoId filter to engine when repo param provided', async () => {
+    const result = makeResult({ chunkId: 'repo-1', repoId: 'backend' });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+
+    await searchCodebaseHandler(engine, {
+      query: 'how does auth work',
+      repo: 'backend',
+      expand_hops: 0,
+    });
+
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: { must: [{ key: 'repoId', match: { value: 'backend' } }] },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('groups results by repoId with best-scoring repo first', async () => {
+    const results = [
+      makeResult({ chunkId: 'r1', repoId: 'frontend', score: 0.7, relativePath: 'src/a.ts' }),
+      makeResult({ chunkId: 'r2', repoId: 'backend', score: 0.95, relativePath: 'src/b.ts' }),
+      makeResult({ chunkId: 'r3', repoId: 'frontend', score: 0.6, relativePath: 'src/c.ts' }),
+    ];
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue(results),
+      search: vi.fn().mockResolvedValue(results),
+    };
+
+    const output = await searchCodebaseHandler(engine, {
+      query: 'how does auth work',
+      expand_hops: 0,
+    });
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    // backend has best score (0.95) so should appear first
+    const backendIdx = text.indexOf('--- [backend] ---');
+    const frontendIdx = text.indexOf('--- [frontend] ---');
+    expect(backendIdx).toBeGreaterThan(-1);
+    expect(frontendIdx).toBeGreaterThan(-1);
+    expect(backendIdx).toBeLessThan(frontendIdx);
+  });
+
+  it('includes repo field in structuredContent', async () => {
+    const results = [makeResult({ chunkId: 'r1', repoId: 'core', score: 0.9 })];
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue(results),
+      search: vi.fn().mockResolvedValue(results),
+    };
+
+    const output = await searchCodebaseHandler(engine, {
+      query: 'how does auth work',
+      expand_hops: 0,
+    });
+
+    const structured = output.structuredContent as any;
+    expect(structured.results).toBeDefined();
+    expect(structured.results[0].repo).toBe('core');
+  });
+});
+
 describe('formatResult - line number display', () => {
   it('includes :startLine-endLine in header with named chunk', () => {
     const result = makeResult({

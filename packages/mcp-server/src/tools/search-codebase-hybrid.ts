@@ -37,6 +37,8 @@ export interface SearchCodebaseHybridInput {
   expand_hops?: number | undefined;
   /** Enable prompt template injection for detected intents (default: true). Per D-05. */
   use_template?: boolean | undefined;
+  /** Filter results to a specific repo by name. When omitted, searches all repos. */
+  repo?: string | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -102,6 +104,11 @@ export async function searchCodebaseHybridHandler(
   },
 ): Promise<ToolOutput> {
   const startTime = Date.now();
+
+  // Build repo filter if specified
+  const repoFilter = input.repo
+    ? { must: [{ key: 'repoId', match: { value: input.repo } }] }
+    : undefined;
 
   // Query classification gate (Phase 37 — QCC-01, QCC-02)
   const classification = classifyQuery(input.query);
@@ -219,6 +226,7 @@ export async function searchCodebaseHybridHandler(
         text: input.query,
         limit: input.limit ?? 10,
         scoreThreshold: input.score_threshold,
+        filter: repoFilter,
       });
     }
   } catch (error) {
@@ -454,6 +462,10 @@ export function registerSearchCodebaseHybridTool(
           .describe(
             'Enable prompt template injection for detected query intents (default: true). Set false to disable scaffolding.',
           ),
+        repo: z
+          .string()
+          .optional()
+          .describe('Filter results to a specific repo by name. When omitted, searches all repos.'),
       },
     },
     async (input) => {

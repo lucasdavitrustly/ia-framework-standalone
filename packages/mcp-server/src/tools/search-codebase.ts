@@ -56,6 +56,8 @@ export interface SearchCodebaseInput {
   fallback?: boolean | undefined;
   /** Enable prompt template injection for detected intents (default: true). Per D-05. */
   use_template?: boolean | undefined;
+  /** Filter results to a specific repo by name. When omitted, searches all repos. */
+  repo?: string | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -177,7 +179,6 @@ function buildSearchResponse(
     });
   }
 
-  const sections = results.map((r, i) => formatResult(r, i + 1));
   const prefix = note ? `${note}\n\n` : '';
 
   // Template injection: detect intent and prepend scaffolding if applicable
@@ -192,12 +193,40 @@ function buildSearchResponse(
     }
   }
 
-  const text = `${guardrailLead}\n\n${templatePrefix}${prefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}`;
+  // Group results by repo if any result has repoId
+  const hasRepoIds = results.some((r) => r.repoId);
+  let formattedBody: string;
+  if (hasRepoIds) {
+    const grouped = groupByRepo(results);
+    const groupedSections: string[] = [];
+    let idx = 1;
+    for (const [repo, items] of grouped) {
+      groupedSections.push(`--- [${repo}] ---`);
+      for (const r of items) {
+        groupedSections.push(formatResult(r, idx++));
+      }
+    }
+    formattedBody = groupedSections.join('\n\n');
+  } else {
+    const sections = results.map((r, i) => formatResult(r, i + 1));
+    formattedBody = sections.join('\n\n');
+  }
+
+  const text = `${guardrailLead}\n\n${templatePrefix}${prefix}## Code results for: "${input.query}"\n\n${formattedBody}`;
+
+  // Build structured results array with repo field
+  const structuredResults = results.map((r) => ({
+    file: r.relativePath,
+    name: r.name,
+    score: r.score,
+    ...(r.repoId ? { repo: r.repoId } : {}),
+  }));
 
   return toTextResult(text, {
     ...(note ? { fallbackUsed: true } : {}),
     ...(intentDetected ? { intent_detected: intentDetected } : {}),
     ...(capMeta ? capMeta : {}),
+    results: structuredResults,
     answered: true,
   });
 }
@@ -331,6 +360,25 @@ function logClassification(
 }
 
 /**
+ * Group results by repoId, ordered by best score per repo (descending).
+ */
+function groupByRepo(results: RetrievalResult[]): Map<string, RetrievalResult[]> {
+  const groups = new Map<string, RetrievalResult[]>();
+  for (const r of results) {
+    const repo = r.repoId ?? 'default';
+    if (!groups.has(repo)) groups.set(repo, []);
+    groups.get(repo)!.push(r);
+  }
+  return new Map(
+    [...groups.entries()].sort((a, b) => {
+      const bestA = Math.max(...a[1].map((r) => r.score));
+      const bestB = Math.max(...b[1].map((r) => r.score));
+      return bestB - bestA;
+    }),
+  );
+}
+
+/**
  * Handle the search_codebase tool call.
  * Exported separately for testability.
  */
@@ -340,6 +388,11 @@ export async function searchCodebaseHandler(
   observability?: ObservabilityConfig,
 ): Promise<ToolOutput> {
   const startTime = Date.now();
+
+  // Build repo filter if specified
+  const repoFilter = input.repo
+    ? { must: [{ key: 'repoId', match: { value: input.repo } }] }
+    : undefined;
 
   // Query classification gate (Phase 37 — QCC-01, QCC-02)
   const classification = classifyQuery(input.query);
@@ -581,6 +634,7 @@ export async function searchCodebaseHandler(
         text: input.query,
         limit: input.limit ?? 10,
         scoreThreshold: input.score_threshold,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       },
       { hops: clampedHops },
     );
@@ -872,6 +926,10 @@ export function registerSearchCodebaseTool(
           .describe(
             'Enable prompt template injection for detected query intents (default: true). Set false to disable scaffolding.',
           ),
+        repo: z
+          .string()
+          .optional()
+          .describe('Filter results to a specific repo by name. When omitted, searches all repos.'),
       },
     },
     async (input) => {
