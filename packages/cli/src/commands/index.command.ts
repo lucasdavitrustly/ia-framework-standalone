@@ -644,6 +644,25 @@ Browse available models: https://ollama.com/search
             startedAt,
             completedAt: new Date().toISOString(),
           });
+
+          // Backward-compat check: warn about chunks without repoId (D-09)
+          try {
+            const totalPoints = await vectorStore.countPoints();
+            const pointsWithRepo = await vectorStore.countPoints({
+              must_not: [{ is_null: { key: 'repoId' } }],
+            });
+            const orphanCount = totalPoints - pointsWithRepo;
+            if (orphanCount > 0) {
+              console.log(
+                `\n  ⚠ ${orphanCount} chunks lack repoId (indexed before multi-repo support).`,
+              );
+              console.log(
+                `    Run "ia-framework index --force" to re-index all repos and add repoId to all chunks.`,
+              );
+            }
+          } catch {
+            // Non-fatal — skip warning if count fails
+          }
         } catch (error) {
           console.error(`\n\u2717 Indexing failed: ${String(error)}`);
           logger.error({ error }, 'Indexing failed');
