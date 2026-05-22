@@ -59,7 +59,9 @@ export function statusCommand(): Command {
             frameworkDir,
             config.vectorStore.collectionName,
           );
-          const currentCommit = await getCurrentCommit(config.targetProjectPath);
+          const currentCommit = config.targetProjectPath
+            ? await getCurrentCommit(config.targetProjectPath)
+            : undefined;
 
           if (lastCommit) {
             const upToDate = lastCommit === currentCommit;

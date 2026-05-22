@@ -235,7 +235,7 @@ function compareSubcommand(): Command {
           }
 
           // Validate corpus
-          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          const validationErrors = await validateCorpus(queries, config.targetProjectPath ?? '');
           if (validationErrors.length > 0) {
             for (const err of validationErrors) {
               console.error(`  [corpus] [${err.queryId}] ${err.error}`);
