@@ -60,6 +60,7 @@ function toChunkPayload(value: unknown): ChunkPayload {
     layerHints: Array.isArray(record.layerHints)
       ? record.layerHints.filter((value): value is string => typeof value === 'string')
       : undefined,
+    repoId: typeof record.repoId === 'string' ? record.repoId : undefined,
     indexedAt: typeof record.indexedAt === 'string' ? record.indexedAt : new Date(0).toISOString(),
     qualityScore: typeof record.qualityScore === 'number' ? record.qualityScore : undefined,
     mavenModule: isRecord(record.mavenModule)
