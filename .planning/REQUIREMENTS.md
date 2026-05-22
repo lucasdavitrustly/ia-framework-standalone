@@ -24,7 +24,7 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 
 - [ ] **SRCH-01**: search_codebase and search_codebase_hybrid always query all repos, results include repo origin
 - [ ] **SRCH-02**: Dependency graph expansion crosses repo boundaries
-- [ ] **SRCH-03**: get_file and get_dependencies resolve files across all configured repos
+- [x] **SRCH-03**: get_file and get_dependencies resolve files across all configured repos
 - [ ] **SRCH-04**: Search results display repo name alongside file path (e.g. `[core] src/Payment.java`)
 
 ## Future Requirements
@@ -61,7 +61,7 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 | INDX-03     | 43    | Complete |
 | SRCH-01     | 44    | Pending |
 | SRCH-02     | 45    | Pending |
-| SRCH-03     | 44    | Pending |
+| SRCH-03     | 44    | Complete |
 | SRCH-04     | 44    | Pending |
 
 **Coverage:**

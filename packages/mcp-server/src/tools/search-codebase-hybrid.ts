@@ -37,6 +37,8 @@ export interface SearchCodebaseHybridInput {
   expand_hops?: number | undefined;
   /** Enable prompt template injection for detected intents (default: true). Per D-05. */
   use_template?: boolean | undefined;
+  /** Filter results to a specific repo by name. When omitted, searches all repos. */
+  repo?: string | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -103,6 +105,11 @@ export async function searchCodebaseHybridHandler(
 ): Promise<ToolOutput> {
   const startTime = Date.now();
 
+  // Build repo filter if specified
+  const repoFilter = input.repo
+    ? { must: [{ key: 'repoId', match: { value: input.repo } }] }
+    : undefined;
+
   // Query classification gate (Phase 37 — QCC-01, QCC-02)
   const classification = classifyQuery(input.query);
   const classificationLatencyMs = Date.now() - startTime;
@@ -113,7 +120,11 @@ export async function searchCodebaseHybridHandler(
 
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: input.limit ?? 10 },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { enableFallback: false },
       );
       keywordResults = fallbackResult.results;
@@ -121,11 +132,13 @@ export async function searchCodebaseHybridHandler(
       keywordResults = await engine.search({
         text: input.query,
         limit: input.limit ?? 10,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     } else {
       keywordResults = await engine.searchHybrid({
         text: input.query,
         limit: input.limit ?? 10,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     }
 
@@ -211,7 +224,12 @@ export async function searchCodebaseHybridHandler(
     // Use searchWithExpansion if hops > 0 and available, otherwise fall back to searchHybrid
     if (hops > 0 && engine.searchWithExpansion) {
       results = await engine.searchWithExpansion(
-        { text: input.query, limit: input.limit ?? 10, scoreThreshold: input.score_threshold },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          scoreThreshold: input.score_threshold,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { hops },
       );
     } else {
@@ -219,6 +237,7 @@ export async function searchCodebaseHybridHandler(
         text: input.query,
         limit: input.limit ?? 10,
         scoreThreshold: input.score_threshold,
+        filter: repoFilter,
       });
     }
   } catch (error) {
@@ -229,6 +248,7 @@ export async function searchCodebaseHybridHandler(
     results = await engine.search({
       text: input.query,
       limit: input.limit ?? 10,
+      ...(repoFilter ? { filter: repoFilter } : {}),
     });
     fallbackNote =
       `Note: hybrid retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
@@ -292,7 +312,11 @@ export async function searchCodebaseHybridHandler(
       'Conclusion: the indexed hybrid search did not return strong evidence for this query.';
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: input.limit ?? 10 },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { enableFallback: true, maxSuggestions: 3 },
       );
 
@@ -385,12 +409,30 @@ export async function searchCodebaseHybridHandler(
     };
   }
 
-  const sections = results.map((r, i) => formatResult(r, i + 1));
   const conclusion = `Conclusion: found ${results.length} hybrid evidence-backed ${results.length === 1 ? 'match' : 'matches'}${
     intent.entryPointQuery || intent.architectureQuery || intent.dataFlowQuery
       ? ' relevant to the requested code path.'
       : '.'
   }`;
+
+  // Group results by repo if any result has repoId
+  const hasRepoIds = results.some((r) => r.repoId);
+  let formattedBody: string;
+  if (hasRepoIds) {
+    const grouped = groupByRepo(results);
+    const groupedSections: string[] = [];
+    let idx = 1;
+    for (const [repo, items] of grouped) {
+      groupedSections.push(`--- [${repo}] ---`);
+      for (const r of items) {
+        groupedSections.push(formatResult(r, idx++));
+      }
+    }
+    formattedBody = groupedSections.join('\n\n');
+  } else {
+    const sections = results.map((r, i) => formatResult(r, i + 1));
+    formattedBody = sections.join('\n\n');
+  }
 
   // Template injection: detect intent and prepend scaffolding if applicable
   let templatePrefix = '';
@@ -404,7 +446,15 @@ export async function searchCodebaseHybridHandler(
     }
   }
 
-  const text = `${conclusion}\n\n${templatePrefix}${fallbackNote ? `${fallbackNote}\n\n` : ''}## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}`;
+  const text = `${conclusion}\n\n${templatePrefix}${fallbackNote ? `${fallbackNote}\n\n` : ''}## Hybrid search results for: "${input.query}"\n\n${formattedBody}`;
+
+  // Build structured results array with repo field
+  const structuredResults = results.map((r) => ({
+    file: r.relativePath,
+    name: r.name,
+    score: r.score,
+    ...(r.repoId ? { repo: r.repoId } : {}),
+  }));
 
   return {
     content: [{ type: 'text', text }],
@@ -412,6 +462,7 @@ export async function searchCodebaseHybridHandler(
       ...(fallbackNote ? { fallbackUsed: true } : {}),
       ...(intentDetected ? { intent_detected: intentDetected } : {}),
       ...(tokenCapApplied ? { token_cap_applied: true, results_trimmed: resultsTrimmed } : {}),
+      results: structuredResults,
       answered: true,
     },
   };
@@ -454,10 +505,30 @@ export function registerSearchCodebaseHybridTool(
           .describe(
             'Enable prompt template injection for detected query intents (default: true). Set false to disable scaffolding.',
           ),
+        repo: z
+          .string()
+          .optional()
+          .describe('Filter results to a specific repo by name. When omitted, searches all repos.'),
       },
     },
     async (input) => {
       return searchCodebaseHybridHandler(engine, input, options);
     },
+  );
+}
+
+function groupByRepo(results: RetrievalResult[]): Map<string, RetrievalResult[]> {
+  const groups = new Map<string, RetrievalResult[]>();
+  for (const r of results) {
+    const repo = r.repoId ?? 'default';
+    if (!groups.has(repo)) groups.set(repo, []);
+    groups.get(repo)!.push(r);
+  }
+  return new Map(
+    [...groups.entries()].sort((a, b) => {
+      const bestA = Math.max(...a[1].map((r) => r.score));
+      const bestB = Math.max(...b[1].map((r) => r.score));
+      return bestB - bestA;
+    }),
   );
 }

@@ -61,7 +61,7 @@ See archived roadmaps in `.planning/milestones/`:
 
 - [x] **Phase 42: Config & Repo Registry** - Multi-repo config schema with backward-compatible migration and RepoRegistry normalization (completed 2026-05-21)
 - [x] **Phase 43: Per-Repo Indexing** - Repo-tagged Qdrant payloads with independent per-repo indexing (completed 2026-05-22)
-- [ ] **Phase 44: Unified Search & MCP** - Cross-repo search with source attribution in all MCP tools
+- [x] **Phase 44: Unified Search & MCP** - Cross-repo search with source attribution in all MCP tools (2 plans) (completed 2026-05-22)
 - [ ] **Phase 45: Cross-Repo Dependency Graph** - Import resolution and dependency expansion across repo boundaries
 
 ## Phase Details
@@ -112,7 +112,13 @@ Plans:
 2. Each search result displays repo name alongside file path (e.g. `[core] src/Payment.java`)
 3. `get_file` and `get_dependencies` resolve files from any configured repo
 4. MCP tool response JSON includes `repo` field in each result object
-   **Plans**: TBD
+
+**Plans:** 2/2 plans complete
+
+Plans:
+
+- [x] 44-01-PLAN.md — RepoId in RetrievalResult + search tool repo param + result grouping
+- [x] 44-02-PLAN.md — Multi-repo resolution for get_file and get_dependencies
 
 ### Phase 45: Cross-Repo Dependency Graph
 
@@ -146,6 +152,6 @@ Plans:
 | 40. Benchmark Preflight Tool    | v1.6      | 1/1            | Complete    | 2026-05-18 |
 | 41. Hybrid Retrieval Tuning     | v1.6      | 1/1            | Complete    | 2026-05-18 |
 | 42. Config & Repo Registry      | v1.7      | 3/3            | Complete    | 2026-05-21 |
-| 43. Per-Repo Indexing           | v1.7      | 2/2 | Complete    | 2026-05-22 |
-| 44. Unified Search & MCP        | v1.7      | 0/?            | Not started | -          |
+| 43. Per-Repo Indexing           | v1.7      | 2/2            | Complete    | 2026-05-22 |
+| 44. Unified Search & MCP        | v1.7      | 2/2 | Complete    | 2026-05-22 |
 | 45. Cross-Repo Dependency Graph | v1.7      | 0/?            | Not started | -          |
