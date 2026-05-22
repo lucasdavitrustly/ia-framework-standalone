@@ -19,9 +19,9 @@ AI that actually understands the codebase — better context means better code o
 - Cross-repo dependency graph expansion (e.g. interface in core → implementation in fi-connectors)
 - Per-repo indexing with shared Qdrant collections or repo-tagged payloads
 
-## Current State: Phase 41 complete (2026-05-18)
+## Current State: Phase 43 complete (2026-05-22)
 
-**Latest:** Phase 41 — Configurable hybrid retrieval tuning parameters in project.json.
+**Latest:** Phase 43 — Per-repo indexing: chunks carry repoId, CLI supports `--repo` scoped operations.
 
 **Status:** 41 phases, 91 plans shipped across 6 milestones (v1.0–v1.6). ~29,703 LOC TypeScript.
 
