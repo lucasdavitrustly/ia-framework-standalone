@@ -405,7 +405,11 @@ export async function searchCodebaseHandler(
 
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: input.limit ?? 10 },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { enableFallback: false },
       );
       keywordResults = fallbackResult.results;
@@ -413,6 +417,7 @@ export async function searchCodebaseHandler(
       keywordResults = await engine.search({
         text: input.query,
         limit: input.limit ?? 10,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     }
 
@@ -496,7 +501,7 @@ export async function searchCodebaseHandler(
     // Use hybrid search if available for better exact-match detection, else semantic
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: 5 },
+        { text: input.query, limit: 5, ...(repoFilter ? { filter: repoFilter } : {}) },
         { enableFallback: false },
       );
       existenceResults = fallbackResult.results;
@@ -504,6 +509,7 @@ export async function searchCodebaseHandler(
       existenceResults = await engine.search({
         text: input.query,
         limit: 5,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     }
 
