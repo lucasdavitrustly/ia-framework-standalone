@@ -38,6 +38,7 @@ type VectorSearchResult = {
     defines?: string[] | undefined;
     calls?: string[] | undefined;
     calledBy?: string[] | undefined;
+    repoId?: string | undefined;
   };
 };
 
@@ -68,6 +69,7 @@ function toRetrievalResult(
     defines: raw.payload.defines,
     calls: raw.payload.calls,
     calledBy: raw.payload.calledBy,
+    repoId: raw.payload.repoId,
     score: raw.score,
     matchedVector,
   };
