@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { writeFile, access, unlink, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { loadConfig, createLogger, MavenModuleParser } from '@ia-framework/core';
+import { loadConfig, createLogger, MavenModuleParser, RepoRegistry } from '@ia-framework/core';
 import { MetricsStore } from '@ia-framework/observability';
 import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -164,6 +164,10 @@ export function indexCommand(): Command {
       ].join('\n'),
     )
     .option('-s, --strategy <type>', 'Chunking strategy: ast (default) or llm', 'ast')
+    .option(
+      '-r, --repo <name>',
+      'Index only the specified repo (must match a name in project.json repos[])',
+    )
     .addHelpText(
       'after',
       `
@@ -181,7 +185,13 @@ Browse available models: https://ollama.com/search
 `,
     )
     .action(
-      async (options: { force: boolean; config: string; model?: string; strategy: string }) => {
+      async (options: {
+        force: boolean;
+        config: string;
+        model?: string;
+        strategy: string;
+        repo?: string;
+      }) => {
         const logger = createLogger('cli:index');
         const configPath =
           options.config ||
@@ -191,6 +201,28 @@ Browse available models: https://ollama.com/search
 
         try {
           const config = await loadConfig(configPath);
+
+          // Create RepoRegistry for per-repo orchestration
+          const registry = RepoRegistry.fromConfig(config, dirname(configPath));
+
+          // Validate --repo flag (D-06)
+          if (options.repo) {
+            const entry = registry.getRepo(options.repo);
+            if (!entry) {
+              const validNames = registry
+                .getRepos()
+                .map((r) => r.name)
+                .join(', ');
+              console.error(`\n✗ Unknown repo: "${options.repo}"\n  Valid repos: ${validNames}`);
+              process.exit(1);
+            }
+          }
+
+          // Determine repos to index
+          const reposToIndex = options.repo
+            ? [registry.getRepo(options.repo)!]
+            : registry.getRepos();
+
           const baseUrl = config.embedding.baseUrl ?? 'http://localhost:11434';
 
           // Handle --model override or missing model
@@ -298,40 +330,6 @@ Browse available models: https://ollama.com/search
 
           const pipeline = new IndexingPipeline();
 
-          // Build Maven module graph BEFORE indexing so chunks get mavenModule metadata
-          let mavenModuleGraph: import('@ia-framework/core').ModuleGraph | undefined;
-          const rootPomPath = join(config.targetProjectPath, 'pom.xml');
-          if (existsSync(rootPomPath)) {
-            try {
-              const { glob } = (await import('tinyglobby' as string)) as {
-                glob: (
-                  patterns: string[],
-                  opts: { cwd: string; ignore: string[]; absolute?: boolean },
-                ) => Promise<string[]>;
-              };
-              const pomFiles = await glob(['**/pom.xml'], {
-                cwd: config.targetProjectPath,
-                ignore: ['**/target/**', '**/node_modules/**'],
-              });
-
-              const parser = new MavenModuleParser();
-              const modules = await Promise.all(
-                pomFiles.map(async (relativePath: string) => {
-                  const fullPath = join(config.targetProjectPath, relativePath);
-                  const content = await readFile(fullPath, 'utf-8');
-                  return parser.parsePom(content, relativePath);
-                }),
-              );
-
-              mavenModuleGraph = parser.buildModuleGraph(modules);
-              logger.info({ moduleCount: modules.length }, 'Maven module graph built for indexing');
-              console.log(`  ✓ Maven module graph: ${modules.length} modules (will enrich chunks)`);
-            } catch (mavenErr) {
-              logger.warn({ error: mavenErr }, 'Failed to build Maven module graph — skipping');
-            }
-          }
-          const BAR_WIDTH = 20;
-
           // LLM strategy setup: Ollama verification, model management, strategy creation
           let chunkingStrategy: ChunkingStrategy | undefined;
           let chunkingModel = '';
@@ -381,15 +379,16 @@ Browse available models: https://ollama.com/search
             chunkingStrategy = llmStrategy;
           }
 
-          console.log(`Indexing: ${config.targetProjectPath}`);
           console.log(`Collection: ${collectionName}`);
           console.log(`Model: ${config.embedding.model}`);
           console.log(`Strategy: ${options.strategy}`);
           if (options.strategy === 'llm') {
             console.log(`Chunking model: ${chunkingModel}`);
           }
+          console.log(`Repos: ${reposToIndex.map((r) => r.name).join(', ')}`);
           console.log('');
 
+          const BAR_WIDTH = 20;
           const renderProgress = (progress: IndexingProgress): void => {
             let line: string;
             switch (progress.stage) {
@@ -466,48 +465,131 @@ Browse available models: https://ollama.com/search
           }, 2000);
 
           const startTime = Date.now();
-          let result: { filesIndexed: number; chunksIndexed: number; skippedChunks: number };
+          let totalFilesIndexed = 0;
+          let totalChunksIndexed = 0;
+          let totalSkippedChunks = 0;
+
           try {
-            result = await pipeline.run(
-              {
-                targetProjectPath: config.targetProjectPath,
-                frameworkDir,
-                collectionName,
-                embeddingProvider,
-                vectorStore,
-                includePatterns: config.indexing?.includePatterns,
-                excludePatterns: config.indexing?.excludePatterns,
-                maxChunkLines: config.indexing?.maxChunkLines,
-                incremental: !options.force,
-                dependencyGraph,
-                embeddingConcurrency: config.indexing?.embeddingConcurrency,
-                chunkingStrategy,
-                mavenModuleGraph,
-              },
-              (progress: IndexingProgress) => {
-                Object.assign(lastProgress, progress);
-                renderProgress(progress);
-                // Write progress to shared file so the dashboard API can pick it up
-                void writeIndexingProgress(frameworkDir, {
-                  running: true,
-                  stage: progress.stage,
-                  strategy: options.strategy,
-                  filesTotal: progress.filesTotal,
-                  filesProcessed: progress.filesProcessed,
-                  chunksTotal: progress.chunksTotal,
-                  chunksIndexed: progress.chunksIndexed,
-                  currentFile: progress.currentFile ?? null,
-                  batchesTotal: progress.batchesTotal ?? null,
-                  batchesCompleted: progress.batchesCompleted ?? null,
-                  startedAt,
-                  updatedAt: new Date().toISOString(),
+            // Per-repo sequential loop (D-03, D-07)
+            for (const repo of reposToIndex) {
+              console.log(`\n── Indexing repo: ${repo.name} (${repo.path}) ──\n`);
+
+              // Scoped force-delete: when --force AND --repo, delete only that repo's chunks (D-02)
+              if (options.force && options.repo) {
+                const deleted = await vectorStore.deleteByFilter({
+                  must: [{ key: 'repoId', match: { value: repo.name } }],
                 });
-              },
-              abortController.signal,
-            );
+                console.log(`  Deleted ${deleted} existing chunks for repo "${repo.name}"`);
+              }
+
+              // Build Maven module graph per-repo if applicable
+              let mavenModuleGraph: import('@ia-framework/core').ModuleGraph | undefined;
+              const rootPomPath = join(repo.path, 'pom.xml');
+              if (existsSync(rootPomPath)) {
+                try {
+                  const { glob } = (await import('tinyglobby' as string)) as {
+                    glob: (
+                      patterns: string[],
+                      opts: { cwd: string; ignore: string[]; absolute?: boolean },
+                    ) => Promise<string[]>;
+                  };
+                  const pomFiles = await glob(['**/pom.xml'], {
+                    cwd: repo.path,
+                    ignore: ['**/target/**', '**/node_modules/**'],
+                  });
+
+                  const parser = new MavenModuleParser();
+                  const modules = await Promise.all(
+                    pomFiles.map(async (relativePath: string) => {
+                      const fullPath = join(repo.path, relativePath);
+                      const content = await readFile(fullPath, 'utf-8');
+                      return parser.parsePom(content, relativePath);
+                    }),
+                  );
+
+                  mavenModuleGraph = parser.buildModuleGraph(modules);
+                  logger.info(
+                    { moduleCount: modules.length },
+                    'Maven module graph built for indexing',
+                  );
+                  console.log(
+                    `  ✓ Maven module graph: ${modules.length} modules (will enrich chunks)`,
+                  );
+                } catch (mavenErr) {
+                  logger.warn({ error: mavenErr }, 'Failed to build Maven module graph — skipping');
+                }
+              }
+
+              const result = await pipeline.run(
+                {
+                  targetProjectPath: repo.path,
+                  frameworkDir,
+                  collectionName,
+                  embeddingProvider,
+                  vectorStore,
+                  includePatterns: config.indexing?.includePatterns,
+                  excludePatterns: config.indexing?.excludePatterns,
+                  maxChunkLines: config.indexing?.maxChunkLines,
+                  incremental: !options.force,
+                  dependencyGraph,
+                  embeddingConcurrency: config.indexing?.embeddingConcurrency,
+                  chunkingStrategy,
+                  mavenModuleGraph,
+                  repoId: repo.name,
+                },
+                (progress: IndexingProgress) => {
+                  Object.assign(lastProgress, progress);
+                  renderProgress(progress);
+                  void writeIndexingProgress(frameworkDir, {
+                    running: true,
+                    stage: progress.stage,
+                    strategy: options.strategy,
+                    filesTotal: progress.filesTotal,
+                    filesProcessed: progress.filesProcessed,
+                    chunksTotal: progress.chunksTotal,
+                    chunksIndexed: progress.chunksIndexed,
+                    currentFile: progress.currentFile ?? null,
+                    batchesTotal: progress.batchesTotal ?? null,
+                    batchesCompleted: progress.batchesCompleted ?? null,
+                    startedAt,
+                    updatedAt: new Date().toISOString(),
+                  });
+                },
+                abortController.signal,
+              );
+
+              totalFilesIndexed += result.filesIndexed;
+              totalChunksIndexed += result.chunksIndexed;
+              totalSkippedChunks += result.skippedChunks;
+
+              process.stdout.write('\n');
+
+              // Save per-repo indexing state with repoId composite key
+              const currentCommit = await getCurrentCommit(repo.path);
+              await saveLastIndexedCommit(
+                frameworkDir,
+                currentCommit ?? '',
+                collectionName,
+                config.embedding.model,
+                options.strategy === 'llm' ? PROMPT_CONTENT_HASH : undefined,
+                repo.name,
+              );
+
+              // Persist Maven module graph per-repo
+              if (mavenModuleGraph) {
+                try {
+                  const metricsDbPath = join(frameworkDir, 'metrics.sqlite');
+                  const metricsStore = new MetricsStore(metricsDbPath);
+                  metricsStore.saveModuleGraph(repo.path, mavenModuleGraph.toJSON());
+                  metricsStore.close();
+                  logger.info('Maven module graph persisted to SQLite');
+                } catch (mavenErr) {
+                  logger.warn({ error: mavenErr }, 'Failed to persist Maven module graph');
+                }
+              }
+            }
           } catch (err) {
             if (abortController.signal.aborted) {
-              // Stop requested — clean exit (clearInterval handled by finally block)
               process.stdout.write('\n');
               console.log('\n✗ Indexing stopped by user');
               await writeIndexingProgress(frameworkDir, {
@@ -525,27 +607,25 @@ Browse available models: https://ollama.com/search
               });
               process.exit(0);
             }
-            throw err; // Re-throw non-abort errors
+            throw err;
           } finally {
             clearInterval(sentinelPollInterval);
           }
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-
-          process.stdout.write('\n');
 
           // Save LLM chunk cache if strategy is llm
           if (chunkingStrategy && chunkingStrategy.name === 'llm') {
             await (chunkingStrategy as LlmChunkingStrategy).saveCache();
           }
 
-          if (result.skippedChunks > 0) {
+          if (totalSkippedChunks > 0) {
             console.log(
-              `\n  ⚠ ${result.skippedChunks} chunks skipped due to embedding failures (will be retried on next index)`,
+              `\n  ⚠ ${totalSkippedChunks} chunks skipped due to embedding failures (will be retried on next index)`,
             );
           }
 
           console.log(
-            `\n\u2713 Indexed ${result.chunksIndexed} chunks from ${result.filesIndexed} files in ${elapsed}s`,
+            `\n\u2713 Indexed ${totalChunksIndexed} chunks from ${totalFilesIndexed} files in ${elapsed}s`,
           );
 
           // Mark indexing complete in the progress file
@@ -553,40 +633,17 @@ Browse available models: https://ollama.com/search
             running: false,
             stage: 'done',
             strategy: options.strategy,
-            filesTotal: result.filesIndexed,
-            filesProcessed: result.filesIndexed,
-            chunksTotal: result.chunksIndexed,
-            chunksIndexed: result.chunksIndexed,
+            filesTotal: totalFilesIndexed,
+            filesProcessed: totalFilesIndexed,
+            chunksTotal: totalChunksIndexed,
+            chunksIndexed: totalChunksIndexed,
             currentFile: null,
             batchesTotal: null,
             batchesCompleted: null,
-            skippedChunks: result.skippedChunks,
+            skippedChunks: totalSkippedChunks,
             startedAt,
             completedAt: new Date().toISOString(),
           });
-
-          // Save embedding model to indexing state for mismatch detection
-          const currentCommit = await getCurrentCommit(config.targetProjectPath);
-          await saveLastIndexedCommit(
-            frameworkDir,
-            currentCommit ?? '',
-            collectionName,
-            config.embedding.model,
-            options.strategy === 'llm' ? PROMPT_CONTENT_HASH : undefined,
-          );
-
-          // Persist Maven module graph to SQLite (built before indexing)
-          if (mavenModuleGraph) {
-            try {
-              const metricsDbPath = join(frameworkDir, 'metrics.sqlite');
-              const metricsStore = new MetricsStore(metricsDbPath);
-              metricsStore.saveModuleGraph(config.targetProjectPath, mavenModuleGraph.toJSON());
-              metricsStore.close();
-              logger.info('Maven module graph persisted to SQLite');
-            } catch (mavenErr) {
-              logger.warn({ error: mavenErr }, 'Failed to persist Maven module graph');
-            }
-          }
         } catch (error) {
           console.error(`\n\u2717 Indexing failed: ${String(error)}`);
           logger.error({ error }, 'Indexing failed');
