@@ -4,7 +4,7 @@ milestone: v1.7
 milestone_name: Multi-Repo Indexing
 status: unknown
 stopped_at: Completed 42-03-PLAN.md
-last_updated: "2026-05-22T12:54:34.376Z"
+last_updated: "2026-05-22T13:01:26.498Z"
 last_activity: 2026-05-22
 progress:
   total_phases: 4
@@ -47,6 +47,7 @@ All decisions are logged in PROJECT.md Key Decisions table.
 - Support both `targetProjectPath` (legacy) and `repos[]` (new) config formats
 - [Phase 42-config-repo-registry]: Used Zod .refine() for mutual exclusion between targetProjectPath and repos[]
 - [Phase 42-config-repo-registry]: File-existence heuristics for detection (no YAML/XML parser deps)
+- [Phase ?]: PR #42 review: 5 improvements for Phase 43
 
 ### Pending Todos
 
