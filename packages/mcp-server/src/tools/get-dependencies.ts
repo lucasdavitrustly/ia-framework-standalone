@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RetrievalResult } from '@ia-framework/retrieval';
+import { parseRepoPath } from './get-file.js';
 
 type Engine = {
   getFile(path: string): Promise<RetrievalResult[]>;
@@ -17,25 +18,33 @@ export type ToolOutput = CallToolResult;
 /**
  * Handle the get_dependencies tool call.
  * Extracts unique imports and exports from all chunks in the file.
+ * Supports multi-repo resolution with optional repo:path prefix syntax.
  */
 export async function getDependenciesHandler(
   engine: Engine,
   input: GetDependenciesInput,
 ): Promise<ToolOutput> {
+  const { repo, path: filePath } = parseRepoPath(input.path);
+
   let results: RetrievalResult[];
   let fallbackNote: string | undefined;
 
   try {
-    results = await engine.getFile(input.path);
+    results = await engine.getFile(filePath);
   } catch (error) {
     if (!engine.search) {
       throw error;
     }
 
-    results = await engine.search({ text: input.path, limit: 5 });
+    results = await engine.search({ text: filePath, limit: 5 });
     fallbackNote =
       `Note: direct dependency extraction was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
       'Returning dependency hints from indexed evidence matching the requested path.';
+  }
+
+  // Filter by repo if prefix was specified
+  if (repo) {
+    results = results.filter((r) => r.repoId === repo);
   }
 
   if (results.length === 0) {
@@ -52,36 +61,60 @@ export async function getDependenciesHandler(
     };
   }
 
-  // Collect unique imports and exports across all chunks
-  const allImports = new Set<string>();
-  const allExports = new Set<string>();
-
-  for (const chunk of results) {
-    for (const imp of chunk.imports) {
-      allImports.add(imp);
-    }
-    for (const exp of chunk.exports) {
-      allExports.add(exp);
-    }
+  // Group results by repoId
+  const repoGroups = new Map<string, RetrievalResult[]>();
+  for (const r of results) {
+    const key = r.repoId ?? '_default';
+    const group = repoGroups.get(key) ?? [];
+    group.push(r);
+    repoGroups.set(key, group);
   }
 
-  const importsList =
-    allImports.size > 0
-      ? [...allImports]
-          .sort()
-          .map((i) => `- ${i}`)
-          .join('\n')
-      : '(none)';
+  const multiRepo = repoGroups.size > 1 || (repoGroups.size === 1 && !repoGroups.has('_default'));
+  const textParts: string[] = [];
+  const structuredDeps: Array<{ repo?: string | undefined; imports: string[]; exports: string[] }> =
+    [];
 
-  const exportsList =
-    allExports.size > 0
-      ? [...allExports]
-          .sort()
-          .map((e) => `- ${e}`)
-          .join('\n')
-      : '(none)';
+  for (const [repoKey, groupResults] of repoGroups) {
+    const allImports = new Set<string>();
+    const allExports = new Set<string>();
 
-  const text = `${fallbackNote ? `${fallbackNote}\n\n` : ''}## Dependencies for: ${input.path}\n\n### Imports\n${importsList}\n\n### Exports\n${exportsList}`;
+    for (const chunk of groupResults) {
+      for (const imp of chunk.imports) allImports.add(imp);
+      for (const exp of chunk.exports) allExports.add(exp);
+    }
+
+    const importsList =
+      allImports.size > 0
+        ? [...allImports]
+            .sort()
+            .map((i) => `- ${i}`)
+            .join('\n')
+        : '(none)';
+
+    const exportsList =
+      allExports.size > 0
+        ? [...allExports]
+            .sort()
+            .map((e) => `- ${e}`)
+            .join('\n')
+        : '(none)';
+
+    if (multiRepo && repoKey !== '_default') {
+      textParts.push(`## [${repoKey}]`);
+    }
+
+    textParts.push(`### Imports\n${importsList}\n\n### Exports\n${exportsList}`);
+
+    structuredDeps.push({
+      repo: repoKey === '_default' ? undefined : repoKey,
+      imports: [...allImports].sort(),
+      exports: [...allExports].sort(),
+    });
+  }
+
+  const header = `## Dependencies for: ${filePath}`;
+  const text = `${fallbackNote ? `${fallbackNote}\n\n` : ''}${header}\n\n${textParts.join('\n\n')}`;
   const conclusion = `Conclusion: found dependency evidence for ${input.path}.`;
 
   return {
@@ -89,6 +122,7 @@ export async function getDependenciesHandler(
     structuredContent: {
       ...(fallbackNote ? { fallbackUsed: true } : {}),
       answered: true,
+      deps: structuredDeps,
     },
   };
 }
