@@ -60,25 +60,31 @@ async function readStateMap(frameworkDir: string): Promise<IndexingStateMap> {
 export async function getLastIndexedCommit(
   frameworkDir: string,
   collectionName: string,
+  repoId?: string,
 ): Promise<string | null> {
   const map = await readStateMap(frameworkDir);
-  return map[collectionName]?.lastIndexedCommit ?? null;
+  const key = repoId ? `${collectionName}:${repoId}` : collectionName;
+  return map[key]?.lastIndexedCommit ?? null;
 }
 
 export async function getLastEmbeddingModel(
   frameworkDir: string,
   collectionName: string,
+  repoId?: string,
 ): Promise<string | null> {
   const map = await readStateMap(frameworkDir);
-  return map[collectionName]?.embeddingModel ?? null;
+  const key = repoId ? `${collectionName}:${repoId}` : collectionName;
+  return map[key]?.embeddingModel ?? null;
 }
 
 export async function getLastPromptContentHash(
   frameworkDir: string,
   collectionName: string,
+  repoId?: string,
 ): Promise<string | null> {
   const map = await readStateMap(frameworkDir);
-  return map[collectionName]?.promptContentHash ?? null;
+  const key = repoId ? `${collectionName}:${repoId}` : collectionName;
+  return map[key]?.promptContentHash ?? null;
 }
 
 export async function saveLastIndexedCommit(
@@ -87,10 +93,12 @@ export async function saveLastIndexedCommit(
   collectionName: string,
   embeddingModel?: string,
   promptContentHash?: string,
+  repoId?: string,
 ): Promise<void> {
   await mkdir(frameworkDir, { recursive: true });
   const map = await readStateMap(frameworkDir);
-  map[collectionName] = {
+  const key = repoId ? `${collectionName}:${repoId}` : collectionName;
+  map[key] = {
     lastIndexedCommit: commit,
     indexedAt: new Date().toISOString(),
     ...(embeddingModel ? { embeddingModel } : {}),

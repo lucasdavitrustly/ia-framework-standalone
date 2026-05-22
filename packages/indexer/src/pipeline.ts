@@ -59,6 +59,8 @@ export interface IndexingConfig {
   chunkingStrategy?: ChunkingStrategy | undefined;
   /** Optional Maven module graph — if provided, chunks are enriched with maven_module metadata */
   mavenModuleGraph?: ModuleGraph | undefined;
+  /** Source repo identifier — added to every chunk payload for per-repo filtering */
+  repoId?: string | undefined;
   /** Optional dependency graph for building file-level import adjacency */
   dependencyGraph?:
     | {
@@ -124,6 +126,7 @@ async function embedBatchWithRetry(
     string,
     { defines?: string | undefined; calls?: string[] | undefined; calledBy?: string[] | undefined }
   >,
+  repoId?: string | undefined,
 ): Promise<void> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -160,6 +163,7 @@ async function embedBatchWithRetry(
           chunkIndex: chunk.chunkIndex,
           totalChunks: chunk.totalChunks,
           indexedAt: new Date().toISOString(),
+          ...(repoId ? { repoId } : {}),
         };
         // Call-chain metadata enrichment
         if (callMeta) {
@@ -218,6 +222,7 @@ export class IndexingPipeline {
       chunkingStrategy,
       embeddingConcurrency,
     } = config;
+    const { repoId } = config;
 
     // Initialize vector store collection
     await vectorStore.initialize({
@@ -439,6 +444,7 @@ export class IndexingPipeline {
               1,
               config.mavenModuleGraph,
               chunkCallMeta,
+              repoId,
             );
           } catch {
             // Retry exhausted — skip batch
