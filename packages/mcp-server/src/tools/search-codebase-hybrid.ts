@@ -393,12 +393,30 @@ export async function searchCodebaseHybridHandler(
     };
   }
 
-  const sections = results.map((r, i) => formatResult(r, i + 1));
   const conclusion = `Conclusion: found ${results.length} hybrid evidence-backed ${results.length === 1 ? 'match' : 'matches'}${
     intent.entryPointQuery || intent.architectureQuery || intent.dataFlowQuery
       ? ' relevant to the requested code path.'
       : '.'
   }`;
+
+  // Group results by repo if any result has repoId
+  const hasRepoIds = results.some((r) => r.repoId);
+  let formattedBody: string;
+  if (hasRepoIds) {
+    const grouped = groupByRepo(results);
+    const groupedSections: string[] = [];
+    let idx = 1;
+    for (const [repo, items] of grouped) {
+      groupedSections.push(`--- [${repo}] ---`);
+      for (const r of items) {
+        groupedSections.push(formatResult(r, idx++));
+      }
+    }
+    formattedBody = groupedSections.join('\n\n');
+  } else {
+    const sections = results.map((r, i) => formatResult(r, i + 1));
+    formattedBody = sections.join('\n\n');
+  }
 
   // Template injection: detect intent and prepend scaffolding if applicable
   let templatePrefix = '';
@@ -412,7 +430,15 @@ export async function searchCodebaseHybridHandler(
     }
   }
 
-  const text = `${conclusion}\n\n${templatePrefix}${fallbackNote ? `${fallbackNote}\n\n` : ''}## Hybrid search results for: "${input.query}"\n\n${sections.join('\n\n')}`;
+  const text = `${conclusion}\n\n${templatePrefix}${fallbackNote ? `${fallbackNote}\n\n` : ''}## Hybrid search results for: "${input.query}"\n\n${formattedBody}`;
+
+  // Build structured results array with repo field
+  const structuredResults = results.map((r) => ({
+    file: r.relativePath,
+    name: r.name,
+    score: r.score,
+    ...(r.repoId ? { repo: r.repoId } : {}),
+  }));
 
   return {
     content: [{ type: 'text', text }],
@@ -420,6 +446,7 @@ export async function searchCodebaseHybridHandler(
       ...(fallbackNote ? { fallbackUsed: true } : {}),
       ...(intentDetected ? { intent_detected: intentDetected } : {}),
       ...(tokenCapApplied ? { token_cap_applied: true, results_trimmed: resultsTrimmed } : {}),
+      results: structuredResults,
       answered: true,
     },
   };
@@ -471,5 +498,21 @@ export function registerSearchCodebaseHybridTool(
     async (input) => {
       return searchCodebaseHybridHandler(engine, input, options);
     },
+  );
+}
+
+function groupByRepo(results: RetrievalResult[]): Map<string, RetrievalResult[]> {
+  const groups = new Map<string, RetrievalResult[]>();
+  for (const r of results) {
+    const repo = r.repoId ?? 'default';
+    if (!groups.has(repo)) groups.set(repo, []);
+    groups.get(repo)!.push(r);
+  }
+  return new Map(
+    [...groups.entries()].sort((a, b) => {
+      const bestA = Math.max(...a[1].map((r) => r.score));
+      const bestB = Math.max(...b[1].map((r) => r.score));
+      return bestB - bestA;
+    }),
   );
 }
