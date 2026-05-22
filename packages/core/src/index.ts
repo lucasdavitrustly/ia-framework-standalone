@@ -40,6 +40,10 @@ export {
   inferPackageName,
 } from './retrieval/query-intelligence.js';
 
+// Graph
+export { CrossRepoEdgeStore, type CrossRepoEdge } from './graph/cross-repo-edges.js';
+export { resolveImportToRepo, type ImportResolution } from './graph/import-resolver.js';
+
 // Maven
 export { MavenModuleParser } from './maven/index.js';
 export type {
