@@ -16,7 +16,7 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 
 ### Indexing
 
-- [ ] **INDX-01**: Indexed chunks are tagged with source repo identifier in Qdrant payload
+- [x] **INDX-01**: Indexed chunks are tagged with source repo identifier in Qdrant payload
 - [ ] **INDX-02**: Developer can re-index a single repo without re-indexing others
 - [ ] **INDX-03**: CLI accepts `--repo` flag to scope indexing to a specific repo
 
@@ -56,7 +56,7 @@ Requirements for milestone v1.7 Multi-Repo Indexing.
 | CONF-02     | 42    | Complete |
 | CONF-03     | 42    | Complete |
 | CONF-04     | 42    | Complete |
-| INDX-01     | 43    | Pending |
+| INDX-01     | 43    | Complete |
 | INDX-02     | 43    | Pending |
 | INDX-03     | 43    | Pending |
 | SRCH-01     | 44    | Pending |
