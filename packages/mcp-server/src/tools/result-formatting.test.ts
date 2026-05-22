@@ -42,6 +42,39 @@ describe('buildCodeAnchor', () => {
     });
     expect(result).toBe('src/a.ts:1-10 (Bar)');
   });
+
+  it('appends [via repo] when expansionRepo differs from repoId', () => {
+    const result = buildCodeAnchor({
+      relativePath: 'src/a.ts',
+      startLine: 1,
+      endLine: 10,
+      name: 'Foo',
+      repoId: 'core',
+      expansionRepo: 'shared-lib',
+    });
+    expect(result).toBe('[core] src/a.ts:1-10 (Foo) [via shared-lib]');
+  });
+
+  it('no [via] when expansionRepo is absent', () => {
+    const result = buildCodeAnchor({
+      relativePath: 'src/a.ts',
+      startLine: 1,
+      endLine: 10,
+      repoId: 'core',
+    });
+    expect(result).toBe('[core] src/a.ts:1-10');
+  });
+
+  it('no [via] when expansionRepo equals repoId (same repo)', () => {
+    const result = buildCodeAnchor({
+      relativePath: 'src/a.ts',
+      startLine: 1,
+      endLine: 10,
+      repoId: 'core',
+      expansionRepo: 'core',
+    });
+    expect(result).toBe('[core] src/a.ts:1-10');
+  });
 });
 
 describe('formatRetrievalContext', () => {

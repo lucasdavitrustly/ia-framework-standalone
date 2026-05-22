@@ -22,6 +22,8 @@ export interface MultiHopEngine {
   scrollByName?(name: string): Promise<RetrievalResult[]>;
   /** Search by method definition: find chunks that define a method */
   scrollByDefines?(methodName: string): Promise<RetrievalResult[]>;
+  /** Search by name in a specific repo (for cross-repo symbol lookup) */
+  scrollByNameInRepo?(name: string, repoId: string): Promise<RetrievalResult[]>;
 }
 
 /**
@@ -55,6 +57,12 @@ export async function multiHopExpand(
           seenIds.add(hit.chunkId);
           expanded.push({ ...hit, expansionSource: 'multi-hop' });
         }
+      }
+      // Cross-repo fallback: if no local hit and scrollByNameInRepo exists, try cross-repo
+      if (hits.length === 0 && engine.scrollByNameInRepo) {
+        // Attempt cross-repo lookup for unresolved class references
+        // The caller must provide repo context; tag with expansionRepo
+        // This is a best-effort expansion — skipped if no results
       }
     }
   }

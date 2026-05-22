@@ -71,6 +71,8 @@ export interface RetrievalResult {
   calledBy?: string[] | undefined;
   /** Expansion source tag (e.g., 'hierarchy') for expanded results */
   expansionSource?: string | undefined;
+  /** Source repository for cross-repo expanded results (per D-11) */
+  expansionRepo?: string | undefined;
   /** Source repository identifier (kebab-case from RepoRegistry) */
   repoId?: string | undefined;
 }

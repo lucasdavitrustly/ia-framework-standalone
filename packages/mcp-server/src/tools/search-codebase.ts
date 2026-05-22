@@ -45,6 +45,19 @@ type Engine = {
     results: RetrievalResult[],
     direction?: 'calls' | 'calledBy' | 'both',
   ): Promise<RetrievalResult[]>;
+  /** Resolve cross-repo edges for a given source file */
+  getCrossRepoEdges?(
+    sourceRepo: string,
+    sourcePath: string,
+  ): Promise<
+    Array<{
+      targetRepo: string;
+      targetPath: string | null;
+      targetSymbol: string | null;
+    }>
+  >;
+  /** Scroll by name in a specific repo (for cross-repo symbol lookup) */
+  scrollByNameInRepo?(name: string, repoId: string): Promise<RetrievalResult[]>;
 };
 
 export interface SearchCodebaseInput {
@@ -317,6 +330,24 @@ async function expandHierarchy(
         if (!seenIds.has(hit.chunkId)) {
           seenIds.add(hit.chunkId);
           expanded.push({ ...hit, expansionSource: 'hierarchy' });
+        }
+      }
+    }
+  }
+
+  // Cross-repo expansion: follow pre-computed edges across repo boundaries (D-04: costs 1 hop per crossing)
+  if (engine.getCrossRepoEdges && engine.scrollByNameInRepo && maxHops > 0) {
+    for (const r of results) {
+      if (!r.repoId || !r.relativePath) continue;
+      const edges = await engine.getCrossRepoEdges(r.repoId, r.relativePath);
+      for (const edge of edges) {
+        if (!edge.targetSymbol) continue;
+        const hits = await engine.scrollByNameInRepo(edge.targetSymbol, edge.targetRepo);
+        for (const hit of hits) {
+          if (!seenIds.has(hit.chunkId)) {
+            seenIds.add(hit.chunkId);
+            expanded.push({ ...hit, expansionSource: 'hierarchy', expansionRepo: edge.targetRepo });
+          }
         }
       }
     }
