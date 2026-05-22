@@ -3,6 +3,7 @@ interface FormattableRetrievalResult {
   startLine: number;
   endLine: number;
   name?: string | undefined;
+  repoId?: string | undefined;
   modulePath?: string | undefined;
   packageName?: string | undefined;
   layerHints?: string[] | undefined;
@@ -39,11 +40,13 @@ export function buildCodeAnchor(result: {
   startLine: number;
   endLine: number;
   name?: string | undefined;
+  repoId?: string | undefined;
 }): string {
   const lines = `${result.startLine}-${result.endLine}`;
+  const repoPrefix = result.repoId ? `[${result.repoId}] ` : '';
   return result.name
-    ? `${result.relativePath}:${lines} (${result.name})`
-    : `${result.relativePath}:${lines}`;
+    ? `${repoPrefix}${result.relativePath}:${lines} (${result.name})`
+    : `${repoPrefix}${result.relativePath}:${lines}`;
 }
 
 export function formatRetrievalContext(result: FormattableRetrievalResult): string {
