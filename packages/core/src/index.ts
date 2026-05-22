@@ -43,6 +43,12 @@ export {
 // Graph
 export { CrossRepoEdgeStore, type CrossRepoEdge } from './graph/cross-repo-edges.js';
 export { resolveImportToRepo, type ImportResolution } from './graph/import-resolver.js';
+export {
+  buildCrossRepoEdges,
+  type EdgeBuilderEngine,
+  type EdgeBuilderConfig,
+  type ChunkForEdgeBuilding,
+} from './graph/cross-repo-edge-builder.js';
 
 // Maven
 export { MavenModuleParser } from './maven/index.js';
