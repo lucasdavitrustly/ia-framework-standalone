@@ -1,274 +1,164 @@
-# Domain Pitfalls — v1.2 Milestone
+# Domain Pitfalls — v1.7 Multi-Repo Indexing
 
-**Domain:** LLM chunking prompt tuning, score-based result filtering, and RAG retrieval quality optimization in an existing system
-**Researched:** 2026-04-22
-**Confidence:** HIGH (existing system analysis, RAG engineering patterns)
+**Domain:** Adding multi-repo indexing to an existing single-repo RAG system
+**Researched:** 2026-05-21
+**Confidence:** HIGH (based on existing system architecture analysis — 41 phases of single-repo development)
 
-> **Context:** The system already has working LLM chunking (llama3.2 via Ollama), AST chunking, hybrid BM25+dense with RRF fusion, multi-collection search, MRR benchmarks (Hit@K, MRR), and a dashboard with analytics. Current MRR is below 0.7 target. These pitfalls cover mistakes when TUNING the existing system, not building it.
+> **Context:** The system has a mature single-repo pipeline: AST+LLM chunking, hybrid BM25+dense with RRF, dependency graph expansion, Maven module graph, benchmark system, dashboard. These pitfalls cover mistakes when EXTENDING to multi-repo, not building from scratch.
 
 ---
 
 ## Critical Pitfalls
 
-Mistakes that waste weeks of tuning effort or actively degrade retrieval quality.
+Mistakes that cause rewrites, data loss, or breaking changes for existing users.
 
 ---
 
-### Pitfall 1: Tuning Without a Stable Benchmark Baseline
+### Pitfall 1: Breaking the Single-Repo Config Contract
 
-**What goes wrong:**
-You start tweaking prompts and filters before establishing a frozen, reproducible baseline MRR. Every change looks like an improvement because you're comparing against a moving target — maybe the Ollama model loaded differently, maybe Qdrant was mid-compaction, maybe the benchmark corpus changed between runs.
+**What goes wrong:** Changing `project.json` schema from `{ projectPath: string }` to `{ projects: [...] }` breaks all existing installations. Users who upgrade find their config rejected.
+**Why it happens:** Developer focuses on multi-repo design without writing a migration path for the single-repo format.
+**Consequences:** Every existing user must manually update config. Automation scripts break. If the installer overwrites, existing indexing state is lost.
+**Prevention:** Support BOTH formats — single string (legacy) normalized to array internally. Add a `configVersion` field. Write an auto-migration in the config loader that converts old format to new on first read without user action.
+**Detection:** Unit test: load a v1.6-era `project.json` into the new config loader — it must work unchanged.
 
-**Why it happens:**
-Eagerness to improve. The current MRR < 0.7 feels like an obvious problem to fix, so you jump straight to prompt changes. Non-determinism in LLM chunking (temperature > 0, different Ollama load states) means repeated runs on the same prompt produce different chunks, different embeddings, different MRR.
-
-**Consequences:**
-
-- You can't tell if prompt A is actually better than prompt B
-- You ship a "better" prompt that regresses on queries you didn't notice
-- Weeks of A/B testing produce noise, not signal
-
-**Prevention:**
-
-- **Freeze the corpus first.** Lock the 30-query benchmark corpus before any tuning begins. No additions or modifications during a tuning cycle.
-- **Set temperature to 0** for chunking during benchmark runs. Accept slightly worse average quality for reproducibility.
-- **Run each configuration 3x** and report mean MRR. If variance > 0.02, you have a reproducibility problem to fix before tuning.
-- **Store the full benchmark artifact** (per-query scores, not just aggregate MRR) so you can diff which queries improved/regressed.
-
-**Detection:**
-
-- MRR swings > 0.03 between identical runs = reproducibility problem
-- You can't answer "which specific queries did this change improve?"
-
-**Phase to address:** First phase — establish baseline before any tuning work begins.
+**Phase:** Must be the FIRST thing addressed before any multi-repo logic.
 
 ---
 
-### Pitfall 2: Prompt Engineering Without Per-Query Diagnosis
+### Pitfall 2: Collection Naming / Point ID Collision
 
-**What goes wrong:**
-You iterate on the LLM chunking prompt globally — "make summaries more detailed" or "include more context" — without understanding WHY specific queries fail. You optimize the average while ignoring that MRR is dragged down by a few catastrophic misses that need targeted fixes.
+**What goes wrong:** Two repos contain files with identical relative paths (e.g., `src/index.ts`). Without repo-scoped identifiers, points overwrite each other or searches return wrong-repo results.
+**Why it happens:** The existing system uses file paths as unique identifiers in Qdrant payloads. Multi-repo makes relative paths non-unique.
+**Consequences:** Silent data corruption — chunks from repo A overwrite repo B's chunks. Search results attribute code to wrong repos. Dependency graph links cross repos incorrectly.
+**Prevention:** Prefix all Qdrant point IDs and payload paths with a repo identifier (e.g., `repo:fi-core/src/index.ts`). Use a deterministic repo slug derived from the repo root path or a user-assigned alias. Hash function for point IDs must include repo slug.
+**Detection:** Index two repos with overlapping file paths → verify both appear in search results with correct source attribution.
 
-**Why it happens:**
-Aggregate MRR hides the distribution. An MRR of 0.55 could mean every query ranks at position 2 (uniform mediocre), OR 20 queries hit at position 1 and 10 queries completely miss (bimodal). These require completely different fixes.
-
-**Consequences:**
-
-- Global prompt changes improve easy queries (already scoring well) while doing nothing for hard queries (the ones dragging MRR down)
-- You hit a ceiling at ~0.6 MRR and can't figure out why
-- Prompt becomes bloated with instructions that don't help
-
-**Prevention:**
-
-- **Start with per-query failure analysis.** For every query with rank > 3 or miss, manually inspect: What chunk SHOULD have been returned? What chunk WAS returned? Why did the wrong chunk score higher?
-- **Categorize failures:** (a) chunk boundary wrong — the answer spans two chunks, (b) summary doesn't mention the right concepts, (c) embedding similarity is low despite good summary, (d) BM25 keyword mismatch, (e) correct chunk exists but scores below threshold
-- **Target prompt changes at specific failure categories**, not at "make it better generally"
-- **Track per-query MRR in a table**, not just aggregate
-
-**Detection:**
-
-- You've changed the prompt 5+ times but MRR hasn't moved more than 0.02
-- You can't explain why a specific query fails
-
-**Phase to address:** Prompt engineering phase — build the diagnostic tooling before changing prompts.
+**Phase:** Core infrastructure — must be solved before unified indexing pipeline.
 
 ---
 
-### Pitfall 3: Score Threshold Filtering That Silently Drops Correct Results
+### Pitfall 3: Dependency Graph Merging Without Boundary Semantics
 
-**What goes wrong:**
-You add score-based filtering (e.g., "drop results below 0.3") to reduce noise, and MRR drops instead of improving. The threshold removes both noise AND correct results that happen to have lower similarity scores. Worse: the threshold that works for dense search doesn't work for BM25, and neither works well after RRF fusion because RRF scores are on a completely different scale.
-
-**Why it happens:**
-Similarity scores are not probabilities. A cosine similarity of 0.4 might be excellent for one embedding model and terrible for another. BM25 scores are unbounded. RRF scores (1/(k+rank)) are always small fractions. A single threshold across all these signals is mathematically wrong.
-
-**Consequences:**
-
-- Hard queries (where the correct result naturally has a lower score) get zero results after filtering
-- MRR drops on the long tail while precision on easy queries improves — net negative
-- Different embedding models need different thresholds, creating a maintenance nightmare
-
+**What goes wrong:** The existing `DependencyGraph` assumes all files live in one tree. Merging graphs from multiple repos creates false edges (e.g., `import { Foo } from '../core/Foo'` resolves to wrong file in wrong repo).
+**Why it happens:** Path resolution logic uses relative paths from a single root. Multi-repo has multiple roots, and cross-repo imports use package names, not relative paths.
+**Consequences:** `get_module_dependencies` returns nonsense — showing "dependencies" that don't exist. Graph expansion retrieves irrelevant chunks from wrong repos. LLM gets polluted context.
 **Prevention:**
 
-- **Never set a global threshold without measuring Hit@K impact.** Compare Hit@10 before and after filtering. If Hit@10 drops, you're killing recall.
-- **Use relative thresholds, not absolute.** E.g., "keep results within 80% of the top score" rather than "drop below 0.3". This adapts to query difficulty.
-- **Apply different thresholds per signal source.** Dense, BM25, and RRF fusion scores need independent treatment. Filter BEFORE fusion if possible, not after.
-- **Measure the "empty result" rate.** If > 5% of benchmark queries return zero results after filtering, the threshold is too aggressive.
-- **Consider rank-based cutoff instead of score-based.** "Return top 5" is more robust than "return everything above 0.3" because it guarantees results.
+1. Each repo gets its own `DependencyGraph` instance.
+2. Cross-repo edges are explicit — resolved via package.json/pom.xml dependency declarations, not path heuristics.
+3. A `MultiRepoDependencyGraph` wrapper merges individual graphs with explicit cross-repo edge registration.
+4. The `expand_hops` parameter on MCP tools should respect repo boundaries by default, with opt-in cross-repo expansion.
 
-**Detection:**
+**Detection:** Query dependency expansion for a class that exists in both repos — verify it doesn't conflate them.
 
-- Hit@10 drops after adding filtering (recall regression)
-- Benchmark queries that previously ranked at position 7-10 now return nothing
-- "No results found" appearing in dashboard search
-
-**Phase to address:** Score filtering phase — implement with kill switch and A/B comparison.
+**Phase:** After per-repo indexing works, before cross-repo search is enabled.
 
 ---
 
-### Pitfall 4: Overfitting Prompts to the Benchmark Corpus
+### Pitfall 4: Re-indexing All Repos on Any Change
 
-**What goes wrong:**
-You tune the LLM chunking prompt until MRR hits 0.7+ on the 30-query corpus, then discover it performs poorly on real developer queries. The prompt was optimized for the specific patterns in the benchmark, not for general code retrieval quality.
+**What goes wrong:** The indexing pipeline triggers a full re-index of ALL repos when any single file changes, because the watcher/indexer doesn't distinguish which repo changed.
+**Why it happens:** Existing file watcher and indexing loop was designed for one root path. Adding more paths without scoping the change detection causes cascading re-indexes.
+**Consequences:** A save in one repo triggers minutes of indexing across all repos. CPU/memory spike. Qdrant write amplification. Developer experience degrades from seconds to minutes.
+**Prevention:** Per-repo indexing state: each repo tracks its own `lastIndexedAt`, file hashes, and dirty-file list independently. Watcher events are scoped to their source repo. Use separate chokidar instances per repo root.
+**Detection:** Change one file in repo A → verify only repo A's chunks are updated.
 
-**Why it happens:**
-30 queries is a small corpus. With enough prompt iterations, you can overfit to it — especially if the queries cluster around certain code patterns (e.g., lots of "find the function that..." but no "how does module X work?" queries).
-
-**Consequences:**
-
-- False confidence in retrieval quality
-- Real-world MRR is significantly lower than benchmark MRR
-- Developers lose trust in the tool
-
-**Prevention:**
-
-- **Hold out 20% of the corpus** (6 queries) as a validation set. Never look at validation set scores during tuning. Only check at the end.
-- **Add new "challenge queries" periodically** — queries that represent real developer patterns you've seen fail in practice.
-- **Diverse query types in the corpus:** identifier lookup, conceptual search, cross-module queries, "how does X work", error-related searches. If the corpus is dominated by one type, add more.
-- **Spot-check manually.** After prompt changes, try 5 ad-hoc queries in the dashboard search and verify results make sense.
-
-**Detection:**
-
-- Benchmark MRR is 0.7+ but developers complain results aren't relevant
-- Validation set MRR is significantly lower than training set MRR
-- Dashboard search quality doesn't match benchmark numbers
-
-**Phase to address:** Throughout — maintain holdout discipline from the start.
+**Phase:** Indexing pipeline design — address during unified indexing implementation.
 
 ---
 
 ## Moderate Pitfalls
 
-### Pitfall 5: Chunk Boundary Changes Invalidate Existing Embeddings
+### Pitfall 5: Ambiguous Search Results Without Source Context
 
-**What goes wrong:**
-You improve the chunking prompt so it produces better boundaries (e.g., keeping related functions together). But the old embeddings in Qdrant were generated from different chunk boundaries. You now have a mix of old-boundary and new-boundary chunks, or worse, you re-index and all your benchmark baselines are invalid because the chunks changed.
-
-**Prevention:**
-
-- **Always re-index fully** after prompt changes. No incremental updates when chunk boundaries change.
-- **Version your chunking prompts.** Store the prompt hash or version in Qdrant payload metadata. This lets you filter or identify stale chunks.
-- **Re-run benchmarks immediately after re-index.** The old MRR numbers are meaningless against new chunks.
-- **Keep the old collection alive** until the new one benchmarks better. Don't delete-then-recreate.
-
-**Phase to address:** Prompt engineering phase — build versioned collections.
+**What goes wrong:** Unified search returns chunks from multiple repos but the MCP tool response doesn't clearly indicate which repo each result comes from. The LLM generates code referencing the wrong package/module.
+**Prevention:** Every search result payload MUST include `repo` field. MCP tool response format must surface repo name prominently (not buried in metadata). Consider formatting as `[repo-name] path/to/file.ts` in results.
 
 ---
 
-### Pitfall 6: Summary Quality vs. Summary Length Tradeoff
+### Pitfall 6: Config Complexity Explosion
 
-**What goes wrong:**
-You make the LLM generate longer, more detailed summaries thinking more context = better embeddings. But longer summaries dilute the embedding — the key concepts get averaged with filler words, and similarity scores drop for targeted queries.
-
-**Prevention:**
-
-- **Benchmark short summaries (1-2 sentences) against long ones (paragraph).** Shorter often wins for embedding similarity.
-- **Focus summaries on WHAT the code does and WHY, not HOW.** Implementation details belong in the code vector, not the text vector.
-- **Measure embedding similarity directly.** For a known good query-chunk pair, check if the summary change increases or decreases cosine similarity.
-
-**Phase to address:** Prompt engineering phase.
+**What goes wrong:** Each repo might need different embedding models, chunking strategies, or ignore patterns. The config becomes a nested nightmare that's hard to validate and document.
+**Prevention:** Design config as: global defaults + per-repo overrides. Most repos inherit defaults; only specify per-repo what differs. Validate with Zod discriminated unions. Keep the common case (all repos same settings) as simple as adding a path to the array.
 
 ---
 
-### Pitfall 7: RRF Fusion Constant (k=60) Never Tuned
+### Pitfall 7: Stale Repo References
 
-**What goes wrong:**
-RRF uses the formula `1/(k + rank)`. The constant `k` (commonly 60) controls how much weight goes to top-ranked vs. lower-ranked results. The default k=60 is from web search literature and may not be optimal for code search where you have fewer candidates and want to weight the top result more heavily.
-
-**Prevention:**
-
-- **Sweep k values** (10, 30, 60, 100) in benchmark and measure MRR at each. Lower k = more weight to rank 1; higher k = more uniform weighting.
-- **This is a quick win** — no re-indexing, just a parameter change in the fusion logic.
-
-**Phase to address:** Score filtering phase — include in parameter sweep.
+**What goes wrong:** A configured repo path no longer exists (moved, deleted, renamed). The indexer crashes or silently skips it with no user feedback.
+**Prevention:** At startup, validate all configured paths exist and are git repos. Emit clear warnings for missing repos. Add `ia-framework status` showing per-repo health. Don't crash — degrade gracefully (index what's available, warn about what's missing).
 
 ---
 
-### Pitfall 8: Dashboard Tuning Views That Show Aggregates Instead of Distributions
+### Pitfall 8: Cross-Repo Search Relevance Dilution
 
-**What goes wrong:**
-You build dashboard views that show "MRR: 0.62" and "Mean Score: 0.41" but these single numbers hide the shape of the data. You can't see that 8 queries score perfectly and 5 queries completely fail, or that score distributions are bimodal.
-
-**Prevention:**
-
-- **Show per-query breakdown** — a table/heatmap of every query and its rank, not just the mean.
-- **Show score histograms** — distribution of similarity scores across results, not just mean.
-- **Show before/after diff** — when comparing configurations, highlight which queries improved and which regressed.
-- **Show the "worst 5 queries"** prominently — these are where MRR improvement lives.
-
-**Phase to address:** Dashboard tuning views phase.
+**What goes wrong:** Adding more repos increases the search corpus significantly. Queries that used to return precise results from one repo now return scattered results across repos, many irrelevant.
+**Prevention:** Support repo-scoped search filters (search within specific repo OR across all). Consider a `focusRepo` parameter on MCP tools. The existing relevance threshold and token budget cap (6000 tokens, 70/30 split) may need per-repo awareness.
 
 ---
 
-### Pitfall 9: Tuning LLM Prompts While Ignoring AST Chunking Quality
+### Pitfall 9: Maven Module Graph vs Git Repo Boundary Mismatch
 
-**What goes wrong:**
-All tuning effort goes into LLM chunking prompts because that's the new feature. Meanwhile, AST chunking (which is faster and covers all files) has its own quality issues — maybe it splits classes from their methods, or misses module-level constants. Since both collections are RRF-merged, poor AST chunks drag down overall MRR even if LLM chunks are perfect.
+**What goes wrong:** The existing `get_module_dependencies` MCP tool assumes Maven modules live in a single git repo. With multi-repo, a parent POM in repo A references modules in repo B — the POM parser can't resolve cross-repo module paths.
+**Prevention:** Extend Maven module resolution to accept a mapping of `artifactId → repo`. When a module isn't found in the current repo's tree, look up the artifact in other indexed repos' module registries.
 
-**Prevention:**
+---
 
-- **Benchmark each collection independently** before measuring the merged result. If AST MRR is 0.4 and LLM MRR is 0.7, fixing AST chunking might lift merged MRR more than further LLM prompt tuning.
-- **The dashboard should show per-collection metrics**, not just merged.
+### Pitfall 10: Existing MCP Tool Contracts Break
 
-**Phase to address:** Benchmark validation phase — add per-collection measurement.
+**What goes wrong:** Adding `repo` parameter to `search_codebase`, `get_file`, `get_dependencies` etc. changes the tool schema. OpenCode/LLM prompts that worked before now need updating. Worse: if repo param is required, all existing usage breaks.
+**Prevention:** Make `repo` parameter optional on all MCP tools. When omitted: if only one repo configured, use it (backward compatible); if multiple repos, search all (sensible default). Never make it required.
 
 ---
 
 ## Minor Pitfalls
 
-### Pitfall 10: Prompt Changes Without Version Control
+### Pitfall 11: Benchmark Corpus Assumes Single Repo
 
-**What goes wrong:**
-You iterate on the chunking prompt in code, forget what the previous version was, can't reproduce last week's MRR number.
-
-**Prevention:**
-
-- Store prompts as versioned files or constants with clear naming (e.g., `CHUNKING_PROMPT_V3`).
-- Log which prompt version was used in each benchmark run's metadata.
+**What goes wrong:** Existing benchmark queries and expected results reference files by path without repo prefix. Multi-repo makes these ambiguous.
+**Prevention:** Extend benchmark corpus format to include optional repo field in expected results. Existing single-repo benchmarks auto-infer repo from the single configured project. Don't break existing corpus files.
 
 ---
 
-### Pitfall 11: Ignoring Ollama Model Quantization Effects on Chunking Quality
+### Pitfall 12: Dashboard Doesn't Show Per-Repo Metrics
 
-**What goes wrong:**
-llama3.2 at Q4_K_M quantization produces different summaries than Q8_0. You tune prompts against one quantization level, someone runs with a different one, and quality differs.
-
-**Prevention:**
-
-- Pin the exact model tag (including quantization) in project config.
-- Log the model tag in benchmark metadata.
+**What goes wrong:** Indexing status, token usage, and quality metrics are aggregated. Developer can't tell which repo has poor retrieval quality or is consuming most tokens.
+**Prevention:** Store metrics with repo tag in SQLite. Dashboard shows aggregate + per-repo breakdown. Not MVP-blocking but important for debugging multi-repo issues.
 
 ---
 
-### Pitfall 12: Measuring Only MRR, Ignoring Result Diversity
+### Pitfall 13: Concurrent Indexing Race Conditions
 
-**What goes wrong:**
-Top-5 results are all chunks from the same file (high similarity to each other). MRR looks good because the correct file is ranked #1, but the developer gets no cross-file context.
-
-**Prevention:**
-
-- Add a diversity metric (e.g., unique files in top-5) alongside MRR.
-- Consider MMR (Maximal Marginal Relevance) reranking that penalizes redundancy.
+**What goes wrong:** Two repos indexing simultaneously write to shared state (SQLite metrics DB, Qdrant) and corrupt each other's progress tracking.
+**Prevention:** Per-repo indexing locks. SQLite in WAL mode handles concurrent reads. Point ID generation must be collision-free (include repo slug in ID hash input).
 
 ---
 
 ## Phase-Specific Warnings
 
-| Phase Topic            | Likely Pitfall                                                | Mitigation                                     |
-| ---------------------- | ------------------------------------------------------------- | ---------------------------------------------- |
-| Baseline establishment | Not freezing corpus and getting reproducible runs (Pitfall 1) | Temperature=0, 3x runs, freeze corpus          |
-| Prompt engineering     | Global prompt changes without per-query diagnosis (Pitfall 2) | Build failure analysis tooling first           |
-| Prompt engineering     | Overfitting to 30-query corpus (Pitfall 4)                    | Hold out validation set, diverse query types   |
-| Prompt engineering     | Forgetting to re-index after prompt changes (Pitfall 5)       | Version prompts, keep old collection alive     |
-| Score filtering        | Threshold that kills recall (Pitfall 3)                       | Relative thresholds, measure Hit@K impact      |
-| Score filtering        | RRF k constant untuned (Pitfall 7)                            | Parameter sweep, quick win                     |
-| Dashboard tuning views | Aggregate-only display (Pitfall 8)                            | Per-query breakdown, score histograms, worst-5 |
-| All phases             | Ignoring AST collection quality (Pitfall 9)                   | Per-collection benchmarks                      |
+| Phase Topic                 | Likely Pitfall                                  | Mitigation                                  |
+| --------------------------- | ----------------------------------------------- | ------------------------------------------- |
+| Config schema change        | Breaking existing single-repo users (Pitfall 1) | Auto-migration + dual-format support        |
+| Collection/payload design   | Path collision across repos (Pitfall 2)         | Repo-prefixed identifiers                   |
+| Unified indexing pipeline   | Re-index cascade on any change (Pitfall 4)      | Per-repo indexing state isolation           |
+| MCP tool updates            | Breaking existing tool contracts (Pitfall 10)   | Optional repo param, sensible defaults      |
+| Cross-repo dependency graph | False edges from path resolution (Pitfall 3)    | Separate graphs + explicit cross-repo edges |
+| Unified search              | Relevance dilution (Pitfall 8)                  | Repo-scoped filtering, focusRepo param      |
+| Benchmark updates           | Corpus assumes single repo (Pitfall 11)         | Extend format with optional repo field      |
+| Dashboard                   | No per-repo visibility (Pitfall 12)             | Repo-tagged metrics in SQLite               |
+
+## Recommended Phase Order (Based on Pitfall Dependencies)
+
+1. **Config migration** — Pitfall 1 must be solved first or everything breaks existing users
+2. **Per-repo indexing with repo-tagged payloads** — Pitfalls 2, 4 (foundation for everything else)
+3. **MCP tool updates with backward-compatible repo param** — Pitfall 10 (unblocks search)
+4. **Unified search with source attribution** — Pitfalls 5, 8
+5. **Cross-repo dependency graph** — Pitfall 3 (hardest, most likely to need a research spike)
+6. **Dashboard/benchmark updates** — Pitfalls 11, 12 (polish, not blocking)
 
 ## Sources
 
-- Existing system analysis: `.planning/PROJECT.md`, `.planning/research/MRR-IMPROVEMENT-RESEARCH.md`
-- RRF fusion: Cormack, Clarke & Buettcher (2009) — k=60 default, varies by domain
-- RAG filtering patterns: common engineering practice across Qdrant and vector search implementations
-- Benchmark methodology: standard IR evaluation (holdout sets, reproducibility requirements)
-- Confidence: HIGH for system-specific pitfalls (based on known architecture), MEDIUM for optimal parameter values (domain-dependent)
+- Existing system analysis: `.planning/PROJECT.md` (41 phases, known architecture)
+- Known components at risk: DependencyGraph, Maven module graph (`get_module_dependencies`), Qdrant payload schema, MCP tool contracts, project.json config loader, benchmark corpus format, chokidar file watcher, SQLite metrics store
+- Confidence: HIGH — all pitfalls derived from known system internals, not speculative

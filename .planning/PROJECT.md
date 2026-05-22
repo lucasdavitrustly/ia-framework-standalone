@@ -8,20 +8,22 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current State: Phase 37 complete (2026-05-15)
+## Current Milestone: v1.7 Multi-Repo Indexing
 
-**Latest:** Phase 37 — Query complexity classifier routes queries as keyword/semantic, integrated into MCP search handlers.
+**Goal:** Support indexing and searching multiple repositories as a unified codebase, with cross-repo dependency graph expansion and source-tagged results.
 
-**What shipped (v1.4, 2026-04-30):**
+**Target features:**
 
-- Relevance threshold with configurable score filtering and empty-result signaling
-- Hierarchy-aware chunking — class inheritance/decorator metadata in AST chunks
-- Query intent classification with MMR reranking and query-type-aware λ
-- Adaptive retrieval depth — zero-result fallback chain (semantic → hybrid → BM25 keyword)
-- Adaptive decorator chunking — decorators/annotations preserved with their annotated elements
-- Dynamic retrieval cost cap — 6000-token soft budget with 70/30 split for hierarchy expansion
+- Multiple project paths in config (array of repos, each independently detected)
+- Unified search across all indexed repos with results tagged by source repo
+- Cross-repo dependency graph expansion (e.g. interface in core → implementation in fi-connectors)
+- Per-repo indexing with shared Qdrant collections or repo-tagged payloads
 
-**Status:** 35 phases, 86 plans shipped across 5 milestones (v1.0–v1.4). 29,703 LOC TypeScript.
+## Current State: Phase 41 complete (2026-05-18)
+
+**Latest:** Phase 41 — Configurable hybrid retrieval tuning parameters in project.json.
+
+**Status:** 41 phases, 91 plans shipped across 6 milestones (v1.0–v1.6). ~29,703 LOC TypeScript.
 
 ## Previous Milestones
 
@@ -89,7 +91,15 @@ AI that actually understands the codebase — better context means better code o
 
 ### Active
 
-<!-- v1.5 scope — to be defined in next milestone planning -->
+<!-- v1.7 scope — Multi-Repo Indexing -->
+
+- [ ] Multiple project paths configurable in project.json (array of repos)
+- [ ] Per-repo language/framework auto-detection
+- [ ] Unified indexing pipeline processing all configured repos
+- [ ] Qdrant payloads tagged with source repo identifier
+- [ ] Unified search returning results from all repos, tagged by source
+- [ ] Cross-repo dependency graph expansion (imports across repo boundaries)
+- [ ] MCP tool results include repo origin metadata
 
 ### Out of Scope
 
@@ -188,4 +198,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-05-15 after Phase 37 completion_
+_Last updated: 2026-05-21 after milestone v1.7 start_

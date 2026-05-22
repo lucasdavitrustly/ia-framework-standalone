@@ -3,7 +3,8 @@ import {
   IndexingConfigSchema,
   LlmConfigSchema,
   RetrievalConfigSchema,
-  ClassificationRulesSchema,
+  RepoEntrySchema,
+  ProjectConfigSchema,
 } from './schema.js';
 
 describe('IndexingConfigSchema — embeddingConcurrency', () => {
@@ -206,6 +207,85 @@ describe('RetrievalConfigSchema — classificationRules', () => {
     expect(() => RetrievalConfigSchema.parse({ rrfK: 201 })).toThrow();
     expect(() => RetrievalConfigSchema.parse({ keywordPrefetchMultiplier: 0 })).toThrow();
     expect(() => RetrievalConfigSchema.parse({ keywordPrefetchMultiplier: 11 })).toThrow();
+  });
+});
+
+// ─── RepoEntrySchema ─────────────────────────────────────────────────────────
+
+describe('RepoEntrySchema', () => {
+  it('accepts minimal valid entry with only path', () => {
+    const result = RepoEntrySchema.parse({ path: '../my-repo' });
+    expect(result.path).toBe('../my-repo');
+  });
+
+  it('accepts full entry with all fields', () => {
+    const result = RepoEntrySchema.parse({
+      path: '../my-repo',
+      name: 'my-repo',
+      provides: ['@org/pkg'],
+      profile: { languages: ['typescript'], frameworks: [], packageManager: 'pnpm' },
+    });
+    expect(result.path).toBe('../my-repo');
+    expect(result.name).toBe('my-repo');
+    expect(result.provides).toEqual(['@org/pkg']);
+    expect(result.profile).toBeDefined();
+  });
+
+  it('rejects entry with empty path', () => {
+    expect(() => RepoEntrySchema.parse({ path: '' })).toThrow();
+  });
+
+  it('rejects entry with name containing uppercase letters', () => {
+    expect(() => RepoEntrySchema.parse({ path: '../repo', name: 'MyRepo' })).toThrow();
+  });
+
+  it('rejects entry with name containing spaces', () => {
+    expect(() => RepoEntrySchema.parse({ path: '../repo', name: 'my repo' })).toThrow();
+  });
+});
+
+// ─── ProjectConfigSchema — multi-repo ────────────────────────────────────────
+
+describe('ProjectConfigSchema — multi-repo format', () => {
+  const minimalEmbedding = { provider: 'openai' as const, model: 'text-embedding-3-small' };
+  const minimalVectorStore = { host: 'localhost', port: 6333, collectionName: 'test' };
+
+  it('accepts old format with targetProjectPath only', () => {
+    const result = ProjectConfigSchema.parse({
+      targetProjectPath: '/foo',
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.targetProjectPath).toBe('/foo');
+  });
+
+  it('accepts new format with repos[] only', () => {
+    const result = ProjectConfigSchema.parse({
+      repos: [{ path: '../a' }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.repos).toHaveLength(1);
+  });
+
+  it('rejects config with both targetProjectPath and repos', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        targetProjectPath: '/foo',
+        repos: [{ path: '../a' }],
+        embedding: minimalEmbedding,
+        vectorStore: minimalVectorStore,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects config with neither targetProjectPath nor repos', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        embedding: minimalEmbedding,
+        vectorStore: minimalVectorStore,
+      }),
+    ).toThrow();
   });
 });
 

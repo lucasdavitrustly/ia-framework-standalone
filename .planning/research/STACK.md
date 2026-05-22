@@ -1,115 +1,130 @@
-# Technology Stack — v1.2 Additions
+# Technology Stack — Multi-Repo Indexing (v1.7)
 
 **Project:** ia-framework
-**Milestone:** v1.2 — Chunking Tuning & Retrieval Quality
-**Researched:** 2026-04-22
-**Overall Confidence:** HIGH
+**Researched:** 2026-05-21
+**Mode:** Incremental — additions to existing validated stack
 
-> This document covers **only stack changes** for v1.2. The base stack plus v1.1 additions (Ollama SDK, dual-vector search, hybrid BM25+RRF, React dashboard with Recharts) are validated and unchanged.
+## Executive Summary
 
-## Verdict: No New Dependencies
+Multi-repo indexing requires **zero new runtime dependencies**. The feature is primarily a schema extension + logic change to existing systems. The current stack (Qdrant payloads, better-sqlite3 dependency graph, Zod config schemas, tree-sitter parsing) already supports everything needed — it just needs to be parameterized by repo.
 
-v1.2 is a **tuning milestone**, not a features milestone. Every capability needed is already in the stack:
+## New Stack Additions
 
-| v1.2 Feature                            | Existing Stack Coverage                                                                | New Deps? |
-| --------------------------------------- | -------------------------------------------------------------------------------------- | --------- |
-| Prompt engineering for chunk boundaries | Ollama SDK `chat()` with structured output — already integrated in v1.1                | **None**  |
-| Prompt engineering for prose summaries  | Same Ollama `chat()` pipeline — change prompts, not code                               | **None**  |
-| Score-based result filtering            | `SearchEngine.search()` already has `scoreThreshold` param, score merging, and sorting | **None**  |
-| Adaptive score thresholds               | Basic statistics (mean, stddev, percentiles) — trivial math, no library needed         | **None**  |
-| Dashboard tuning views                  | React 19 + Recharts 3.x — histograms, scatter plots, box plots all supported           | **None**  |
-| Benchmark-driven validation             | Vitest + existing benchmark system (Hit@K, MRR) — already built in v1.0                | **None**  |
+### None Required
 
-## What Changes (Code, Not Stack)
+| Category         | Assessment | Rationale                                                                                                        |
+| ---------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| Vector DB        | No change  | Qdrant payloads already support arbitrary metadata — add `repo` field to existing payload schema                 |
+| Dependency Graph | No change  | better-sqlite3 graph already stores edges with file paths — extend `resolveImport()` to check sibling repo paths |
+| Config           | No change  | Zod schema extension — add `repos: RepoConfig[]` array to `ProjectConfigSchema`                                  |
+| File discovery   | No change  | tinyglobby already handles absolute paths — run per-repo with different roots                                    |
+| File watching    | No change  | chokidar already supports multiple paths in a single watcher                                                     |
+| AST parsing      | No change  | tree-sitter is path-agnostic — just needs repo tag passed through pipeline                                       |
+| MCP server       | No change  | Tool results already return metadata objects — add `repo` field                                                  |
 
-### 1. LLM Chunking Prompt Engineering
+## Schema Changes (Not Libraries)
 
-**Tool:** `ollama` ^0.6.3 (already installed)
+### ProjectConfig Extension
 
-Changes are prompt strings and output schema validation, not new technology:
+```typescript
+// New Zod schema addition to packages/core/src/config/schema.ts
+const RepoConfigSchema = z.object({
+  /** Unique identifier for this repo (e.g. "core", "connectors") */
+  name: z.string(),
+  /** Absolute or relative path to repo root */
+  path: z.string(),
+  /** Override language detection (optional) */
+  language: z.enum(['typescript', 'java', 'python']).optional(),
+  /** Package names this repo provides (for cross-repo import resolution) */
+  provides: z.array(z.string()).optional(),
+});
 
-- System prompts for chunk boundary detection — iterate prompt text
-- System prompts for prose summary generation — iterate prompt text
-- Possibly add few-shot examples to prompts (larger context window usage, not new deps)
-- Zod schemas for structured output validation — already using `zod` ^4.3.6
+// Added to ProjectConfigSchema
+repos: z.array(RepoConfigSchema).optional(),
+```
 
-### 2. Score-Based Result Filtering
+### Qdrant Payload Extension
 
-**Tool:** Built-in `SearchEngine` in `packages/retrieval`
+```typescript
+// Existing payload gets one new field
+interface ChunkPayload {
+  // ... existing fields ...
+  repo: string; // NEW: source repo identifier from config
+}
+```
 
-The search engine already implements score-based filtering via `scoreThreshold`. Improvements are algorithmic:
+### Dependency Graph Extension
 
-- **Adaptive thresholds:** Compute score distribution (mean, stddev) per query result set, filter outliers. This is ~20 lines of math, not a library.
-- **Score gap detection:** Find natural breaks in sorted score arrays. Simple algorithm.
-- **Per-vector-type thresholds:** Different cutoffs for text vs code vs BM25 vectors before RRF merge. Configuration change.
+```typescript
+// The key logic change: resolveImport currently marks non-relative imports as "external"
+// New behavior: check if specifier matches a `provides` entry in another repo's config
+// If matched → resolve to that repo's source files
+// Storage: edges table gets optional `source_repo` and `target_repo` columns
+```
 
-**Why NOT add a re-ranking library (cross-encoder, Cohere Rerank, etc.):**
+## Cross-Repo Dependency Resolution Strategy
 
-- Project constraint: local-only via Ollama (cloud LLMs deferred to v3)
-- Cross-encoder re-ranking via Ollama would add ~200ms latency per query for marginal gains at this scale
-- Score-based filtering on existing embeddings is the right complexity level for pushing MRR from current to >0.7
-- If MRR plateaus after tuning, cross-encoder re-ranking becomes a v1.3 consideration
+**Current behavior:** `resolveImport()` in `dependency-graph.ts` line 25 marks anything not starting with `.` or `/` as `external: true` and stops.
 
-### 3. Dashboard Tuning Views
+**New behavior:**
 
-**Tools:** React 19, Recharts 3.x, Vite 6.x (all already installed)
+1. Build a **package-to-repo map** from config: `{ "@paywithmybank/core": "payment-gateway-core", "fi-connectors": "fi-connectors" }`
+2. When an import is non-relative, check if it matches a mapped package
+3. If matched, resolve to that repo's entry point or source directory
+4. Store the cross-repo edge in the graph with both repo identifiers
 
-Recharts components needed for tuning views (all available in current version):
+**For Java (Maven):** The existing `MavenDependencyGraph` already resolves `groupId:artifactId` → module path. Extend to resolve across repo boundaries using the same `provides` config.
 
-- `<BarChart>` — score distribution histograms
-- `<ScatterChart>` — score vs relevance scatter plots
-- `<LineChart>` — MRR trend over tuning iterations (already used in v1.0)
-- `<ComposedChart>` — overlay multiple metrics
-- `<ReferenceArea>` / `<ReferenceLine>` — threshold visualization on charts
+**For TypeScript:** Map package.json `name` fields to repo paths. Resolve `@scope/package` imports to the providing repo's `src/` or declared `exports`.
 
-No additional charting library needed.
+## What NOT to Add
 
-## Alternatives Considered
-
-| Category          | Decision               | Alternative                     | Why Not                                                                                |
-| ----------------- | ---------------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
-| Re-ranking        | Score-based filtering  | Cross-encoder via Ollama        | Adds latency, complexity. Try simpler approach first. Revisit in v1.3 if MRR plateaus. |
-| Re-ranking        | Score-based filtering  | Cohere Rerank API               | Cloud dependency violates local-only constraint.                                       |
-| Statistics        | Inline math (~20 LOC)  | `simple-statistics` npm package | Overkill — we need mean, stddev, and percentile. Three functions.                      |
-| Visualization     | Recharts (existing)    | D3.js directly                  | Already have Recharts. Adding D3 for custom charts adds complexity with no benefit.    |
-| Prompt management | Prompt strings in code | LangChain prompt templates      | Massive dependency for string interpolation. Template literals work fine.              |
+| Library                                             | Why Not                                                                                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| simple-git / isomorphic-git                         | Repos are local paths, not remote URLs. User manages git themselves.                                                                 |
+| workspaces tooling (nx, lerna)                      | We're not managing a monorepo — we're indexing multiple independent repos.                                                           |
+| GraphQL / API layer                                 | Overkill for config that's a JSON file read at startup.                                                                              |
+| Redis / message queue                               | No async coordination needed — indexing is sequential per repo, parallel within.                                                     |
+| Package resolution libs (resolve, enhanced-resolve) | Only need shallow mapping (package name → repo path), not full Node resolution algorithm. The `provides` config makes this explicit. |
 
 ## Integration Points
 
-### Prompt Engineering → Benchmark Pipeline
+### Indexing Pipeline (`packages/indexer/src/pipeline.ts`)
 
-```
-Change prompt → Re-index sample corpus → Run benchmark → Compare MRR
-```
+- Accept `repo: string` parameter
+- Pass through to chunk metadata
+- Run once per configured repo (parallelizable with existing p-queue)
 
-No new wiring needed — the v1.0 benchmark system already supports this loop. The key integration is making prompt variants configurable (stored in project config or as named presets) so benchmarks can compare them.
+### Search Engine (`packages/retrieval/`)
 
-### Score Filtering → Search Engine
+- Qdrant filter: optionally scope by `repo` field in payload
+- Default: search all repos (unified results)
+- Results include `repo` field for display
 
-The `SearchEngine.search()` and `SearchEngine.searchHybrid()` methods already return scored results sorted descending. Filtering improvements slot into the existing pipeline:
+### MCP Tools (`packages/mcp-server/`)
 
-```
-Embed query → Vector search → Score merge → [NEW: adaptive threshold] → Sort → Limit
-```
+- `search_codebase` and `search_codebase_hybrid`: add optional `repo` filter parameter
+- `get_file`: accept repo-qualified paths
+- `get_dependencies`: expand across repo boundaries using new cross-repo edges
 
-### Dashboard → Metrics DB
+### Dashboard (`packages/dashboard-api/`)
 
-Tuning views read from the same `better-sqlite3` metrics database. New tables/columns for:
+- Config watcher: read `repos` array
+- Status route: per-repo indexing stats
+- No new API dependencies
 
-- Per-query score distributions (stored during search)
-- Prompt variant labels (stored during indexing)
-- Before/after comparison data (stored during benchmarks)
+## Confidence Assessment
 
-## Installation
-
-```bash
-# No new packages to install for v1.2
-# All dependencies are already present from v1.0 + v1.1
-```
+| Decision                                  | Confidence | Rationale                                                                                                                                       |
+| ----------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| No new runtime deps                       | HIGH       | Examined all existing capabilities — Qdrant metadata, SQLite graph, Zod schemas, chokidar multi-path — all support multi-repo without additions |
+| `provides` config for package mapping     | HIGH       | Explicit > magical. User declares what each repo exports. Avoids brittle auto-detection of package.json across repos                            |
+| Payload tagging over separate collections | HIGH       | Qdrant filtering is fast (indexed payload fields). Separate collections would break unified search and cross-repo graph expansion               |
+| SQLite graph extension over separate DBs  | HIGH       | Cross-repo edges need to be in same graph for expansion queries. Single DB with repo columns is simpler                                         |
 
 ## Sources
 
-- Existing codebase: `packages/retrieval/src/search-engine.ts` — confirmed score filtering already implemented
-- Existing codebase: `packages/retrieval/src/types.ts` — `RetrievalQuery.scoreThreshold` already exists
-- Recharts docs: Histogram, scatter, composed charts all available in v3.x (verified via v1.0 research)
-- Ollama SDK: `chat()` with structured output verified in v1.1 research
+- Existing codebase: `packages/retrieval/src/dependency-graph.ts` — current import resolution logic
+- Existing codebase: `packages/core/src/config/schema.ts` — current ProjectConfigSchema
+- Qdrant filtering docs: payload indexing supports string match filters (validated in v1.0)
+- better-sqlite3: ALTER TABLE for column addition is supported (validated in v1.0)

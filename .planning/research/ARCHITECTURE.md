@@ -1,290 +1,246 @@
-# Architecture Patterns
+# Architecture: Multi-Repo Indexing Integration
 
-**Domain:** Chunking Tuning & Retrieval Quality (v1.2)
-**Researched:** 2026-04-22
-**Focus:** Integration of prompt engineering, score-based filtering, and dashboard tuning views into existing architecture
+**Domain:** Multi-repository RAG indexing for existing single-project framework
+**Researched:** 2026-05-21
+**Confidence:** HIGH (based on existing codebase analysis)
 
 ## Recommended Architecture
 
-Three workstreams that touch different layers but share the benchmark feedback loop:
+**Strategy: Repo-tagged payloads in shared collections, not separate collections per repo.**
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Dashboard (apps/dashboard)                    │
-│  NEW: Prompt editor view, chunk quality inspector, filter tuner │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ REST API
-┌──────────────────────────▼──────────────────────────────────────┐
-│              Dashboard API (packages/dashboard-api)              │
-│  NEW: /api/tuning routes (prompt CRUD, chunk analysis, filter   │
-│       config), /api/benchmarks extensions (before/after diffs)  │
-└──────┬───────────────────┬──────────────────────────────────────┘
-       │                   │
-┌──────▼───────┐   ┌──────▼──────────────────────────────────────┐
-│  Benchmark   │   │         Retrieval (packages/retrieval)       │
-│  (benchmark) │   │  MODIFY: SearchEngine.search() — add        │
-│  unchanged   │   │  adaptive score filtering (score gap, top-N  │
-│  runner API  │   │  relative threshold). MultiCollection — pass │
-│              │   │  filter config through.                      │
-└──────────────┘   └──────────────────────────────────────────────┘
-       │
-┌──────▼──────────────────────────────────────────────────────────┐
-│              Indexer (packages/indexer)                          │
-│  MODIFY: prompt.ts — make prompt template a configurable entity │
-│  NEW: PromptRegistry — named prompt versions, A/B comparison    │
-│  MODIFY: llm-chunker.ts — accept prompt template parameter      │
-└─────────────────────────────────────────────────────────────────┘
-```
+Each Qdrant point gains a `repoId` payload field. The existing collection structure (AST, LLM) remains unchanged. Searches query across all repos by default, with optional repo filtering. The DependencyGraph already supports a `collection` parameter — repurpose this as the repo discriminator for cross-repo edge resolution.
 
 ### Component Boundaries
 
-| Component                                        | Responsibility                   | Change Type                                          | Communicates With                                  |
-| ------------------------------------------------ | -------------------------------- | ---------------------------------------------------- | -------------------------------------------------- |
-| `packages/indexer/src/strategies/prompt.ts`      | Prompt template for LLM chunking | **MODIFY** — extract to configurable template system | llm-chunker, dashboard-api                         |
-| `packages/indexer/src/strategies/llm-chunker.ts` | LLM chunking orchestration       | **MODIFY** — accept prompt template param            | prompt.ts, ollama-client                           |
-| `packages/retrieval/src/search-engine.ts`        | Dense+hybrid search              | **MODIFY** — add adaptive score filtering            | vector-store, mcp-server                           |
-| `packages/retrieval/src/types.ts`                | Retrieval types                  | **MODIFY** — add ScoreFilterConfig to query/config   | all consumers                                      |
-| `packages/dashboard-api/src/app.ts`              | API routing                      | **MODIFY** — mount tuning router                     | new tuning routes                                  |
-| `packages/dashboard-api/src/routes/tuning.ts`    | Tuning API endpoints             | **NEW**                                              | prompt registry, benchmark store, retrieval config |
-| `packages/core/src/config/schema.ts`             | Project config validation        | **MODIFY** — add retrieval.scoreFilter config        | config consumers                                   |
-| `apps/dashboard` (React)                         | Dashboard UI                     | **NEW views**                                        | dashboard-api                                      |
+| Component                            | Change Type | Responsibility                                       |
+| ------------------------------------ | ----------- | ---------------------------------------------------- |
+| `packages/core` config schema        | **MODIFY**  | Accept array of repo definitions                     |
+| `packages/core` types                | **MODIFY**  | Add `repoId` to ChunkMetadata, RetrievalResult       |
+| `packages/retrieval` SearchEngine    | **MODIFY**  | Pass repo filter, tag results with repo origin       |
+| `packages/retrieval` DependencyGraph | **MODIFY**  | Cross-repo neighbor expansion using collection field |
+| `packages/mcp-server`                | **MODIFY**  | Expose repo filter param, include repo in output     |
+| `packages/core` RepoRegistry         | **CREATE**  | Manages multi-repo config, per-repo detection        |
+| Indexing pipeline                    | **MODIFY**  | Iterate repos, tag chunks with repoId                |
 
-### Data Flow
+## Modification Details
 
-#### 1. Prompt Engineering Flow
+### 1. Config Schema (`packages/core/src/config/schema.ts`)
+
+Current: `targetProjectPath: z.string()` (single path)
+
+**Change to:**
+
+```typescript
+export const RepoConfigSchema = z.object({
+  id: z.string().min(1), // e.g. "core", "fi-connectors"
+  path: z.string().min(1), // absolute path to repo root
+  profile: ProjectProfileSchema.optional(), // per-repo detection
+  indexing: IndexingConfigSchema.optional(), // per-repo overrides
+});
+
+export const ProjectConfigSchema = z.object({
+  // Keep targetProjectPath for backward compat (single-repo mode)
+  targetProjectPath: z.string().min(1).optional(),
+  // New: array of repos
+  repos: z.array(RepoConfigSchema).optional(),
+  // Shared config
+  embedding: EmbeddingProviderConfigSchema,
+  vectorStore: VectorStoreConfigSchema,
+  indexing: IndexingConfigSchema.optional(), // global defaults
+  profile: ProjectProfileSchema.optional(),
+  retrieval: RetrievalConfigSchema.optional(),
+});
+```
+
+**Backward compatibility:** If `targetProjectPath` is set and `repos` is absent, treat as single-repo mode with auto-generated `repoId` from directory name.
+
+### 2. ChunkMetadata & RetrievalResult (`packages/core/src/types/index.ts`, `packages/retrieval/src/types.ts`)
+
+Add to both:
+
+```typescript
+/** Source repository identifier (matches repo.id from config) */
+repoId?: string | undefined;
+```
+
+### 3. Qdrant Payload
+
+Add `repoId: string` to every upserted point's payload. Existing points without `repoId` are treated as the "default" repo (backward compat). **Create a payload index** on `repoId` for efficient filtering.
+
+### 4. SearchEngine (`packages/retrieval/src/search-engine.ts`)
+
+- Add optional `repoId?: string | string[]` to `RetrievalQuery` for filtering
+- When `repoId` is provided, inject Qdrant filter: `{ key: 'repoId', match: { value: repoId } }`
+- Tag all `RetrievalResult` objects with their `repoId` from payload
+
+### 5. DependencyGraph (`packages/retrieval/src/dependency-graph.ts`)
+
+Already has `collection` parameter on all methods. **Reuse `collection` as `repoId`:**
+
+- `upsertEdges(source, imports, projectRoot, collection=repoId)`
+- `getNeighborFiles(startFiles, hops, collection=repoId)`
+
+**Cross-repo expansion:** New method `getNeighborFilesAcrossRepos(startFiles, hops)` that queries ALL collections (no collection filter). This enables finding `InterfaceX` defined in `core` when starting from an implementation in `fi-connectors`.
+
+```typescript
+getNeighborFilesAcrossRepos(startFiles: string[], hops: 1 | 2): string[] {
+  // Same BFS but WITHOUT collection filter in SQL WHERE clause
+  // Enables cross-repo import resolution
+}
+```
+
+### 6. MCP Server (`packages/mcp-server/src/server.ts`)
+
+- Add optional `repo` parameter to `search_codebase` and `search_codebase_hybrid` tools
+- Format results with `[repo:core]` prefix in output
+- `get_file` tool: accept paths with repo prefix (`core:src/Foo.java`)
+- `get_dependencies` tool: show cross-repo edges
+
+### 7. New: RepoRegistry (`packages/core/src/config/repo-registry.ts`)
+
+```typescript
+export class RepoRegistry {
+  constructor(private config: ProjectConfig) {}
+
+  /** Get all configured repos (normalizes single-repo mode) */
+  getRepos(): RepoDefinition[];
+
+  /** Resolve a repoId to its absolute path */
+  getRepoPath(repoId: string): string;
+
+  /** Run profile detection for all repos */
+  async detectProfiles(): Promise<Map<string, ProjectProfile>>;
+}
+```
+
+## Data Flow
+
+### Indexing (modified)
 
 ```
-Developer edits prompt in dashboard
-  → POST /api/tuning/prompts {name, template}
-  → Saved to prompts.json in .ia-framework/
-  → Re-index with new prompt (CLI or dashboard trigger)
-  → Run benchmark → compare MRR before/after
+Config loaded → RepoRegistry.getRepos()
+  → For each repo:
+    → Scan files (repo.path + repo.indexing merged with global defaults)
+    → Chunk (AST/LLM strategy)
+    → Tag chunks: chunk.repoId = repo.id
+    → Embed
+    → Upsert to Qdrant (shared collection, repoId in payload)
+    → DependencyGraph.upsertEdges(..., collection=repo.id)
 ```
 
-#### 2. Score Filtering Flow
+### Search (modified)
 
 ```
-Search query arrives (MCP or dashboard)
-  → SearchEngine.search() runs as today
-  → NEW: ScoreFilter applied post-merge, pre-return
-    → Strategies: absolute threshold, relative (% of top score), score gap detection
-  → Filtered results returned
-  → Dashboard shows filter effectiveness (how many removed, score distribution)
+Query arrives (optional repo filter)
+  → Embed query
+  → Qdrant search (with optional repoId filter in must clause)
+  → Results tagged with repoId from payload
+  → DependencyGraph expansion:
+    - Default: getNeighborFilesAcrossRepos (cross-repo)
+    - If repo filter: getNeighborFiles(collection=repoId)
+  → Format with repo prefix in MCP output
 ```
 
-#### 3. Dashboard Tuning View Flow
+### Cross-Repo Dependency Resolution
 
 ```
-Dashboard loads tuning page
-  → GET /api/tuning/prompts → list prompt versions
-  → GET /api/tuning/chunks?strategy=llm → chunk quality stats
-  → GET /api/tuning/filter-config → current filter settings
-  → GET /api/benchmarks?compare=true → before/after benchmark pairs
+File in repo "fi-connectors" imports com.example.core.PaymentGateway
+  → Java import resolver checks fileManifest across ALL repos
+  → Finds match in repo "core" at /path/to/core/src/.../PaymentGateway.java
+  → Edge stored: source_file=fi-connectors/Impl.java, target_file=core/PaymentGateway.java
+  → collection="fi-connectors" (edge belongs to importer's repo)
+  → Cross-repo expansion finds it regardless of collection filter
 ```
 
 ## Patterns to Follow
 
-### Pattern 1: Configurable Prompt Templates (PromptRegistry)
+### Pattern 1: Config Normalization Layer
 
-**What:** Extract the hardcoded prompt in `prompt.ts` into a named, versioned template system. The current `buildPrompt()` stays as the default; new templates can be saved alongside it.
+**What:** RepoRegistry normalizes both single-repo and multi-repo configs into a uniform `RepoDefinition[]`
+**When:** Any code that needs to iterate repos
+**Why:** Prevents if/else branching throughout codebase
 
-**When:** LLM chunking prompt engineering — any change to the prompt.
+### Pattern 2: Payload-Based Multi-Tenancy
 
-**Why not just edit prompt.ts directly?** Because we need before/after comparison. The developer must be able to re-index with prompt A, benchmark, then re-index with prompt B, benchmark, and compare. A registry of named templates makes this trivial.
+**What:** Single Qdrant collection with `repoId` field + payload index
+**When:** Multi-repo data storage
+**Why:** Simpler than N collections. Qdrant payload indexes are O(1) for equality filters.
 
-**Implementation:**
+### Pattern 3: Merge-With-Override Config
 
-```typescript
-// packages/indexer/src/strategies/prompt-registry.ts (NEW)
-export interface PromptTemplate {
-  name: string; // e.g. "default", "v2-concise", "v3-boundary-focus"
-  template: string; // The prompt text with {{sourceCode}} and {{fileName}} placeholders
-  createdAt: string;
-  description?: string;
-}
-
-export class PromptRegistry {
-  constructor(private readonly configDir: string) {}
-
-  list(): PromptTemplate[] {
-    /* read from .ia-framework/prompts.json */
-  }
-  get(name: string): PromptTemplate | null {
-    /* ... */
-  }
-  save(template: PromptTemplate): void {
-    /* ... */
-  }
-
-  /** Build a prompt from a named template */
-  buildPrompt(templateName: string, sourceCode: string, fileName: string): string {
-    const tmpl = this.get(templateName);
-    if (!tmpl) return buildPromptDefault(sourceCode, fileName); // fallback
-    return renderTemplate(tmpl.template, sourceCode, fileName);
-  }
-}
-```
-
-**Integration point:** `LlmChunkingStrategy.chunk()` accepts an optional `promptTemplate` name. The pipeline passes it from config. `buildPrompt()` in `prompt.ts` becomes the "default" template — zero breaking changes.
-
-### Pattern 2: Adaptive Score Filtering
-
-**What:** Post-search filter that removes low-quality results using strategies beyond a fixed threshold.
-
-**When:** Every search query, controlled by config.
-
-**Implementation — add to `packages/retrieval/src/score-filter.ts` (NEW):**
-
-```typescript
-export interface ScoreFilterConfig {
-  /** Absolute minimum score (existing behavior, default 0.5) */
-  absoluteThreshold?: number;
-  /** Keep results within this fraction of top score (e.g. 0.6 = keep if score >= 60% of best) */
-  relativeThreshold?: number;
-  /** Drop results after a score gap > this fraction between consecutive results */
-  gapThreshold?: number;
-}
-
-export function filterByScore(
-  results: RetrievalResult[],
-  config: ScoreFilterConfig,
-): RetrievalResult[] {
-  if (results.length === 0) return results;
-
-  const topScore = results[0].score;
-  let filtered = results;
-
-  // Relative threshold: keep if score >= relativeThreshold * topScore
-  if (config.relativeThreshold !== undefined) {
-    const minScore = topScore * config.relativeThreshold;
-    filtered = filtered.filter((r) => r.score >= minScore);
-  }
-
-  // Gap detection: find largest score drop, truncate there
-  if (config.gapThreshold !== undefined) {
-    for (let i = 1; i < filtered.length; i++) {
-      const gap = filtered[i - 1].score - filtered[i].score;
-      if (gap / topScore > config.gapThreshold) {
-        filtered = filtered.slice(0, i);
-        break;
-      }
-    }
-  }
-
-  return filtered;
-}
-```
-
-**Integration point:** Called inside `SearchEngine.search()` after the merge+sort, before `slice(0, limit)`. Config comes from `SearchEngineConfig` (new optional field) or per-query override. The `MultiCollectionSearchEngine` passes config through — it doesn't filter itself (individual engines do, or it applies after RRF merge).
-
-**Key decision:** Apply filtering **after RRF merge** in `MultiCollectionSearchEngine`, not inside individual engines. Reason: RRF scores are on a different scale than cosine similarity — filtering pre-merge on cosine then post-merge on RRF would be inconsistent. Apply once, post-merge, using the final RRF scores.
-
-### Pattern 3: Dashboard Tuning Router
-
-**What:** New Hono router mounted at `/api/tuning` with endpoints for prompt management, chunk analysis, and filter configuration.
-
-**When:** Dashboard tuning views need data.
-
-```typescript
-// packages/dashboard-api/src/routes/tuning.ts (NEW)
-export function tuningRouter(deps: TuningDeps): Hono {
-  const app = new Hono();
-
-  // Prompt management
-  app.get('/prompts', ...);           // List all prompt templates
-  app.post('/prompts', ...);          // Save a new prompt template
-  app.get('/prompts/:name', ...);     // Get specific template
-
-  // Chunk quality analysis
-  app.get('/chunk-stats', ...);       // Avg chunk size, summary length, coverage gaps
-  app.get('/chunk-samples', ...);     // Sample chunks for manual inspection
-
-  // Score filter config
-  app.get('/filter-config', ...);     // Current filter settings
-  app.put('/filter-config', ...);     // Update filter settings
-
-  // Before/after comparison
-  app.get('/comparisons', ...);       // Benchmark pairs tagged with config changes
-
-  return app;
-}
-```
-
-**Integration:** Mounted in `app.ts` alongside existing routers. Depends on `PromptRegistry`, `BenchmarkStoreDep`, and a new `ChunkAnalyzer` utility.
+**What:** Per-repo `indexing` config merges with global `indexing` defaults
+**When:** Repo-specific include/exclude patterns
+**Why:** DRY — don't repeat embedding config per repo
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Editing prompt.ts In-Place Without Versioning
+### Anti-Pattern 1: Separate Qdrant Collections Per Repo
 
-**What:** Directly modifying the hardcoded prompt string and re-indexing.
-**Why bad:** No before/after comparison. Can't roll back. Can't A/B test. Violates the benchmark-driven validation requirement.
-**Instead:** Use PromptRegistry with named templates. Keep the current prompt as "default".
+**What:** Creating `code-chunks-core`, `code-chunks-fi-connectors`, etc.
+**Why bad:** Breaks unified search. RRF fusion across N repo collections creates N² search paths. Payload filtering is simpler and Qdrant handles it efficiently with indexed payloads.
+**Instead:** Shared collections with `repoId` payload field + index.
 
-### Anti-Pattern 2: Filtering Inside Individual Engines Before RRF
+### Anti-Pattern 2: Global File Paths Without Repo Context
 
-**What:** Applying score filtering in each `SearchEngine.search()` before results reach `MultiCollectionSearchEngine.rrfMerge()`.
-**Why bad:** Cosine similarity scores from different collections aren't comparable. Aggressive filtering in one engine could starve RRF of candidates, degrading merged quality.
-**Instead:** Apply score filtering **once** after RRF merge in `MultiCollectionSearchEngine`, where all results are on the same RRF score scale. Individual engines use only the existing absolute `scoreThreshold` as a floor.
+**What:** Storing just `/abs/path/to/file.java` without knowing which repo it belongs to.
+**Why bad:** Two repos may have `src/utils/Helper.java`. Without repoId disambiguation, DependencyGraph edges and file lookups become ambiguous.
+**Instead:** Always store absolute paths AND repoId. Use repoId for display; absolute paths for graph resolution.
 
-### Anti-Pattern 3: Storing Prompt Templates in the Database
+### Anti-Pattern 3: Breaking Single-Repo Mode
 
-**What:** Using better-sqlite3 or Qdrant to store prompt templates.
-**Why bad:** Prompts are config, not data. They should be version-controllable, human-editable, and co-located with project config.
-**Instead:** Store as JSON file in `.ia-framework/prompts.json`. Simple, diffable, no migration needed.
+**What:** Removing `targetProjectPath` and requiring all users to migrate to `repos[]`.
+**Why bad:** All existing installations have single `targetProjectPath` configs. Migration burden.
+**Instead:** Keep `targetProjectPath` working. Normalize internally to `repos: [{ id: dirName, path: targetProjectPath }]`.
 
-### Anti-Pattern 4: Complex Prompt Templating Engine
+### Anti-Pattern 4: Eager Cross-Repo Expansion
 
-**What:** Building a full Handlebars/Mustache/Jinja-like template system.
-**Why bad:** Over-engineering. Prompts need two variables: `sourceCode` and `fileName`. String replacement is sufficient.
-**Instead:** Simple `{{sourceCode}}` and `{{fileName}}` placeholder replacement. One function, no dependencies.
+**What:** Always expanding across all repos on every query.
+**Why bad:** User asking about repo A doesn't want noise from repo B unless there's an actual import edge.
+**Instead:** Cross-repo expansion only follows actual dependency graph edges, not blanket searches.
 
-## New Components Summary
+## Build Order (dependency-aware)
 
-| Component            | Package                  | Type            | Purpose                                                               |
-| -------------------- | ------------------------ | --------------- | --------------------------------------------------------------------- |
-| `prompt-registry.ts` | indexer                  | NEW file        | Named prompt template CRUD, storage in .ia-framework/prompts.json     |
-| `score-filter.ts`    | retrieval                | NEW file        | Adaptive score filtering (relative threshold, gap detection)          |
-| `routes/tuning.ts`   | dashboard-api            | NEW file        | REST API for prompt management, chunk analysis, filter config         |
-| `ChunkAnalyzer`      | indexer or dashboard-api | NEW utility     | Compute chunk quality stats (avg size, summary quality, coverage)     |
-| Tuning views         | apps/dashboard           | NEW React pages | Prompt editor, chunk inspector, filter tuner, before/after comparison |
+| Phase | What                                                                            | Depends On                       | Risk                                 |
+| ----- | ------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------ |
+| 1     | Config schema + types (add `RepoConfigSchema`, `repoId` fields)                 | Nothing                          | Low — additive, no behavior change   |
+| 2     | RepoRegistry class (normalize single/multi)                                     | Phase 1                          | Low — pure logic                     |
+| 3     | Indexing pipeline (iterate repos, tag chunks with repoId, create payload index) | Phases 1-2                       | Medium — data migration              |
+| 4     | SearchEngine (accept repo filter, tag results)                                  | Phase 3 (needs indexed data)     | Low — additive filter                |
+| 5     | DependencyGraph cross-repo expansion                                            | Phase 3 (needs multi-repo edges) | Medium — cross-repo resolution logic |
+| 6     | MCP Server (repo param, formatted output)                                       | Phases 4-5                       | Low — API surface change             |
+| 7     | Dashboard repo breakdown                                                        | Phase 3                          | Low — display only                   |
 
-## Modified Components Summary
+**Rationale:** Each step depends only on those above. Steps 1-2 are pure config/types with no behavior change. Step 3 changes data at rest. Steps 4-6 change data at query time.
 
-| Component                           | Package       | Change                                                                                     |
-| ----------------------------------- | ------------- | ------------------------------------------------------------------------------------------ |
-| `prompt.ts`                         | indexer       | Export default template as named constant; `buildPrompt()` becomes wrapper around registry |
-| `llm-chunker.ts`                    | indexer       | Accept optional `promptTemplate` name parameter                                            |
-| `llm-strategy.ts`                   | indexer       | Pass prompt template from config to chunker                                                |
-| `types.ts` (ChunkingConfig)         | indexer       | Add optional `promptTemplate` field                                                        |
-| `search-engine.ts`                  | retrieval     | Call `filterByScore()` after merge, accept `ScoreFilterConfig`                             |
-| `multi-collection-search-engine.ts` | retrieval     | Apply score filter after RRF merge                                                         |
-| `types.ts` (SearchEngineConfig)     | retrieval     | Add optional `scoreFilter` field                                                           |
-| `types.ts` (RetrievalQuery)         | retrieval     | Add optional per-query filter override                                                     |
-| `schema.ts`                         | core          | Add `retrieval.scoreFilter` config section                                                 |
-| `app.ts`                            | dashboard-api | Mount tuning router                                                                        |
+## Scalability Considerations
 
-## Suggested Build Order
+| Concern                | 2 repos                            | 5 repos                          | 10+ repos                           |
+| ---------------------- | ---------------------------------- | -------------------------------- | ----------------------------------- |
+| Index time             | 2x (parallel possible via p-queue) | Parallel indexing essential      | Consider incremental-only           |
+| Qdrant collection size | Fine                               | Fine (payload indexes handle it) | May need sharding strategy          |
+| DependencyGraph SQLite | Fine                               | Fine                             | Consider repo-partitioned tables    |
+| Config complexity      | Minimal                            | Per-repo override UX needed      | Config inheritance/template pattern |
+| Cross-repo edges       | Manageable                         | File manifest grows              | Cache resolved manifests            |
 
-Based on dependency analysis — each step is testable independently:
+## Key Integration Points Summary
 
-1. **PromptRegistry** (indexer) — No deps on other new code. Pure file I/O + template rendering. Enables prompt versioning immediately.
-
-2. **Prompt integration** (indexer) — Wire PromptRegistry into LlmChunkingStrategy. Modify `buildPrompt` to delegate to registry. Existing tests validate no regression.
-
-3. **ScoreFilter** (retrieval) — Pure function, no deps on other new code. Unit testable with mock results. Add to SearchEngine and MultiCollectionSearchEngine.
-
-4. **Config schema updates** (core) — Add `scoreFilter` and `promptTemplate` to project config schema. Small, isolated change.
-
-5. **Tuning API routes** (dashboard-api) — Depends on PromptRegistry and ScoreFilter config types. CRUD endpoints + chunk analysis.
-
-6. **Dashboard tuning views** (apps/dashboard) — Depends on tuning API. Prompt editor, chunk inspector, filter tuner, benchmark comparison.
-
-7. **Benchmark-driven validation** — Wire everything together: change prompt → re-index → benchmark → compare. This is integration testing of the full loop.
-
-**Rationale:** Backend-first (steps 1-4) enables CLI-driven tuning immediately. Dashboard views (5-6) add visibility. Integration (7) validates the full workflow. Each step produces benchmark-measurable improvements.
+| Existing Code                         | Integration Point                                          | Change Scope |
+| ------------------------------------- | ---------------------------------------------------------- | ------------ |
+| `ProjectConfigSchema`                 | Add `repos` array, make `targetProjectPath` optional       | Small        |
+| `ChunkMetadata.id`                    | Include repoId in ID generation to prevent collisions      | Small        |
+| `IndexingPipeline`                    | Loop over repos from RepoRegistry                          | Medium       |
+| `VectorStore.upsert`                  | Include `repoId` in payload                                | Small        |
+| `SearchEngine.search`                 | Inject repo filter into Qdrant query                       | Small        |
+| `DependencyGraph.upsertEdgesWithJava` | Pass fileManifest from ALL repos for cross-repo resolution | Medium       |
+| `DependencyGraph.getNeighborFiles`    | New cross-repo variant                                     | Medium       |
+| MCP tool schemas (zod)                | Add optional `repo` string param                           | Small        |
+| Result formatting                     | Prepend `[repo]` tag                                       | Small        |
+| `bin.ts` (MCP server entry)           | Pass all repo paths for graph building                     | Small        |
 
 ## Sources
 
-- Existing codebase analysis (HIGH confidence — direct code inspection)
-- RRF paper conventions for score-scale awareness (HIGH confidence — established IR practice)
-- Qdrant filtering docs via Context7 (HIGH confidence — verified in v1.0/v1.1)
+- Existing codebase: `packages/core/src/config/schema.ts` — config structure analysis
+- Existing codebase: `packages/retrieval/src/dependency-graph.ts` — collection param already exists (line 131, 211)
+- Existing codebase: `packages/retrieval/src/types.ts` — RetrievalResult/Query shape
+- Existing codebase: `packages/mcp-server/src/server.ts` — tool registration pattern
+- Qdrant documentation: payload indexing supports efficient filtering on string fields (HIGH confidence)

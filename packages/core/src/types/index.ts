@@ -181,11 +181,27 @@ export interface RetrievalConfig {
 }
 
 /**
+ * A single repository entry in the multi-repo configuration.
+ */
+export interface RepoEntry {
+  /** Path to the repository (resolved to absolute at runtime) */
+  path: string;
+  /** Optional logical name (derived from basename if not specified) */
+  name?: string | undefined;
+  /** Package names this repo provides (for cross-repo symbol resolution) */
+  provides?: string[] | undefined;
+  /** Optional per-repo profile override */
+  profile?: ProjectProfile | undefined;
+}
+
+/**
  * Top-level project configuration loaded from .ia-framework/project.json
  */
 export interface ProjectConfig {
-  /** Absolute path to the target project to index */
-  targetProjectPath: string;
+  /** Absolute path to the target project to index (legacy single-repo format) */
+  targetProjectPath?: string | undefined;
+  /** Multi-repo format: array of repo entries */
+  repos?: RepoEntry[] | undefined;
   /** Embedding provider configuration */
   embedding: EmbeddingProviderConfig;
   /** Vector store (Qdrant) configuration */
