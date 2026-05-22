@@ -120,7 +120,11 @@ export async function searchCodebaseHybridHandler(
 
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: input.limit ?? 10 },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { enableFallback: false },
       );
       keywordResults = fallbackResult.results;
@@ -128,11 +132,13 @@ export async function searchCodebaseHybridHandler(
       keywordResults = await engine.search({
         text: input.query,
         limit: input.limit ?? 10,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     } else {
       keywordResults = await engine.searchHybrid({
         text: input.query,
         limit: input.limit ?? 10,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     }
 
@@ -218,7 +224,12 @@ export async function searchCodebaseHybridHandler(
     // Use searchWithExpansion if hops > 0 and available, otherwise fall back to searchHybrid
     if (hops > 0 && engine.searchWithExpansion) {
       results = await engine.searchWithExpansion(
-        { text: input.query, limit: input.limit ?? 10, scoreThreshold: input.score_threshold },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          scoreThreshold: input.score_threshold,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { hops },
       );
     } else {
@@ -237,6 +248,7 @@ export async function searchCodebaseHybridHandler(
     results = await engine.search({
       text: input.query,
       limit: input.limit ?? 10,
+      ...(repoFilter ? { filter: repoFilter } : {}),
     });
     fallbackNote =
       `Note: hybrid retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
@@ -300,7 +312,11 @@ export async function searchCodebaseHybridHandler(
       'Conclusion: the indexed hybrid search did not return strong evidence for this query.';
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: input.limit ?? 10 },
+        {
+          text: input.query,
+          limit: input.limit ?? 10,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { enableFallback: true, maxSuggestions: 3 },
       );
 

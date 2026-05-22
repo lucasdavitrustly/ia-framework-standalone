@@ -551,7 +551,12 @@ export async function searchCodebaseHandler(
     let aggResults: RetrievalResult[];
     try {
       aggResults = await engine.searchWithExpansion(
-        { text: input.query, limit: aggregationLimit, scoreThreshold: aggregationThreshold },
+        {
+          text: input.query,
+          limit: aggregationLimit,
+          scoreThreshold: aggregationThreshold,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        },
         { hops: 0 }, // No expansion — breadth over depth
       );
     } catch {
@@ -559,6 +564,7 @@ export async function searchCodebaseHandler(
         text: input.query,
         limit: aggregationLimit,
         scoreThreshold: aggregationThreshold,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       });
     }
 
@@ -699,6 +705,7 @@ export async function searchCodebaseHandler(
       text: input.query,
       limit: input.limit ?? 10,
       scoreThreshold: input.score_threshold,
+      ...(repoFilter ? { filter: repoFilter } : {}),
     });
     fallbackNote =
       `Note: dependency expansion was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
