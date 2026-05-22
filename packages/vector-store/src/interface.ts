@@ -30,6 +30,8 @@ export interface ChunkPayload {
   /** Heuristic architectural role hints */
   layerHints?: string[] | undefined;
   indexedAt: string;
+  /** Source repository identifier (kebab-case name from RepoRegistry) */
+  repoId?: string | undefined;
   /** Heuristic quality score for chunk summary (0-100). Present only for LLM-chunked points. */
   qualityScore?: number | undefined;
   /** Maven module coordinates, populated for files inside a Maven project */

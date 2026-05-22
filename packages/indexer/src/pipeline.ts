@@ -59,6 +59,8 @@ export interface IndexingConfig {
   chunkingStrategy?: ChunkingStrategy | undefined;
   /** Optional Maven module graph — if provided, chunks are enriched with maven_module metadata */
   mavenModuleGraph?: ModuleGraph | undefined;
+  /** Source repo identifier — added to every chunk payload for per-repo filtering */
+  repoId?: string | undefined;
   /** Optional dependency graph for building file-level import adjacency */
   dependencyGraph?:
     | {
