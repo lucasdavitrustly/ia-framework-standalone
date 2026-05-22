@@ -62,7 +62,7 @@ See archived roadmaps in `.planning/milestones/`:
 - [x] **Phase 42: Config & Repo Registry** - Multi-repo config schema with backward-compatible migration and RepoRegistry normalization (completed 2026-05-21)
 - [x] **Phase 43: Per-Repo Indexing** - Repo-tagged Qdrant payloads with independent per-repo indexing (completed 2026-05-22)
 - [x] **Phase 44: Unified Search & MCP** - Cross-repo search with source attribution in all MCP tools (2 plans) (completed 2026-05-22)
-- [ ] **Phase 45: Cross-Repo Dependency Graph** - Import resolution and dependency expansion across repo boundaries
+- [x] **Phase 45: Cross-Repo Dependency Graph** - Import resolution and dependency expansion across repo boundaries (completed 2026-05-22)
 
 ## Phase Details
 
@@ -131,12 +131,12 @@ Plans:
 2. `get_dependencies` for a file shows cross-repo imports with repo attribution
 3. Search result expansion (expand_hops) traverses into other repos when following dependency edges
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 
 - [x] 45-01-PLAN.md — SQLite edge store + import resolver
-- [ ] 45-02-PLAN.md — Indexing second pass + cross-repo expansion engine
+- [x] 45-02-PLAN.md — Indexing second pass + cross-repo expansion engine
 - [x] 45-03-PLAN.md — get_dependencies annotation + result formatting
 
 ## Progress
@@ -161,4 +161,4 @@ Plans:
 | 42. Config & Repo Registry      | v1.7      | 3/3            | Complete    | 2026-05-21 |
 | 43. Per-Repo Indexing           | v1.7      | 2/2            | Complete    | 2026-05-22 |
 | 44. Unified Search & MCP        | v1.7      | 2/2            | Complete    | 2026-05-22 |
-| 45. Cross-Repo Dependency Graph | v1.7      | 2/3 | In Progress|  |
+| 45. Cross-Repo Dependency Graph | v1.7      | 3/3 | Complete   | 2026-05-22 |
