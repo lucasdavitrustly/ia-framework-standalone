@@ -130,7 +130,14 @@ Plans:
 1. When a file in repo A imports a symbol from repo B, dependency expansion includes the target file from repo B
 2. `get_dependencies` for a file shows cross-repo imports with repo attribution
 3. Search result expansion (expand_hops) traverses into other repos when following dependency edges
-   **Plans**: TBD
+
+**Plans:** 3 plans
+
+Plans:
+
+- [ ] 45-01-PLAN.md — SQLite edge store + import resolver
+- [ ] 45-02-PLAN.md — Indexing second pass + cross-repo expansion engine
+- [ ] 45-03-PLAN.md — get_dependencies annotation + result formatting
 
 ## Progress
 
@@ -153,5 +160,5 @@ Plans:
 | 41. Hybrid Retrieval Tuning     | v1.6      | 1/1            | Complete    | 2026-05-18 |
 | 42. Config & Repo Registry      | v1.7      | 3/3            | Complete    | 2026-05-21 |
 | 43. Per-Repo Indexing           | v1.7      | 2/2            | Complete    | 2026-05-22 |
-| 44. Unified Search & MCP        | v1.7      | 2/2 | Complete    | 2026-05-22 |
+| 44. Unified Search & MCP        | v1.7      | 2/2            | Complete    | 2026-05-22 |
 | 45. Cross-Repo Dependency Graph | v1.7      | 0/?            | Not started | -          |
