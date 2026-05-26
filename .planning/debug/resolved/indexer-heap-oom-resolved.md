@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: 'ia-framework index --force crashes with JavaScript heap OOM (~4GB) during ArrayPrototypeJoin'
 created: 2026-05-25T00:00:00Z
 updated: 2026-05-25T00:00:00Z
