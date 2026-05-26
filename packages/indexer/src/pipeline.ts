@@ -4,7 +4,8 @@ import type { CodeChunk } from '@ia-framework/ast-parser';
 import { extractCalls, buildCalledByIndex } from '@ia-framework/ast-parser';
 import type { ContextSource } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import PQueue from 'p-queue';
 import { walkFiles } from './file-walker.js';
 import {
@@ -113,13 +114,77 @@ function getDefaultConcurrency(providerName: string): number {
 }
 
 /**
- * Embed a single batch with retry logic.
+ * Reload content for a batch of chunks, reading each file only once.
+ * Groups chunks by filePath, reads each file via streaming line reader,
+ * and extracts all needed line ranges in a single pass.
+ */
+async function reloadBatchContents(batch: CodeChunk[]): Promise<string[]> {
+  // Group chunk indices by file path
+  const fileGroups = new Map<string, number[]>();
+  for (let i = 0; i < batch.length; i++) {
+    const chunk = batch[i]!;
+    const indices = fileGroups.get(chunk.filePath);
+    if (indices) {
+      indices.push(i);
+    } else {
+      fileGroups.set(chunk.filePath, [i]);
+    }
+  }
+
+  const results = new Array<string>(batch.length);
+
+  // Process each file once
+  for (const [filePath, indices] of fileGroups) {
+    // Sort chunks by startLine to enable single-pass extraction
+    const sortedIndices = [...indices].sort((a, b) => batch[a]!.startLine - batch[b]!.startLine);
+    const maxEndLine = Math.max(...sortedIndices.map((i) => batch[i]!.endLine));
+
+    // Read file line by line, extracting needed ranges
+    const chunkLines = new Map<number, string[]>(); // index -> collected lines
+    for (const idx of sortedIndices) {
+      chunkLines.set(idx, []);
+    }
+
+    let lineNum = 0;
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      lineNum++;
+      if (lineNum > maxEndLine) {
+        rl.close();
+        break;
+      }
+      // Check which chunks need this line
+      for (const idx of sortedIndices) {
+        const chunk = batch[idx]!;
+        if (lineNum >= chunk.startLine && lineNum <= chunk.endLine) {
+          chunkLines.get(idx)!.push(line);
+        }
+      }
+    }
+
+    // Join collected lines for each chunk
+    for (const idx of sortedIndices) {
+      results[idx] = chunkLines.get(idx)!.join('\n');
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Embed a single batch with retry logic and immediately upsert to Qdrant.
+ * This avoids accumulating all vector points in memory — each batch is
+ * stored and then released for GC.
  * Retries once on failure; if both attempts fail, throws.
  */
-async function embedBatchWithRetry(
+async function embedBatchAndStore(
   batch: CodeChunk[],
   provider: EmbeddingProvider,
-  results: VectorPoint[],
+  vectorStore: VectorStore,
   maxRetries = 1,
   mavenModuleGraph?: ModuleGraph | undefined,
   callMeta?: Map<
@@ -127,20 +192,24 @@ async function embedBatchWithRetry(
     { defines?: string | undefined; calls?: string[] | undefined; calledBy?: string[] | undefined }
   >,
   repoId?: string | undefined,
-): Promise<void> {
+): Promise<number> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
+      // Reload full content from disk for this batch (content was truncated to save memory)
+      const contents = await reloadBatchContents(batch);
       const textDescriptions = batch.map((c) => c.description ?? chunkToDescription(c));
-      const codeTexts = batch.map((c) => c.content);
+      const codeTexts = contents;
       // Text and code embeddings run in parallel within each batch
       const [textVectors, codeVectors] = await Promise.all([
         provider.embedBatch(textDescriptions, 'document'),
         provider.embedBatch(codeTexts, 'document'),
       ]);
-      // Build VectorPoints from results
+      // Build VectorPoints and upsert immediately
+      const points: VectorPoint[] = [];
       for (let j = 0; j < batch.length; j++) {
         const chunk = batch[j]!;
+        const content = contents[j]!;
         const payload: ChunkPayload = {
           chunkId: chunk.id,
           filePath: chunk.filePath,
@@ -148,7 +217,7 @@ async function embedBatchWithRetry(
           language: chunk.language,
           chunkType: chunk.chunkType,
           name: chunk.name,
-          content: chunk.content,
+          content,
           startLine: chunk.startLine,
           endLine: chunk.endLine,
           imports: chunk.imports,
@@ -158,8 +227,8 @@ async function embedBatchWithRetry(
           interfaces: chunk.interfaces,
           isInnerClass: chunk.isInnerClass,
           modulePath: inferModulePath(chunk.relativePath),
-          packageName: inferPackageName(chunk.relativePath, chunk.content),
-          layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
+          packageName: inferPackageName(chunk.relativePath, content),
+          layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, content),
           chunkIndex: chunk.chunkIndex,
           totalChunks: chunk.totalChunks,
           indexedAt: new Date().toISOString(),
@@ -181,7 +250,7 @@ async function embedBatchWithRetry(
             payload.mavenModule = mavenMod;
           }
         }
-        results.push({
+        points.push({
           id: chunk.id,
           textVector: textVectors[j]!,
           codeVector: codeVectors[j]!,
@@ -189,7 +258,9 @@ async function embedBatchWithRetry(
           payload,
         });
       }
-      return; // Success
+      // Upsert immediately — don't hold in memory
+      await vectorStore.upsertBatch(points);
+      return points.length; // Success — return count
     } catch (err) {
       lastError = err;
       if (attempt < maxRetries) {
@@ -308,6 +379,8 @@ export class IndexingPipeline {
     // Parse all files into chunks using the configured strategy
     const strategy = chunkingStrategy ?? new AstChunkingStrategy();
     const allChunks: CodeChunk[] = [];
+    // Extract call-chain info per-file during parsing to avoid a second pass
+    const callInfoMap = new Map<string, { defines: string; calls: string[] }>();
     for (const filePath of filesToProcess) {
       progress.currentFile = filePath;
       try {
@@ -327,29 +400,22 @@ export class IndexingPipeline {
           }
         }
 
-        allChunks.push(...chunks);
-
-        // Validate line numbers against actual file line count (LNC-05)
-        try {
-          const fileContent = await readFile(filePath, 'utf-8');
-          const fileLineCount = fileContent.split('\n').length;
-          for (const chunk of chunks) {
-            if (chunk.endLine > fileLineCount) {
-              logger.warn(
-                {
-                  event: 'chunk_line_number_mismatch',
-                  filePath: chunk.relativePath,
-                  chunkName: chunk.name,
-                  endLine: chunk.endLine,
-                  fileLineCount,
-                },
-                `Chunk endLine (${chunk.endLine}) exceeds file line count (${fileLineCount})`,
-              );
-            }
+        // Extract call-chain info while content is in memory
+        for (const chunk of chunks) {
+          const info = extractCalls(chunk.content, chunk.language, chunk.name ?? undefined);
+          if (info) {
+            callInfoMap.set(chunk.id, info);
           }
-        } catch {
-          // If file can't be read for validation, skip check silently
         }
+
+        // Strip content from chunks to avoid holding all file contents in memory.
+        // Content will be re-read from disk during the embedding phase.
+        // Keep only first 500 chars for concept detection pattern matching.
+        for (const chunk of chunks) {
+          chunk.content = chunk.content.length > 500 ? chunk.content.slice(0, 500) : chunk.content;
+        }
+
+        allChunks.push(...chunks);
 
         // Build dependency graph edges from parsed imports
         if (dependencyGraph) {
@@ -370,14 +436,7 @@ export class IndexingPipeline {
       }
     }
 
-    // Call-chain extraction: extract defines/calls for each chunk, then build calledBy index
-    const callInfoMap = new Map<string, { defines: string; calls: string[] }>();
-    for (const chunk of allChunks) {
-      const info = extractCalls(chunk.content, chunk.language, chunk.name ?? undefined);
-      if (info) {
-        callInfoMap.set(chunk.id, info);
-      }
-    }
+    // Build calledBy index from extracted call info
     const calledByIndex = buildCalledByIndex([...callInfoMap.values()]);
     // Enrich chunks with call metadata (stored as transient properties for payload building)
     const chunkCallMeta = new Map<
@@ -404,13 +463,15 @@ export class IndexingPipeline {
     progress.stage = 'embedding';
     onProgress?.({ ...progress });
 
-    // Embed chunks in batches using p-queue for concurrent processing
+    // Embed chunks in batches using p-queue for concurrent processing.
+    // Each batch is upserted to Qdrant immediately after embedding to avoid
+    // accumulating all vector points in memory (OOM fix for large repos).
     const concurrency = embeddingConcurrency ?? getDefaultConcurrency(embeddingProvider.name);
     const queue = new PQueue({ concurrency });
-    const vectorPoints: VectorPoint[] = [];
+    let chunksIndexed = 0;
     let skippedChunks = 0;
 
-    // Build batch list
+    // Build batch list (references into allChunks — no copy)
     const batches: CodeChunk[][] = [];
     for (let i = 0; i < allChunks.length; i += embeddingBatchSize) {
       batches.push(allChunks.slice(i, i + embeddingBatchSize));
@@ -437,15 +498,16 @@ export class IndexingPipeline {
           if (signal?.aborted) return; // Skip if already aborted
 
           try {
-            await embedBatchWithRetry(
+            const count = await embedBatchAndStore(
               batch,
               embeddingProvider,
-              vectorPoints,
+              vectorStore,
               1,
               config.mavenModuleGraph,
               chunkCallMeta,
               repoId,
             );
+            chunksIndexed += count;
           } catch {
             // Retry exhausted — skip batch
             skippedChunks += batch.length;
@@ -453,13 +515,13 @@ export class IndexingPipeline {
           }
 
           progress.batchesCompleted = (progress.batchesCompleted ?? 0) + 1;
-          progress.chunksIndexed = vectorPoints.length;
+          progress.chunksIndexed = chunksIndexed;
           onProgress?.({ ...progress });
         }),
       ),
     );
 
-    // Process additional context sources
+    // Process additional context sources — embed and upsert immediately per batch
     if (contextSources && contextSources.length > 0) {
       for (const source of contextSources) {
         logger.info({ source: source.name }, 'Processing context source');
@@ -472,7 +534,7 @@ export class IndexingPipeline {
 
           progress.chunksTotal += sourceChunks.length;
 
-          // Embed source chunks in batches using same pipeline
+          // Embed source chunks in batches and upsert immediately
           for (let i = 0; i < sourceChunks.length; i += embeddingBatchSize) {
             const batch = sourceChunks.slice(i, i + embeddingBatchSize);
 
@@ -482,6 +544,7 @@ export class IndexingPipeline {
             const codeTexts = batch.map((c) => c.content);
             const codeVecs = await embeddingProvider.embedBatch(codeTexts);
 
+            const points: VectorPoint[] = [];
             for (let j = 0; j < batch.length; j++) {
               const chunk = batch[j]!;
               const payload: ChunkPayload = {
@@ -504,15 +567,17 @@ export class IndexingPipeline {
                 totalChunks: chunk.totalChunks,
                 indexedAt: chunk.indexedAt,
               };
-              vectorPoints.push({
+              points.push({
                 id: chunk.id,
-                textVector: textVecs[j]!, // prose description embedding
-                codeVector: codeVecs[j]!, // raw code embedding
-                sparseVector: computeTermFrequencySparseVector(chunk.content), // BM25 TF sparse
+                textVector: textVecs[j]!,
+                codeVector: codeVecs[j]!,
+                sparseVector: computeTermFrequencySparseVector(chunk.content),
                 payload,
               });
             }
-            progress.chunksIndexed += batch.length;
+            await vectorStore.upsertBatch(points);
+            chunksIndexed += points.length;
+            progress.chunksIndexed = chunksIndexed;
             onProgress?.({ ...progress });
           }
         } catch (err) {
@@ -521,23 +586,21 @@ export class IndexingPipeline {
       }
     }
 
-    // Store in Qdrant in batches
+    // Storing phase complete (batches already upserted during embedding)
     progress.stage = 'storing';
     onProgress?.({ ...progress });
 
-    const storeBatchSize = 100;
-    for (let i = 0; i < vectorPoints.length; i += storeBatchSize) {
-      const batch = vectorPoints.slice(i, i + storeBatchSize);
-      await vectorStore.upsertBatch(batch);
-    }
-
     // Cross-cutting concept generation (post-store)
-    // Enrich chunks with layerHints for concept detection, then generate aspect chunks
-    const enrichedForConcepts = allChunks.map((chunk) => ({
-      ...chunk,
-      layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
-    }));
-    const detectedConcepts = detectConcepts(enrichedForConcepts);
+    // Content is already truncated to 500 chars from parsing phase — sufficient for pattern matching
+    // Enrich chunks with layerHints in-place (avoids copying entire allChunks array)
+    for (const chunk of allChunks) {
+      (chunk as CodeChunk & { layerHints?: string[] }).layerHints = inferLayerHints(
+        chunk.relativePath,
+        chunk.chunkType,
+        chunk.content,
+      );
+    }
+    const detectedConcepts = detectConcepts(allChunks as (CodeChunk & { layerHints?: string[] })[]);
     if (detectedConcepts.length > 0) {
       const conceptChunks = generateConceptChunks(detectedConcepts, targetProjectPath);
       logger.info(
@@ -573,8 +636,9 @@ export class IndexingPipeline {
         };
         conceptPoints.push({ id: chunk.id, payload, textVector, codeVector, sparseVector });
       }
-      for (let i = 0; i < conceptPoints.length; i += storeBatchSize) {
-        const batch = conceptPoints.slice(i, i + storeBatchSize);
+      const conceptBatchSize = 100;
+      for (let i = 0; i < conceptPoints.length; i += conceptBatchSize) {
+        const batch = conceptPoints.slice(i, i + conceptBatchSize);
         await vectorStore.upsertBatch(batch);
       }
     }
@@ -612,7 +676,7 @@ export class IndexingPipeline {
 
     return {
       filesIndexed: progress.filesProcessed,
-      chunksIndexed: vectorPoints.length,
+      chunksIndexed,
       skippedChunks,
     };
   }

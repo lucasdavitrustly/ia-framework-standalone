@@ -1,10 +1,11 @@
-import { readFile, access } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { glob } from 'tinyglobby';
 import { createRequire } from 'node:module';
 import type { Ignore } from 'ignore';
 
-void access; // imported for potential future use
+/** Max file size in bytes (512 KB). Files larger than this are likely generated/bundled. */
+const MAX_FILE_SIZE = 512 * 1024;
 
 // CJS interop: ignore is a CommonJS module with a callable default export
 const require = createRequire(import.meta.url);
@@ -45,12 +46,20 @@ const SOURCE_EXTENSIONS = new Set([
 
 const DEFAULT_EXCLUDE = [
   '**/*.min.js',
+  '**/*.min.css',
+  '**/*.bundle.js',
+  '**/*.chunk.js',
   '**/*.generated.*',
   '**/*.d.ts',
   '**/__snapshots__/**',
   '**/fixtures/**',
   '**/*.test.*',
   '**/*.spec.*',
+  '**/static/assets/**',
+  '**/static/js/**',
+  '**/static/css/**',
+  '**/public/assets/**',
+  '**/resources/static/**',
 ];
 
 export interface WalkOptions {
@@ -94,7 +103,7 @@ export async function walkFiles(options: WalkOptions): Promise<string[]> {
     onlyFiles: true,
   });
 
-  return files.filter((file) => {
+  const filtered = files.filter((file) => {
     // Must be a recognized source extension (unless explicit include patterns given)
     if (!includePatterns?.length) {
       const ext = extname(file).toLowerCase();
@@ -109,4 +118,18 @@ export async function walkFiles(options: WalkOptions): Promise<string[]> {
 
     return true;
   });
+
+  // Filter out oversized files (likely generated/bundled)
+  const results: string[] = [];
+  await Promise.all(
+    filtered.map(async (file) => {
+      try {
+        const s = await stat(file);
+        if (s.size <= MAX_FILE_SIZE) results.push(file);
+      } catch {
+        // If stat fails, skip the file
+      }
+    }),
+  );
+  return results;
 }
