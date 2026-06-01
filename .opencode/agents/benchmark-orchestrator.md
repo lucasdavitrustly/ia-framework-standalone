@@ -161,40 +161,6 @@ Delegate to `@benchmark-reporter` with ALL collected data:
 
 Display the reporter's output to the user. Inform them where the report file was saved.
 
-### Step 8: Offer GSD Milestone for Improvements
-
-After presenting the report, ALWAYS use the `question` tool to ask the user:
-
-```
-Question: "The benchmark identified RAG improvement opportunities (prioritized in the report). Would you like to create a GSD milestone with these improvements?"
-Options:
-  1. "Yes, create the milestone"
-  2. "No, not now"
-```
-
-- If "Yes": Use the Task tool to invoke the `/gsd-new-milestone` command. This
-  delegates to the GSD workflow which handles `.planning/` file creation, questioning,
-  research, requirements, and roadmap generation — do NOT create those files yourself.
-
-  Pass the full list of prioritized improvements from the reporter's
-  "RAG Improvement Insights > Proposed Improvements" section as the milestone context.
-
-  Example Task invocation:
-
-  ```
-  Task(
-    description="Create GSD milestone for RAG improvements",
-    prompt="/gsd-new-milestone RAG Improvements — <summary of prioritized improvements>",
-    subagent_type="general"
-  )
-  ```
-
-  IMPORTANT: Your job ends after delegating to `/gsd-new-milestone`. Do NOT create
-  `.planning/` files directly. Do NOT start discuss, plan, or execute phases.
-  The GSD workflow and the user will drive those steps.
-
-- If "No": End the benchmark session.
-
 ## Rules
 
 - ALWAYS resolve TARGET_PATH from `.ia-framework/project.json` before any execution.

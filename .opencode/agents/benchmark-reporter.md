@@ -143,8 +143,8 @@ For each quality dimension where MCP scored < 4/5 or showed < +1 improvement:
   - **Root Cause Hypothesis**: <what part of the RAG pipeline likely caused this>
   - **Affected Component**: <e.g., indexer, chunking, embedding model, retrieval, re-ranking, MCP tool>
 
-### Proposed Improvements (Prioritized — ready for GSD milestone)
-Ordered by expected impact (highest first). Each item maps to a potential GSD phase.
+### Proposed Improvements (Prioritized)
+Ordered by expected impact (highest first). Each item maps to a potential improvement phase.
 
 | # | Improvement | Affected Package | Effort | Expected Impact |
 |---|-------------|-----------------|--------|-----------------|
@@ -159,7 +159,7 @@ Ordered by expected impact (highest first). Each item maps to a potential GSD ph
    - **Affected Package**: <e.g., packages/core, packages/mcp-server, packages/benchmark>
    - **Expected Impact**: <which quality dimensions this would improve and by how much>
    - **Effort Estimate**: <small / medium / large>
-   - **GSD Phase Goal**: <one-line goal statement suitable for a GSD phase>
+   - **Phase Goal**: <one-line goal statement>
 
 2. **[P2] <Improvement Title>**
    ...

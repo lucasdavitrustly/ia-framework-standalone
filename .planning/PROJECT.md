@@ -8,32 +8,21 @@ A TypeScript monorepo that helps developers use AI to build features in existing
 
 AI that actually understands the codebase — better context means better code output.
 
-## Current Milestone: v1.7 Multi-Repo Indexing
+## Current State
 
-**Goal:** Support indexing and searching multiple repositories as a unified codebase, with cross-repo dependency graph expansion and source-tagged results.
-
-**Target features:**
-
-- Multiple project paths in config (array of repos, each independently detected)
-- Unified search across all indexed repos with results tagged by source repo
-- Cross-repo dependency graph expansion (e.g. interface in core → implementation in fi-connectors)
-- Per-repo indexing with shared Qdrant collections or repo-tagged payloads
-
-## Current State: Phase 43 complete (2026-05-22)
-
-**Latest:** Phase 43 — Per-repo indexing: chunks carry repoId, CLI supports `--repo` scoped operations.
-
-**Status:** 41 phases, 91 plans shipped across 6 milestones (v1.0–v1.6). ~29,703 LOC TypeScript.
+**Latest shipped:** v1.7 Multi-Repo Indexing (2026-05-26)
+**Status:** 45 phases, 103 plans shipped across 7 milestones (v1.0–v1.7). ~36,000 LOC TypeScript.
+**Next:** Planning next milestone (`/gsd-new-milestone`)
 
 ## Previous Milestones
 
-**v1.3 — RAG Quality Improvements (SHIPPED 2026-04-29):** Java AST-aware chunking, zero-result fallback search, Maven multi-module dependency graph, RAG-to-action prompt templates, hallucination penalty calibration, benchmark model lock enforcement.
+**v1.7 — Multi-Repo Indexing (SHIPPED 2026-05-26):** Multi-repo config with backward-compat migration, per-repo auto-detection, repo-scoped indexing with `--repo` flag, unified search with repo attribution, cross-repo dependency graph with SQLite edge store.
 
-**v1.2 — Tuning & Observability (SHIPPED 2026-04-29):** Mode-aware score filtering, reproducible MRR baseline, prompt version tracking, LLM chunking prompt engineering, chunk quality scoring, dashboard Tuning page.
+**v1.6 — RAG Retrieval Quality Improvements (SHIPPED 2026-05-18):** Benchmark preflight tool, hybrid retrieval tuning.
 
-**v1.1 — LLM Chunking (SHIPPED):** LLM-based chunking strategy via Ollama, parallel embedding, multi-collection search, dashboard search/history/analytics pages.
+**v1.5 — RAG Retrieval Quality (SHIPPED 2026-05-15):** Query complexity classifier, line-number-aware chunking, confidence-based early exit.
 
-**v1.0 — MVP (SHIPPED):** Full RAG pipeline, installer, MCP server, dashboard, benchmark system.
+**v1.4 — RAG Quality Improvements (SHIPPED 2026-04-30):** Relevance threshold, hierarchy-aware chunking, query intent classification, adaptive retrieval depth, decorator chunking, dynamic cost cap.
 
 ## Requirements
 
@@ -88,18 +77,19 @@ AI that actually understands the codebase — better context means better code o
 - [x] Adaptive retrieval depth via semantic → hybrid → BM25 fallback chain — v1.4
 - [x] Adaptive decorator chunking — decorators/annotations co-chunked with annotated elements — v1.4
 - [x] Dynamic retrieval cost cap — 6000-token soft budget with 70/30 hierarchy/direct split — v1.4
+- [x] Multiple project paths configurable in project.json (array of repos) — v1.7
+- [x] Per-repo language/framework auto-detection — v1.7
+- [x] Unified indexing pipeline processing all configured repos — v1.7
+- [x] Qdrant payloads tagged with source repo identifier — v1.7
+- [x] Unified search returning results from all repos, tagged by source — v1.7
+- [x] Cross-repo dependency graph expansion (imports across repo boundaries) — v1.7
+- [x] MCP tool results include repo origin metadata — v1.7
 
 ### Active
 
-<!-- v1.7 scope — Multi-Repo Indexing -->
+<!-- Next milestone scope — TBD via /gsd-new-milestone -->
 
-- [ ] Multiple project paths configurable in project.json (array of repos)
-- [ ] Per-repo language/framework auto-detection
-- [ ] Unified indexing pipeline processing all configured repos
-- [ ] Qdrant payloads tagged with source repo identifier
-- [ ] Unified search returning results from all repos, tagged by source
-- [ ] Cross-repo dependency graph expansion (imports across repo boundaries)
-- [ ] MCP tool results include repo origin metadata
+_(No active requirements — run `/gsd-new-milestone` to define next scope)_
 
 ### Out of Scope
 
@@ -108,7 +98,7 @@ AI that actually understands the codebase — better context means better code o
 - Jira integration (watching board, updating status) — deferred to v2, v1 focuses on RAG quality
 - Full TDD enforcement on target projects — deferred to v2, framework itself follows TDD
 - Proactive Jira board watching and task suggestion — deferred to v2
-- Multi-project support — one project first, generalize later
+- Multi-project support beyond local paths — remote repos, auto-discovery deferred
 - OAuth/team features — internal tool, no auth needed
 - Mobile interface — OpenCode (terminal) is the primary interface
 - npm/binary distribution — git clone is sufficient for internal use
@@ -123,7 +113,7 @@ The framework is distributed as a git repo. Developers clone it anywhere and run
 
 The monitoring dashboard (also Docker) provides visibility into indexing health, token consumption, and RAG quality benchmarks. v1.2 added a dedicated Tuning page with ChunkInspector, score distribution histograms, and prompt version comparison charts. The benchmark system now supports model lock enforcement (`--strict-model`) to prevent contaminated benchmark results.
 
-**Current state (v1.4 complete):** 35 phases, 86 plans shipped across 5 milestones. 29,703 LOC TypeScript. Retrieval stack now includes: relevance threshold filtering, hierarchy-aware chunking, query intent classification (MMR + query-type λ), adaptive fallback depth, decorator-aware chunking, and per-call token budget cap.
+**Current state (v1.7 complete):** 45 phases, 103 plans shipped across 7 milestones. ~36,000 LOC TypeScript. Multi-repo indexing with cross-repo dependency graph, unified search with source attribution across all configured repos.
 
 **Target:** Internal tool for one specific large project (Java/Spring Boot payment gateway). Built to be reusable but not generalized yet.
 
@@ -176,6 +166,9 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 | Synonym expansion for zero-result path                      | Users query for concepts not in codebase; expanding to related terms surfaces real indexed content rather than empty results                                        | ✅ Validated — Phase 29                        |
 | Decorator chunks co-located with annotated element          | Decorators in isolation are meaningless; fusing @Controller + method into single chunk preserves semantic unit for retrieval                                        | ✅ Validated — Phase 30                        |
 | 6000-token default cap with 70/30 budget split              | Unbounded retrieval wastes LLM context; 70% to direct results, 30% to hierarchy expansion prevents hierarchy expansion from crowding out primary results            | ✅ Validated — Phase 31                        |
+| Shared Qdrant collection with repo payload filter           | Per-repo collections would fragment search; single collection + payload filter enables unified search and simpler cross-repo expansion                              | ✅ Validated — v1.7                            |
+| SQLite for cross-repo edge storage                          | Qdrant payloads can't store graph edges efficiently; SQLite gives O(1) edge lookup without extra Docker services                                                    | ✅ Validated — Phase 45                        |
+| Backward-compat migration from single targetProjectPath     | Existing installs must not break; normalization layer converts legacy config to repos[] internally                                                                  | ✅ Validated — Phase 42                        |
 
 ## Evolution
 
@@ -198,4 +191,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-05-21 after milestone v1.7 start_
+_Last updated: 2026-05-26 after v1.7 milestone completion_
