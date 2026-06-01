@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A TypeScript monorepo that helps developers use AI to build features in existing large projects. It is a **standalone tool** — cloned and run independently from the target project. It provides a one-shot installer (`./install.sh`) that auto-detects the target project's stack, sets up local RAG via Qdrant in Docker, and integrates with OpenCode through MCP servers and auto-context injection. A monitoring dashboard tracks token usage, indexing status, and RAG quality benchmarks. GSD workflows run inside the target project directory, and all GSD-generated artifacts (.planning/, AGENTS.md) belong to the target project — not the framework.
+A TypeScript monorepo that helps developers use AI to build features in existing large projects. It is a **standalone tool** — cloned and run independently from the target project. It provides a one-shot installer (`./install.sh`) that auto-detects the target project's stack, sets up local RAG via Qdrant in Docker, and integrates with OpenCode through MCP servers and auto-context injection. A monitoring dashboard tracks token usage, indexing status, and RAG quality benchmarks. SpecKit workflows run inside the target project directory, and all spec-generated artifacts (specs/, .specify/) belong to the target project — not the framework.
 
 ## Core Value
 
@@ -12,7 +12,7 @@ AI that actually understands the codebase — better context means better code o
 
 **Latest shipped:** v1.7 Multi-Repo Indexing (2026-05-26)
 **Status:** 45 phases, 103 plans shipped across 7 milestones (v1.0–v1.7). ~36,000 LOC TypeScript.
-**Next:** Planning next milestone (`/gsd-new-milestone`)
+**Next:** Planning next milestone
 
 ## Previous Milestones
 
@@ -87,9 +87,9 @@ AI that actually understands the codebase — better context means better code o
 
 ### Active
 
-<!-- Next milestone scope — TBD via /gsd-new-milestone -->
+<!-- Next milestone scope -->
 
-_(No active requirements — run `/gsd-new-milestone` to define next scope)_
+_(No active requirements — planning next scope)_
 
 ### Out of Scope
 
@@ -109,7 +109,7 @@ The problem: developers using AI to build features in large codebases get poor r
 
 This framework solves the context problem through local RAG — the codebase is indexed with AST-aware parsing (TypeScript, Python, Java), stored in Qdrant, and retrieved automatically when the developer prompts for features. The retrieval uses semantic search first, then expands to dependency graph, and now includes zero-result fallback (semantic → hybrid → BM25 keyword chain) and RAG-to-action prompt templates for impact analysis queries.
 
-The framework is distributed as a git repo. Developers clone it anywhere and run `./install.sh`, which asks for the target project path, detects the project profile (language, framework, test runner, commands), sets up Qdrant in Docker, indexes the codebase, and configures OpenCode integration. The framework lives outside the target project — it points at codebases but never installs itself inside them. GSD workflows run in the target project's working directory, and all GSD artifacts (.planning/, AGENTS.md) are committed to the target project's repo.
+The framework is distributed as a git repo. Developers clone it anywhere and run `./install.sh`, which asks for the target project path, detects the project profile (language, framework, test runner, commands), sets up Qdrant in Docker, indexes the codebase, and configures OpenCode integration. The framework lives outside the target project — it points at codebases but never installs itself inside them. SpecKit workflows run in the target project's working directory, and spec artifacts (specs/, .specify/) are committed to the target project's repo.
 
 The monitoring dashboard (also Docker) provides visibility into indexing health, token consumption, and RAG quality benchmarks. v1.2 added a dedicated Tuning page with ChunkInspector, score distribution histograms, and prompt version comparison charts. The benchmark system now supports model lock enforcement (`--strict-model`) to prevent contaminated benchmark results.
 
@@ -143,7 +143,7 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 | Monorepo structure                                          | All components co-located, simpler dependency management                                                                                                            | ✅ Validated — v1.0                            |
 | MCP + auto-context (configurable)                           | Both retrieval modes available, benchmarkable against each other                                                                                                    | ✅ Validated — v1.0 (auto-context deferred v2) |
 | Clone anywhere + install script                             | No npm publish needed, simple distribution for internal tool                                                                                                        | ✅ Validated — v1.0                            |
-| Standalone architecture                                     | Framework lives outside target project, GSD artifacts belong to target                                                                                              | ✅ Validated — v1.0                            |
+| Standalone architecture                                     | Framework lives outside target project, spec artifacts belong to target                                                                                             | ✅ Validated — v1.0                            |
 | AST-aware + dependency graph                                | Better retrieval than generic text chunking — understands code structure                                                                                            | ✅ Validated — v1.0                            |
 | Jest for testing                                            | Widely used, good TypeScript support, team familiarity                                                                                                              | ❌ Replaced — Vitest adopted                   |
 | Vitest over Jest                                            | Ecosystem-aligned (all deps use Vitest), zero-config for TS monorepos, same API                                                                                     | ✅ Validated — v1.0                            |
@@ -174,7 +174,7 @@ The monitoring dashboard (also Docker) provides visibility into indexing health,
 
 This document evolves at phase transitions and milestone boundaries.
 
-**After each phase transition** (via `/gsd-transition`):
+**After each phase transition**:
 
 1. Requirements invalidated? → Move to Out of Scope with reason
 2. Requirements validated? → Move to Validated with phase reference
@@ -182,7 +182,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Decisions to log? → Add to Key Decisions
 5. "What This Is" still accurate? → Update if drifted
 
-**After each milestone** (via `/gsd-complete-milestone`):
+**After each milestone**:
 
 1. Full review of all sections
 2. Core Value check — still the right priority?
