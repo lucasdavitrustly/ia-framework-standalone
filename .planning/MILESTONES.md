@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.7 Multi-Repo Indexing (Shipped: 2026-05-26)
+
+**Phases completed:** 4 phases, 10 plans, 19 tasks
+
+**Key accomplishments:**
+
+- Zod RepoEntrySchema + RepoRegistry class enabling multi-repo `repos[]` config alongside backward-compatible `targetProjectPath` legacy format
+- Per-repo auto-detection of language/framework profile and provides field, wired into RepoRegistry with detect() and toJSON() methods
+- Fixed Zod schema mismatch for `maxTokensPerCall` — changed `min(0).default(40000)` to `positive().optional()`, resolving 2 failing tests and bringing all 87 core tests to green.
+- Added repoId field to ChunkPayload/IndexingConfig and wired through pipeline with per-repo incremental state keying
+- CLI `--repo <name>` flag with per-repo sequential indexing, scoped force-delete, and backward-compat warning for legacy chunks
+- Search tools now return repo-attributed results with [repo] prefix and grouped-by-repo output ordering.
+- parseRepoPath utility with repo:path prefix disambiguation, multi-repo grouping in get_file and get_dependencies with repo attribution
+- SQLite-backed cross-repo edge storage with prefix-matching import resolver and expansionRepo provenance field
+- Second-pass edge builder resolves imports across repos, expansion engine follows pre-computed edges costing 1 hop per crossing
+- [via repo] annotations on cross-repo expanded results and [repo-name] prefix on cross-repo imports in get_dependencies output
+
+---
+
 ## v1.6 RAG Retrieval Quality Improvements (Shipped: 2026-05-18)
 
 **Goal:** Based on benchmark results (Claude Opus 4.6, 2026-05-15), MCP provides +1.1% quality uplift but regresses on keyword lookups (-3pts). This milestone targets specific regression gaps, latency issues, and benchmark tooling blockers.

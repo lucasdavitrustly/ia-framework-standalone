@@ -35,6 +35,8 @@ source "${SCRIPT_DIR}/scripts/install-node.sh"
 source "${SCRIPT_DIR}/scripts/install-ollama.sh"
 # shellcheck source=scripts/install-opencode.sh
 source "${SCRIPT_DIR}/scripts/install-opencode.sh"
+# shellcheck source=scripts/install-speckit.sh
+source "${SCRIPT_DIR}/scripts/install-speckit.sh"
 # shellcheck source=scripts/start-services.sh
 source "${SCRIPT_DIR}/scripts/start-services.sh"
 # shellcheck source=scripts/init-config.sh
@@ -98,6 +100,9 @@ else
   echo -e "  ${YELLOW}→${NC} OpenCode not found — installing..."
   install_opencode || echo -e "  ${YELLOW}⚠${NC} OpenCode install skipped — install manually: https://opencode.ai"
 fi
+
+# SpecKit (recommended — soft fail)
+setup_speckit
 
 echo ""
 

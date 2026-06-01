@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Relatório Comparativo - Spec-Driven Development Frameworks</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --card: #1a2332;
+        --border: #2d3748;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #60a5fa;
+        --green: #34d399;
+        --yellow: #fbbf24;
+        --red: #f87171;
+        --purple: #a78bfa;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          'Inter',
+          -apple-system,
+          system-ui,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        padding: 2rem;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+        color: var(--accent);
+      }
+      h2 {
+        font-size: 1.4rem;
+        margin: 2rem 0 1rem;
+        color: var(--purple);
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 0.5rem;
+      }
+      h3 {
+        font-size: 1.1rem;
+        margin: 1.5rem 0 0.5rem;
+        color: var(--green);
+      }
+      .subtitle {
+        color: var(--muted);
+        margin-bottom: 2rem;
+      }
+      .context-box {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+      }
+      .context-box h3 {
+        margin-top: 0;
+        color: var(--yellow);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        padding: 0.75rem 1rem;
+        text-align: left;
+        border: 1px solid var(--border);
+      }
+      th {
+        background: #1e293b;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      td {
+        background: var(--card);
+      }
+      tr:hover td {
+        background: #1e293b;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+      .badge-green {
+        background: #064e3b;
+        color: var(--green);
+      }
+      .badge-yellow {
+        background: #451a03;
+        color: var(--yellow);
+      }
+      .badge-red {
+        background: #450a0a;
+        color: var(--red);
+      }
+      .score {
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+      .score-high {
+        color: var(--green);
+      }
+      .score-med {
+        color: var(--yellow);
+      }
+      .score-low {
+        color: var(--red);
+      }
+      .verdict {
+        background: linear-gradient(135deg, #064e3b, #1a2332);
+        border: 2px solid var(--green);
+        border-radius: 12px;
+        padding: 2rem;
+        margin-top: 2rem;
+      }
+      .verdict h2 {
+        color: var(--green);
+        border: none;
+        margin-top: 0;
+      }
+      .flow-diagram {
+        background: #1e293b;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        font-family: monospace;
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+        color: var(--muted);
+        overflow-x: auto;
+      }
+      .pros-cons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin: 1rem 0;
+      }
+      .pros,
+      .cons {
+        background: var(--card);
+        padding: 1rem;
+        border-radius: 8px;
+      }
+      .pros {
+        border-left: 3px solid var(--green);
+      }
+      .cons {
+        border-left: 3px solid var(--red);
+      }
+      .pros h4 {
+        color: var(--green);
+      }
+      .cons h4 {
+        color: var(--red);
+      }
+      ul {
+        padding-left: 1.2rem;
+        margin: 0.5rem 0;
+      }
+      li {
+        margin: 0.3rem 0;
+      }
+      @media (max-width: 768px) {
+        .pros-cons {
+          grid-template-columns: 1fr;
+        }
+        body {
+          padding: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Relatório Comparativo: Spec-Driven Development</h1>
+      <p class="subtitle">
+        Análise para codebase legada, 12 devs, sprints multi-assunto, branch master → DEV
+      </p>
+
+      <div class="context-box">
+        <h3>Contexto do Time</h3>
+        <ul>
+          <li><strong>Codebase:</strong> Extensa e legada, alterada por múltiplos times</li>
+          <li><strong>Equipe:</strong> 12 devs fazendo PRs simultâneos por sprint</li>
+          <li><strong>Fluxo Git:</strong> Branch de master → desenvolvimento → PR para DEV</li>
+          <li>
+            <strong>Sprints:</strong> Itens diversos de diferentes assuntos tratados em paralelo
+          </li>
+          <li>
+            <strong>Risco principal:</strong> Conflitos, falta de contexto compartilhado,
+            divergência de padrões
+          </li>
+        </ul>
+      </div>
+
+      <h2>1. Comparativo Geral</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Critério</th>
+            <th>TLC Spec-Driven</th>
+            <th>GitHub Spec Kit</th>
+            <th>OpenSpec</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>GitHub Stars</td>
+            <td>4.4k</td>
+            <td>106k</td>
+            <td>50.9k</td>
+          </tr>
+          <tr>
+            <td>Mantido por</td>
+            <td>Comunidade (Tech Leads Club)</td>
+            <td>GitHub (oficial)</td>
+            <td>Fission AI</td>
+          </tr>
+          <tr>
+            <td>Instalação</td>
+            <td>npx (skill para agente)</td>
+            <td>CLI Python (uv/pipx)</td>
+            <td>npm global (Node.js)</td>
+          </tr>
+          <tr>
+            <td>Artefatos gerados</td>
+            <td>.specs/ (local ao projeto)</td>
+            <td>.specify/ + specs/ (local)</td>
+            <td>openspec/ (local)</td>
+          </tr>
+          <tr>
+            <td>Suporte brownfield</td>
+            <td><span class="badge badge-green">Excelente</span> 7 docs de análise</td>
+            <td><span class="badge badge-yellow">Bom</span> Via constitution</td>
+            <td><span class="badge badge-green">Excelente</span> Filosofia central</td>
+          </tr>
+          <tr>
+            <td>Multi-dev awareness</td>
+            <td><span class="badge badge-red">Fraco</span> Single-user</td>
+            <td><span class="badge badge-green">Forte</span> Branches, GitHub Issues</td>
+            <td><span class="badge badge-yellow">Médio</span> Folder por change</td>
+          </tr>
+          <tr>
+            <td>Integração CI/CD</td>
+            <td><span class="badge badge-red">Nenhuma</span></td>
+            <td><span class="badge badge-green">Scripts + GH Actions</span></td>
+            <td><span class="badge badge-yellow">Básica</span></td>
+          </tr>
+          <tr>
+            <td>Extensibilidade</td>
+            <td>Referências estáticas</td>
+            <td>Extensions + Presets + Overrides</td>
+            <td>Schemas comunitários + profiles</td>
+          </tr>
+          <tr>
+            <td>Lock-in de agente</td>
+            <td>Nenhum (qualquer agente)</td>
+            <td>30+ integrações</td>
+            <td>25+ integrações</td>
+          </tr>
+          <tr>
+            <td>Complexidade de adoção</td>
+            <td><span class="badge badge-green">Baixa</span></td>
+            <td><span class="badge badge-yellow">Média</span></td>
+            <td><span class="badge badge-green">Baixa</span></td>
+          </tr>
+          <tr>
+            <td>Tracking de tasks → Issues</td>
+            <td>Nenhum</td>
+            <td><span class="badge badge-green">/speckit.taskstoissues</span></td>
+            <td>Nenhum nativo</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>2. Adequação ao Cenário (12 devs, codebase legada)</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Necessidade do Time</th>
+            <th>TLC Spec-Driven</th>
+            <th>GitHub Spec Kit</th>
+            <th>OpenSpec</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Specs como artefatos compartilhados no repo</td>
+            <td>Sim (.specs/)</td>
+            <td>Sim (specs/)</td>
+            <td>Sim (openspec/)</td>
+          </tr>
+          <tr>
+            <td>Múltiplas features em paralelo (12 PRs)</td>
+            <td><span class="badge badge-red">1 feature por vez</span></td>
+            <td><span class="badge badge-green">Branch por feature (001-xxx)</span></td>
+            <td><span class="badge badge-green">Folder por change isolado</span></td>
+          </tr>
+          <tr>
+            <td>Consistência entre devs (padrões)</td>
+            <td>Via brownfield docs</td>
+            <td>Constitution + Presets</td>
+            <td>Schemas customizáveis</td>
+          </tr>
+          <tr>
+            <td>Conversão tasks → Jira/Issues</td>
+            <td>Manual</td>
+            <td><span class="badge badge-green">Nativo (/taskstoissues)</span></td>
+            <td>Manual</td>
+          </tr>
+          <tr>
+            <td>Resistência a conflitos de merge</td>
+            <td>Risco alto (STATE.md compartilhado)</td>
+            <td>Baixo (cada spec em branch isolado)</td>
+            <td>Baixo (cada change em folder)</td>
+          </tr>
+          <tr>
+            <td>Curva de aprendizado (12 devs)</td>
+            <td>Mínima (conversacional)</td>
+            <td>Moderada (CLI + 7 steps)</td>
+            <td>Mínima (3 comandos core)</td>
+          </tr>
+          <tr>
+            <td>Outros times alterando código</td>
+            <td>Brownfield mapping ajuda</td>
+            <td>Constitution governa limites</td>
+            <td>Proposal documenta impacto</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>3. Caso de Uso: "Implementar endpoint de relatório financeiro"</h2>
+      <p style="color: var(--muted); margin-bottom: 1rem">
+        Dev Rafael cria branch de master, faz feature, abre PR para DEV. Enquanto isso, outros 11
+        devs fazem o mesmo com outros assuntos.
+      </p>
+
+      <h3>3.1 Com TLC Spec-Driven</h3>
+      <div class="flow-diagram">
+        1. Rafael: "Specify feature financial-report-endpoint" → Agente cria
+        .specs/features/financial-report-endpoint/spec.md → Define requisitos AUTH-01, FIN-01,
+        FIN-02... 2. Agente auto-dimensiona: Medium → Specify + Execute → Agente pula Design/Tasks
+        (inline) 3. Rafael: "Implement" → Commits atômicos: feat(finance): add report endpoint
+        PROBLEMA: .specs/project/STATE.md é compartilhado. Se Dev Maria edita STATE.md na branch
+        dela → CONFLITO no merge para DEV. Não há mecanismo de isolamento entre features paralelas.
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pontos fortes</h4>
+          <ul>
+            <li>Zero cerimônia — conversa natural</li>
+            <li>Auto-sizing evita overhead</li>
+            <li>Brownfield mapping mapeia a codebase legada</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Problemas no cenário</h4>
+          <ul>
+            <li>STATE.md compartilhado = conflitos de merge</li>
+            <li>"One feature per cycle" — não escala para 12 devs</li>
+            <li>Sem tracking de quem está fazendo o quê</li>
+            <li>Session handoff é individual, não de time</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>3.2 Com GitHub Spec Kit</h3>
+      <div class="flow-diagram">
+        1. Rafael: git checkout -b feat/financial-report (de master) 2. Rafael: specify init .
+        --integration copilot --force (ou já inicializado no repo) 3. Rafael: /speckit.constitution
+        (já existe — shared no repo) 4. Rafael: /speckit.specify "Endpoint de relatório
+        financeiro..." → specs/042-financial-report/spec.md criado → Branch pode ser renomeada para
+        042-financial-report 5. Rafael: /speckit.clarify → refina requisitos 6. Rafael:
+        /speckit.plan "API REST com Spring Boot, PostgreSQL..." → specs/042-financial-report/plan.md
+        + research.md 7. Rafael: /speckit.tasks → tasks.md gerado 8. Rafael: /speckit.taskstoissues
+        → Issues criadas no GitHub 9. Rafael: /speckit.implement → executa tasks com commits 10.
+        Rafael: Abre PR para DEV ISOLAMENTO: Cada dev tem specs/NNN-feature/ próprio. Constitution
+        (.specify/memory/) é read-only durante development. Conflitos são mínimos — specs ficam em
+        folders separados.
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pontos fortes</h4>
+          <ul>
+            <li>Isolamento natural por folder numerado</li>
+            <li>Constitution garante padrões entre 12 devs</li>
+            <li>Tasks → GitHub Issues integra com board do time</li>
+            <li>Branch-per-feature alinha com fluxo master→DEV</li>
+            <li>Extensível (presets para enforcement do time)</li>
+            <li>Scripts bash automatizam setup</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Problemas no cenário</h4>
+          <ul>
+            <li>7 passos é burocrático para hotfixes/tasks simples</li>
+            <li>Dependência Python (uv) pode incomodar devs Java/.NET</li>
+            <li>
+              Numeração sequencial (001, 042) pode conflitar se 2 devs criam spec ao mesmo tempo
+            </li>
+            <li>Curva de aprendizado maior para 12 pessoas</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>3.3 Com OpenSpec</h3>
+      <div class="flow-diagram">
+        1. Rafael: git checkout -b feat/financial-report (de master) 2. Rafael: /opsx:propose
+        financial-report-endpoint → openspec/changes/financial-report-endpoint/ criado: -
+        proposal.md (por quê, o quê) - specs/ (requisitos e cenários) - design.md (abordagem
+        técnica) - tasks.md (checklist de implementação) 3. Rafael: Revisa/itera os artefatos (edita
+        livremente) 4. Rafael: /opsx:apply → Agente implementa tasks sequencialmente com commits 5.
+        Rafael: /opsx:archive → Move para openspec/changes/archive/2026-05-26-financial-report/ 6.
+        Rafael: Abre PR para DEV ISOLAMENTO: Cada change tem folder próprio. Sem phase gates rígidos
+        — pode iterar em qualquer ordem. 12 devs podem ter 12 changes/ simultâneos sem conflito.
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pontos fortes</h4>
+          <ul>
+            <li>Isolamento perfeito por change folder</li>
+            <li>Filosofia "brownfield first" — feito para codebase legada</li>
+            <li>3 comandos core (/propose, /apply, /archive) = fácil de ensinar</li>
+            <li>Fluid, não rígido — sem phase gates</li>
+            <li>TypeScript/Node.js — alinhado com ecosistema JS</li>
+            <li>Archive mantém histórico de decisões</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Problemas no cenário</h4>
+          <ul>
+            <li>Sem conversão tasks→Issues (board management manual)</li>
+            <li>Projeto mais novo (v1.3.1), menos battle-tested enterprise</li>
+            <li>Telemetria ativa por padrão (pode ser bloqueio em empresa)</li>
+            <li>Sem mecanismo de "constitution" para enforçar padrões globais</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2>4. Pontuação Final</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Critério (peso)</th>
+            <th>TLC Spec-Driven</th>
+            <th>GitHub Spec Kit</th>
+            <th>OpenSpec</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Paralelismo 12 devs (30%)</td>
+            <td class="score-low">3/10</td>
+            <td class="score-high">9/10</td>
+            <td class="score-high">8/10</td>
+          </tr>
+          <tr>
+            <td>Codebase legada (20%)</td>
+            <td class="score-high">9/10</td>
+            <td class="score-med">7/10</td>
+            <td class="score-high">9/10</td>
+          </tr>
+          <tr>
+            <td>Facilidade de adoção (20%)</td>
+            <td class="score-high">9/10</td>
+            <td class="score-med">6/10</td>
+            <td class="score-high">9/10</td>
+          </tr>
+          <tr>
+            <td>Integração fluxo Git (15%)</td>
+            <td class="score-low">4/10</td>
+            <td class="score-high">9/10</td>
+            <td class="score-med">7/10</td>
+          </tr>
+          <tr>
+            <td>Governança multi-time (15%)</td>
+            <td class="score-low">3/10</td>
+            <td class="score-high">9/10</td>
+            <td class="score-med">5/10</td>
+          </tr>
+          <tr>
+            <td><strong>SCORE PONDERADO</strong></td>
+            <td><span class="score score-low">5.4</span></td>
+            <td><span class="score score-high">8.1</span></td>
+            <td><span class="score score-high">7.7</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="verdict">
+        <h2>Recomendação: GitHub Spec Kit</h2>
+        <p style="margin: 1rem 0">
+          Para o cenário descrito — 12 devs, codebase legada, múltiplos times, fluxo branch→PR — o
+          <strong>GitHub Spec Kit</strong> é a melhor escolha pelos seguintes motivos:
+        </p>
+        <ul style="margin: 1rem 0">
+          <li>
+            <strong>Isolamento por design:</strong> Cada feature vive em
+            <code>specs/NNN-feature/</code> — zero conflitos entre branches paralelas
+          </li>
+          <li>
+            <strong>Constitution:</strong> Garante que 12 devs sigam os mesmos padrões sem
+            supervisão manual
+          </li>
+          <li>
+            <strong>Tasks → Issues:</strong> Converte breakdown em GitHub Issues — integração direta
+            com board e sprint planning
+          </li>
+          <li>
+            <strong>Presets organizacionais:</strong> Pode criar um preset do time que enforce
+            regras (ex: "toda spec precisa impacto em módulos adjacentes")
+          </li>
+          <li>
+            <strong>Branch-first workflow:</strong> Alinha perfeitamente com fluxo master→branch→PR
+            para DEV
+          </li>
+          <li>
+            <strong>Backed by GitHub:</strong> 106k stars, 1003 commits, manutenção ativa, 30+
+            integrações de agente
+          </li>
+        </ul>
+
+        <h3 style="margin-top: 1.5rem; color: var(--yellow)">Alternativa pragmática: OpenSpec</h3>
+        <p>
+          Se a <strong>curva de aprendizado</strong> for a maior preocupação e o time priorizar
+          adoção rápida com mínima fricção, o OpenSpec é uma alternativa sólida. Seus 3 comandos
+          core são triviais de ensinar. Porém, vocês perdem governança centralizada (constitution) e
+          conversão automática para Issues.
+        </p>
+
+        <h3 style="margin-top: 1.5rem; color: var(--red)">Evitar: TLC Spec-Driven</h3>
+        <p>
+          Apesar de excelente para desenvolvedor solo ou dupla, o TLC Spec-Driven tem limitações
+          fundamentais para 12 devs em paralelo: STATE.md compartilhado, restrição "one feature per
+          cycle", e ausência de mecanismos de coordenação entre branches.
+        </p>
+      </div>
+
+      <h2>5. Plano de Adoção Sugerido (Spec Kit)</h2>
+      <ol style="margin: 1rem 0">
+        <li>
+          <strong>Semana 1:</strong> Tech Lead instala Spec Kit no repo, cria Constitution com
+          padrões do time
+        </li>
+        <li>
+          <strong>Semana 2:</strong> 2-3 devs piloto usam o fluxo completo em features reais da
+          sprint
+        </li>
+        <li>
+          <strong>Semana 3:</strong> Cria preset customizado do time (templates de spec/plan
+          ajustados)
+        </li>
+        <li>
+          <strong>Semana 4:</strong> Rollout para os 12 devs com sessão de 30min demonstrando o
+          workflow
+        </li>
+        <li><strong>Ongoing:</strong> Constitution evolui com decisões arquiteturais do time</li>
+      </ol>
+
+      <p style="margin-top: 2rem; color: var(--muted); font-size: 0.85rem">
+        Relatório gerado em 26/05/2026 | Dados coletados dos READMEs oficiais de cada projeto
+      </p>
+    </div>
+  </body>
+</html>

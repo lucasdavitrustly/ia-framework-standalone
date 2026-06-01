@@ -27,7 +27,7 @@ ia-framework/
 │   └── llm-chunking/       # LLM chunking spike
 ├── docs/                   # Documentation
 ├── manager/                # Manager utilities
-├── .planning/              # GSD workflow artifacts
+├── .planning/              # Planning artifacts (legacy GSD, now SpecKit)
 │   ├── codebase/           # Architecture docs (this file)
 │   ├── phases/             # Phase plans (01-41+)
 │   └── quick/              # Quick task plans
@@ -196,8 +196,8 @@ ia-framework/
 
 **`.planning/`:**
 
-- Purpose: GSD workflow artifacts (phase plans, quick tasks, codebase docs)
-- Generated: Yes (by GSD commands)
+- Purpose: Planning artifacts (phase plans, quick tasks, codebase docs) — legacy GSD, now SpecKit
+- Generated: Yes (by planning commands)
 - Committed: Yes
 
 **`dist/`** (in each package):
