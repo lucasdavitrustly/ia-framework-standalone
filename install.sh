@@ -60,7 +60,7 @@ echo -e "${YELLOW}→${NC} Checking installed tools..."
 echo ""
 
 # Docker (required — hard fail if install fails)
-docker_status=$(check_docker)
+docker_status=$(check_docker) || true
 if echo "$docker_status" | grep -q "^INSTALLED"; then
   echo -e "  ${GREEN}✓${NC} Docker: ${docker_status#INSTALLED: }"
 else
@@ -72,7 +72,7 @@ else
 fi
 
 # Node.js 22+ (required — hard fail if install fails)
-node_status=$(check_node)
+node_status=$(check_node) || true
 if echo "$node_status" | grep -q "^INSTALLED"; then
   echo -e "  ${GREEN}✓${NC} Node.js: ${node_status#INSTALLED: }"
 else
@@ -84,7 +84,7 @@ else
 fi
 
 # Ollama (recommended — soft fail)
-ollama_status=$(check_ollama)
+ollama_status=$(check_ollama) || true
 if echo "$ollama_status" | grep -q "^INSTALLED"; then
   echo -e "  ${GREEN}✓${NC} Ollama: ${ollama_status#INSTALLED: }"
 else
@@ -93,7 +93,7 @@ else
 fi
 
 # OpenCode (recommended — soft fail)
-opencode_status=$(check_opencode)
+opencode_status=$(check_opencode) || true
 if echo "$opencode_status" | grep -q "^INSTALLED"; then
   echo -e "  ${GREEN}✓${NC} OpenCode: ${opencode_status#INSTALLED: }"
 else
@@ -102,7 +102,7 @@ else
 fi
 
 # SpecKit (recommended — soft fail)
-setup_speckit
+setup_speckit || echo -e "  ${YELLOW}⚠${NC} SpecKit setup skipped — install manually: uv tool install specify-cli"
 
 echo ""
 
