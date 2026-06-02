@@ -67,6 +67,7 @@ The installer (`install.sh`) auto-detects and installs missing tools. If a **req
 | **pnpm**     | >= 10.0.0 | `npm install -g pnpm`                                                                            | **Yes** — hard fail | Installed in Step 2 after Node.js is confirmed.                                                                                                                                                                                                                       |
 | **Ollama**   | Latest    | macOS: `brew install ollama` / Linux: `ollama.com/install.sh`                                    | **No** — soft fail  | Also starts the Ollama service and presents an interactive model selection menu (see [Embedding Models](#embedding-models)). If install or model pull fails, prints warning and continues. Browse available models at [ollama.com/search](https://ollama.com/search). |
 | **OpenCode** | Latest    | `npm install -g @opencode-sh/opencode`                                                           | **No** — soft fail  | AI coding assistant that consumes MCP tools. If install fails, prints warning and continues — you can install manually later.                                                                                                                                         |
+| **SpecKit**  | Latest    | `uv tool install specify-cli` (requires Python 3.11+ and uv)                                     | **No** — soft fail  | Enables `/speckit.*` slash commands in OpenCode for spec-driven development. The installer checks Python 3.11+ → uv → specify CLI, with version selection. Skips gracefully if any step fails.                                                                        |
 
 > If you skip Ollama, set `OPENAI_API_KEY` and change `embedding.provider` to `"openai"` in `project.json` for cloud embeddings.
 
@@ -83,7 +84,7 @@ cd ia-framework
 
 The installer will:
 
-1. **Check and install prerequisites** — Docker and Node.js 22+ are required (installer exits if they fail). Ollama and OpenCode are optional (installer warns and continues if they fail).
+1. **Check and install prerequisites** — Docker and Node.js 22+ are required (installer exits if they fail). Ollama, OpenCode, and SpecKit are optional (installer warns and continues if they fail).
 2. Install **pnpm** if missing (`npm install -g pnpm`)
 3. Build all 14 packages (`pnpm install && pnpm build`)
 4. **Install `ia-framework` as a global CLI tool** — runs `npm link` inside `packages/cli` so `ia-framework` is available from anywhere in your terminal. If linking fails, the CLI is still usable via `node /path/to/ia-framework/packages/cli/dist/bin.js`.
@@ -103,6 +104,11 @@ After it completes:
 > Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready.
 
 ## Recent Improvements (v1.6 — RAG Retrieval Quality)
+
+### Current Changes
+
+- **SpecKit CLI integration** — `install.sh` now includes an optional step to install [SpecKit](https://github.com/github/spec-kit) (`specify` CLI) for spec-driven development workflows. Requires Python 3.11+ and uv; skips gracefully if unavailable.
+- **`.opencode/` untracked** — The `.opencode/` directory is now per-user configuration, no longer committed to git. Each developer maintains their own slash commands, skills, and agent definitions locally.
 
 ### New in v1.6
 
@@ -508,6 +514,24 @@ Shows the database configuration from `db.json` and current connection status.
 
 ---
 
+### Prompt Versioning Commands
+
+```bash
+ia-framework prompt bump [options]
+  --config <path>    Path to project.json
+```
+
+Increments the prompt version counter, invalidating the LLM chunk cache. Use this after modifying the LLM chunking prompt to force re-summarization on the next `index --strategy llm` run.
+
+```bash
+ia-framework prompt compare <v1> <v2> [options]
+  --config <path>    Path to project.json
+```
+
+Compares two prompt versions by running a full re-index and benchmark for each, then showing the MRR delta between them. Use to validate that prompt changes improve retrieval quality.
+
+---
+
 ### Agent Documentation Commands
 
 ```bash
@@ -681,6 +705,8 @@ Each server you add gives the AI assistant more context to work with. ia-framewo
 ## Configuration
 
 The main config file is `.ia-framework/project.json`:
+
+> **Note:** The `.opencode/` directory contains per-user OpenCode configuration (slash commands, skills, agents). It is not tracked in git — each developer's local copy is independent.
 
 ```json
 {
@@ -918,6 +944,34 @@ ia-framework db status
 ```
 
 After indexing, `search_codebase` queries will also match table names, column types, and relationships. The `query_database` MCP tool lets the AI run SQL directly.
+
+## SpecKit (Spec-Driven Development)
+
+ia-framework integrates with [GitHub SpecKit](https://github.com/github/spec-kit) for spec-driven development workflows. Once the `specify` CLI is installed (via `install.sh` or manually), OpenCode gains `/speckit.*` slash commands for structured feature development:
+
+| Command              | Purpose                                               |
+| -------------------- | ----------------------------------------------------- |
+| `/speckit.specify`   | Create a feature specification from a description     |
+| `/speckit.clarify`   | Resolve ambiguities in the spec via guided questions  |
+| `/speckit.plan`      | Generate implementation plan with research and design |
+| `/speckit.tasks`     | Break the plan into executable task list              |
+| `/speckit.implement` | Execute tasks phase-by-phase                          |
+| `/speckit.checklist` | Generate quality checklists for validation            |
+| `/speckit.analyze`   | Analyze implementation against spec                   |
+
+### Manual SpecKit Installation
+
+If you skipped SpecKit during `install.sh`:
+
+```bash
+# Install uv (Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install specify CLI
+uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.0
+```
+
+The `.specify/` directory in the repo contains project-local SpecKit configuration (templates, extensions, memory). It's committed to git and shared across the team.
 
 ## Development
 
