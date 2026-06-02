@@ -53,7 +53,7 @@ check_speckit() {
 install_uv() {
   echo -e "  ${YELLOW:-}→${NC:-} uv (Python package manager) is required for SpecKit."
   read -r -p "  Install uv now? [Y/n] " response
-  case "${response,,}" in
+  case "$(echo "$response" | tr '[:upper:]' '[:lower:]')" in
     n|no)
       echo -e "  ${YELLOW:-}⚠${NC:-} uv installation skipped."
       echo "  Manual install: curl -LsSf https://astral.sh/uv/install.sh | sh"
@@ -135,7 +135,7 @@ install_speckit() {
   fi
 
   read -r -p "  Proceed with installation? [Y/n] " response
-  case "${response,,}" in
+  case "$(echo "$response" | tr '[:upper:]' '[:lower:]')" in
     n|no)
       echo -e "  ${YELLOW:-}⚠${NC:-} SpecKit installation skipped."
       echo "  Manual install: uv tool install ${install_target}"
