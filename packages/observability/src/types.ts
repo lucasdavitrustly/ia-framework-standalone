@@ -76,6 +76,84 @@ export interface EventsPage {
 }
 
 /**
+ * A single MCP tool call request — logged every time any MCP tool is invoked.
+ */
+export interface McpRequest {
+  /** Unique request ID (UUIDv4) */
+  id: string;
+  /** Session identifier */
+  sessionId: string;
+  /** MCP tool name (e.g., search_codebase, get_file) */
+  toolName: string;
+  /** Input parameters as JSON object */
+  inputParams: Record<string, unknown>;
+  /** Full response content sent to the LLM */
+  responseContent: string;
+  /** Token count for input (query + params) */
+  inputTokens: number;
+  /** Token count for response content */
+  outputTokens: number;
+  /** Request duration in milliseconds */
+  durationMs: number;
+  /** ISO 8601 timestamp */
+  timestamp: string;
+  /** Whether response was truncated due to size limit */
+  isTruncated: boolean;
+}
+
+/**
+ * Options for listing MCP requests.
+ */
+export interface ListRequestsOptions {
+  limit: number;
+  offset: number;
+  toolName?: string;
+  from?: string;
+  to?: string;
+}
+
+/**
+ * Paginated list of MCP requests (without response content for list views).
+ */
+export interface RequestsPage {
+  items: Omit<McpRequest, 'responseContent'>[];
+  total: number;
+}
+
+/**
+ * Aggregated request statistics.
+ */
+export interface RequestSummaryStats {
+  totalRequests: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgDurationMs: number;
+  requestsToday: number;
+}
+
+/**
+ * Daily request statistics.
+ */
+export interface DailyRequestStats {
+  date: string;
+  requestCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgDurationMs: number;
+}
+
+/**
+ * Per-tool request statistics.
+ */
+export interface ToolRequestStats {
+  toolName: string;
+  requestCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgDurationMs: number;
+}
+
+/**
  * Serializable representation of a Maven module graph for disk cache and SQLite storage.
  * Canonical source: @ia-framework/core packages/core/src/maven/types.ts
  */

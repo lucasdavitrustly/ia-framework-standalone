@@ -22,6 +22,7 @@ import { searchRouter } from './routes/search.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { tuningRouter } from './routes/tuning.js';
 import { logsRouter } from './routes/logs.js';
+import { requestsRouter, type RequestsStoreDep } from './routes/requests.js';
 
 export interface MetricsStoreDep {
   getTotalStats(): TotalStats;
@@ -44,6 +45,8 @@ export interface AppDependencies {
   frameworkDir: string;
   /** Optional fetch override for testing */
   fetchFn?: typeof fetch;
+  /** Optional MCP requests store for the requests dashboard */
+  requestsStore?: RequestsStoreDep;
   /** Search dependencies — undefined when no Qdrant collections are available */
   search?: {
     collectionEngines: CollectionEngine[];
@@ -90,6 +93,10 @@ export function createApp(deps: AppDependencies): Hono {
   app.route('/api/indexing', indexingApp);
   app.route('/api/db', dbRouter({ frameworkDir: deps.frameworkDir }));
   app.route('/api/logs', logsRouter({ frameworkDir: deps.frameworkDir }));
+
+  if (deps.requestsStore) {
+    app.route('/api/requests', requestsRouter({ requestsStore: deps.requestsStore }));
+  }
 
   if (deps.search) {
     const searchApp = searchRouter(deps.search);
