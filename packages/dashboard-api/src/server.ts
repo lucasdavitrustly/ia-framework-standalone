@@ -151,6 +151,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
     configPath,
     indexingState,
     frameworkDir,
+    requestsStore: metricsStore,
     ...(searchDeps !== undefined ? { search: searchDeps } : {}),
   });
 
