@@ -143,15 +143,34 @@
 
 ---
 
-## Phase 7: Polish & Cross-Cutting Concerns
+## Phase 7: User Story 5 - Unified Token Usage Dashboard (Priority: P2)
+
+**Goal**: Replace the `/tokens` page with MCP request data — summary stats, daily chart, tool breakdown, and paginated request table.
+
+**Independent Test**: Run `pnpm dev` in apps/dashboard, navigate to `/tokens`, verify all widgets render correctly with data from `/api/requests` endpoints.
+
+### Implementation for User Story 5
+
+- [x] T041 [US5] Add MCP request types (McpRequest, RequestsPage, RequestSummaryStats, DailyRequestStats, ToolRequestStats) to apps/dashboard/src/api/client.ts
+- [x] T042 [US5] Add API methods (getRequests, getRequestById, getRequestStats) to apps/dashboard/src/api/client.ts
+- [x] T043 [US5] Create McpDailyChart component (Recharts AreaChart, input vs output tokens per day) in apps/dashboard/src/components/McpDailyChart.tsx
+- [x] T044 [US5] Create McpRequestTable component (paginated, tool filter dropdown, expandable rows with response content) in apps/dashboard/src/components/McpRequestTable.tsx
+- [x] T045 [US5] Rewrite TokenUsage page to use MCP data: summary cards + McpDailyChart + McpRequestTable in apps/dashboard/src/pages/TokenUsage.tsx
+- [x] T046 [US5] Remove unused old components/imports (DailyTokenChart, QueryEventTable references) if no longer needed
+
+**Checkpoint**: `/tokens` page shows unified MCP request data. Old RAG-only view is gone.
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T036 [P] Add Zod validation for request query params in packages/dashboard-api/src/routes/requests.ts
-- [x] T037 [P] Add SQLite indexes (timestamp, tool_name) to mcp_requests table in packages/observability/src/metrics-store.ts
-- [x] T038 Run `pnpm build` and fix any type errors across all packages
-- [x] T039 Run `pnpm test` and ensure all tests pass
-- [ ] T040 Run quickstart.md validation (manual end-to-end test)
+- [ ] T047 [P] Add Zod validation for request query params in packages/dashboard-api/src/routes/requests.ts
+- [x] T048 [P] Add SQLite indexes (timestamp, tool_name) to mcp_requests table in packages/observability/src/metrics-store.ts
+- [x] T049 Run `pnpm build` and fix any type errors across all packages
+- [x] T050 Run `pnpm test` and ensure all tests pass
+- [ ] T051 Run quickstart.md validation (manual end-to-end test)
 
 ---
 
@@ -165,7 +184,8 @@
 - **User Story 2 (Phase 4)**: Depends on Phase 3 (builds on request-logger)
 - **User Story 3 (Phase 5)**: Depends on Phase 2 (only needs MetricsStore methods)
 - **User Story 4 (Phase 6)**: Depends on Phase 5 (extends API routes)
-- **Polish (Phase 7)**: Depends on all stories complete
+- **User Story 5 (Phase 7)**: Depends on Phase 5 + Phase 6 (needs API endpoints available)
+- **Polish (Phase 8)**: Depends on all stories complete
 
 ### User Story Dependencies
 

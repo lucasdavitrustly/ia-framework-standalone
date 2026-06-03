@@ -73,6 +73,23 @@ As a developer, I want to filter the request history by date range, tool name, a
 
 ---
 
+### User Story 5 - Unified Token Usage Dashboard (Priority: P2)
+
+As a developer, I want the `/tokens` page in the React dashboard to display MCP request data (summary stats, daily token chart, by-tool breakdown, and a paginated request log with expandable response content), replacing the current RAG-only metrics view, so I have a single unified view of all MCP usage.
+
+**Why this priority**: The backend tracking (US1-US4) is complete — this story surfaces the data to users via the existing dashboard UI.
+
+**Independent Test**: Start the dashboard, navigate to `/tokens`, and verify summary cards, daily chart, tool breakdown, and request table all render with data from the `/api/requests` endpoints.
+
+**Acceptance Scenarios**:
+
+1. **Given** the dashboard is running with recorded MCP requests, **When** I navigate to `/tokens`, **Then** I see summary cards (total requests, total input/output tokens, avg duration), a daily input vs output token area chart, and a paginated request table.
+2. **Given** requests from multiple tools exist, **When** I view the `/tokens` page, **Then** I can filter the request table by tool name using a dropdown.
+3. **Given** a request is listed in the table, **When** I click to expand it, **Then** I see the full response content (or truncated with indicator) in a collapsible row.
+4. **Given** no MCP requests exist yet, **When** I navigate to `/tokens`, **Then** I see an empty state message instead of broken charts.
+
+---
+
 ### Edge Cases
 
 - What happens when the MCP server processes a request but the response is very large (e.g., >100KB)? The system should still record it but may truncate stored response content at a reasonable limit.

@@ -76,4 +76,15 @@ packages/dashboard-api/src/routes/
 └── requests.test.ts          # NEW: tests
 ```
 
-**Structure Decision**: Extends three existing packages. No new packages needed. The request-logging middleware lives in mcp-server since it intercepts tool calls at that layer. Storage schema extends the existing MetricsStore in observability. Dashboard API adds a new route module following existing patterns.
+### Frontend (dashboard app)
+
+```text
+apps/dashboard/src/
+├── api/client.ts             # Extend with MCP request types + API methods
+├── pages/TokenUsage.tsx      # REWRITE: replace RAG metrics with MCP request data
+├── components/
+│   ├── McpDailyChart.tsx     # NEW: daily input vs output tokens (Recharts AreaChart)
+│   └── McpRequestTable.tsx   # NEW: paginated table with expandable response rows
+```
+
+**Structure Decision**: Extends three existing packages plus the dashboard app. No new packages needed. The request-logging middleware lives in mcp-server since it intercepts tool calls at that layer. Storage schema extends the existing MetricsStore in observability. Dashboard API adds a new route module following existing patterns. The frontend replaces the old RAG-only `/tokens` page with unified MCP request data.

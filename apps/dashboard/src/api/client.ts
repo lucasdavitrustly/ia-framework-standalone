@@ -295,6 +295,68 @@ export interface TokenBreakdownEntry {
   totalQueries: number;
 }
 
+// ─── MCP Request types (mirrors packages/observability/src/types.ts) ───
+
+export interface McpRequest {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  inputParams: Record<string, unknown>;
+  responseContent: string;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  timestamp: string;
+  isTruncated: boolean;
+}
+
+export type McpRequestListItem = Omit<McpRequest, 'responseContent'>;
+
+export interface McpRequestsPage {
+  items: McpRequestListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface McpRequestSummaryStats {
+  totalRequests: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgDurationMs: number;
+  requestsToday: number;
+}
+
+export interface McpDailyRequestStats {
+  date: string;
+  requestCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgDurationMs: number;
+}
+
+export interface McpToolRequestStats {
+  toolName: string;
+  requestCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgDurationMs: number;
+}
+
+export interface McpRequestsStatsResponse {
+  summary: McpRequestSummaryStats;
+  byDay: McpDailyRequestStats[];
+  byTool: McpToolRequestStats[];
+}
+
+export interface McpRequestsListParams {
+  limit?: number;
+  offset?: number;
+  tool_name?: string;
+  from?: string;
+  to?: string;
+}
+
 // Base URL — same origin via Vite proxy in dev; relative path in production
 const BASE = '';
 
@@ -399,4 +461,24 @@ export const DashboardClient = {
   },
   getTuningScores: (historyId: string) =>
     get<ScoreAnalysisResponse>(`/api/tuning/scores/${historyId}`),
+
+  // ─── MCP Requests ───
+  getMcpRequests: (params?: McpRequestsListParams) => {
+    const qs = new URLSearchParams();
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+    if (params?.tool_name) qs.set('tool_name', params.tool_name);
+    if (params?.from) qs.set('from', params.from);
+    if (params?.to) qs.set('to', params.to);
+    const q = qs.toString();
+    return get<McpRequestsPage>(`/api/requests${q ? `?${q}` : ''}`);
+  },
+  getMcpRequestById: (id: string) => get<McpRequest>(`/api/requests/${id}`),
+  getMcpRequestsStats: (params?: { from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.from) qs.set('from', params.from);
+    if (params?.to) qs.set('to', params.to);
+    const q = qs.toString();
+    return get<McpRequestsStatsResponse>(`/api/requests/stats${q ? `?${q}` : ''}`);
+  },
 };
