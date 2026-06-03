@@ -22,10 +22,10 @@ select_embedding_model() {
 
   if [ ${#models[@]} -eq 0 ]; then
     echo "  No models found locally."
-    echo "  Popular embedding models: nomic-embed-text, mxbai-embed-large, all-minilm"
-    printf "  Enter a model name to pull [nomic-embed-text]: "
+    echo "  Popular embedding models: qwen3-embedding:0.6b, nomic-embed-text, mxbai-embed-large"
+    printf "  Enter a model name to pull [qwen3-embedding:0.6b]: "
     read -r selected_model
-    selected_model="${selected_model:-nomic-embed-text}"
+    selected_model="${selected_model:-qwen3-embedding:0.6b}"
   else
     # Known embedding models for hint markers
     local known_embed="nomic-embed-text mxbai-embed-large all-minilm"
@@ -59,8 +59,8 @@ select_embedding_model() {
     echo -e "  ${YELLOW}→${NC} Pulling model: ${selected_model}"
     echo "    (This may take a few minutes...)"
     if ! ollama pull "$selected_model"; then
-      echo -e "  ${RED}✗${NC} Failed to pull ${selected_model}. Using nomic-embed-text as fallback."
-      selected_model="nomic-embed-text"
+      echo -e "  ${RED}✗${NC} Failed to pull ${selected_model}. Using qwen3-embedding:0.6b as fallback."
+      selected_model="qwen3-embedding:0.6b"
       ollama pull "$selected_model" || true
     fi
   fi
@@ -83,6 +83,7 @@ select_embedding_model() {
   # Fallback dimension lookup for known models
   if [ -z "$dims" ]; then
     case "${selected_model%%:*}" in
+      qwen3-embedding) dims=1024 ;;
       nomic-embed-text) dims=768 ;;
       mxbai-embed-large) dims=1024 ;;
       all-minilm) dims=384 ;;

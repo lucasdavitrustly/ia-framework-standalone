@@ -15,10 +15,54 @@ init_config() {
   local config_dir="${ia_dir}/.ia-framework"
   local config_file="${config_dir}/project.json"
 
-  # Skip if already configured
+  # If config exists, merge missing fields instead of skipping
   if [ -f "$config_file" ]; then
     echo -e "  ${GREEN}✓${NC} Config found: ${config_file}"
-    echo "    (Delete and re-run install.sh to reconfigure)"
+    echo -e "  ${YELLOW}→${NC} Checking for missing fields and updating defaults..."
+
+    # Backup before merge
+    cp "$config_file" "${config_file}.bak"
+
+    # Merge missing fields using inline Node script
+    node --input-type=module <<MERGE_EOF
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
+
+const configPath = '${config_file}';
+const config = JSON.parse(readFileSync(configPath, 'utf8'));
+let changed = false;
+
+// Convert targetProjectPath to repos array if old format
+if (config.targetProjectPath && !config.repos) {
+  const p = config.targetProjectPath;
+  config.repos = [{ name: basename(p), path: p }];
+  delete config.targetProjectPath;
+  changed = true;
+}
+
+// Ensure embedding.prefixes exists
+if (config.embedding && !config.embedding.prefixes) {
+  config.embedding.prefixes = {
+    document: "search_document: ",
+    query: "search_query: "
+  };
+  changed = true;
+}
+
+// Fix vectorStore host from "qdrant" to "localhost"
+if (config.vectorStore && config.vectorStore.host === "qdrant") {
+  config.vectorStore.host = "localhost";
+  changed = true;
+}
+
+if (changed) {
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + '\\n');
+  console.log('  Updated config with missing fields (backup: project.json.bak)');
+} else {
+  console.log('  Config is up to date — no changes needed');
+}
+MERGE_EOF
+
     return 0
   fi
 
@@ -95,17 +139,28 @@ init_config() {
   fi
 
   # Fallback: write default config without profile
+  local repo_name
+  repo_name=$(basename "$target_path")
   cat > "$config_file" <<EOF
 {
-  "targetProjectPath": "${target_path}",
+  "repos": [
+    {
+      "name": "${repo_name}",
+      "path": "${target_path}"
+    }
+  ],
   "embedding": {
     "provider": "ollama",
-    "model": "${SELECTED_EMBED_MODEL:-nomic-embed-text}",
+    "model": "${SELECTED_EMBED_MODEL:-qwen3-embedding:0.6b}",
     "baseUrl": "http://localhost:11434",
-    "dimensions": ${SELECTED_EMBED_DIMS:-768}
+    "dimensions": ${SELECTED_EMBED_DIMS:-1024},
+    "prefixes": {
+      "document": "search_document: ",
+      "query": "search_query: "
+    }
   },
   "vectorStore": {
-    "host": "qdrant",
+    "host": "localhost",
     "port": 6333,
     "collectionName": "codebase"
   },
@@ -135,5 +190,8 @@ EOF
 
   echo -e "  ${GREEN}✓${NC} Config created: ${config_file}"
   echo "    Target project: ${target_path}"
+  echo ""
+  echo -e "  ${BLUE:-}ℹ${NC} To index multiple repositories, add more entries to the \"repos\" array:"
+  echo "    { \"name\": \"other-repo\", \"path\": \"/path/to/other-repo\" }"
   return 0
 }

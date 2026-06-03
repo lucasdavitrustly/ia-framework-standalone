@@ -88,6 +88,109 @@ check_opencode() {
 }
 
 # ──────────────────────────────────────────────────────
+# display_version_error
+# Displays formatted error box when Node version is wrong
+# Args: $1 = found version (or "none")
+# ──────────────────────────────────────────────────────
+display_version_error() {
+  local found="${1:-none}"
+  echo ""
+  echo -e "${_RED}╔══════════════════════════════════════════════════════════╗${_NC}"
+  echo -e "${_RED}║  ERROR: Node.js ${REQUIRED_NODE_MAJOR}+ is required but not active        ║${_NC}"
+  echo -e "${_RED}╠══════════════════════════════════════════════════════════╣${_NC}"
+  if [ "$found" = "none" ]; then
+    echo -e "${_RED}║  Node.js is not installed or not in PATH.                ║${_NC}"
+  else
+    echo -e "${_RED}║  Found: v${found} (need >= ${REQUIRED_NODE_MAJOR}.0.0)                        ║${_NC}"
+  fi
+  echo -e "${_RED}╚══════════════════════════════════════════════════════════╝${_NC}"
+  echo ""
+}
+
+# ──────────────────────────────────────────────────────
+# display_activate_msg
+# Shows instructions when Node 22 is installed but not active
+# ──────────────────────────────────────────────────────
+display_activate_msg() {
+  echo ""
+  echo -e "${_YELLOW}Node.js ${REQUIRED_NODE_MAJOR} was installed but is not the active version.${_NC}"
+  echo ""
+  echo "  Please activate Node ${REQUIRED_NODE_MAJOR} in your shell:"
+  echo ""
+  echo "    nvm use ${REQUIRED_NODE_MAJOR}        # if using nvm"
+  echo "    fnm use ${REQUIRED_NODE_MAJOR}        # if using fnm"
+  echo "    mise use node@${REQUIRED_NODE_MAJOR}   # if using mise"
+  echo ""
+  echo "  Then re-run: ./install.sh"
+  echo ""
+}
+
+# ──────────────────────────────────────────────────────
+# check_node_active
+# Gate function: verifies Node 22+ is the ACTIVE version.
+# If not, displays error, offers to install, re-verifies.
+# Returns: 0 if Node 22+ is active, 1 if not (caller should exit)
+# ──────────────────────────────────────────────────────
+check_node_active() {
+  # Check if node is available and version is adequate
+  if command -v node &>/dev/null; then
+    local version_str
+    version_str=$(node --version 2>/dev/null | tr -d 'v')
+    local major
+    major=$(echo "$version_str" | cut -d. -f1)
+
+    if [ -n "$major" ] && [ "$major" -ge "$REQUIRED_NODE_MAJOR" ] 2>/dev/null; then
+      # Node 22+ is active — pass
+      return 0
+    fi
+
+    # Node found but wrong version
+    display_version_error "$version_str"
+  else
+    # Node not found at all
+    display_version_error "none"
+  fi
+
+  # Offer to install
+  if [ -t 0 ]; then
+    printf "  Would you like to install Node.js %s? [Y/n] " "$REQUIRED_NODE_MAJOR"
+    read -r answer
+    case "${answer:-Y}" in
+      [Yy]|[Yy]es|"")
+        # Call install_node (defined in install-node.sh, sourced by install.sh)
+        if type install_node &>/dev/null && install_node; then
+          # Re-verify after install
+          if command -v node &>/dev/null; then
+            local new_version
+            new_version=$(node --version 2>/dev/null | tr -d 'v')
+            local new_major
+            new_major=$(echo "$new_version" | cut -d. -f1)
+            if [ -n "$new_major" ] && [ "$new_major" -ge "$REQUIRED_NODE_MAJOR" ] 2>/dev/null; then
+              echo -e "  ${_GREEN}✓${_NC} Node.js v${new_version} is now active"
+              return 0
+            fi
+          fi
+          # Installed but not active
+          display_activate_msg
+          return 1
+        else
+          echo -e "  ${_RED}✗${_NC} Node.js installation failed."
+          return 1
+        fi
+        ;;
+      *)
+        echo "  Aborting — Node.js ${REQUIRED_NODE_MAJOR}+ is required."
+        return 1
+        ;;
+    esac
+  else
+    # Non-interactive — just fail
+    echo "  Non-interactive mode — cannot install Node.js automatically."
+    return 1
+  fi
+}
+
+# ──────────────────────────────────────────────────────
 # check_all
 # Checks all 4 prerequisites.
 # Prints status for each.

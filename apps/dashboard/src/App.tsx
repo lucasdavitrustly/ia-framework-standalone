@@ -8,6 +8,7 @@ import SearchPage from './pages/SearchPage.tsx';
 import SearchHistoryPage from './pages/SearchHistoryPage.tsx';
 import AnalyticsPage from './pages/AnalyticsPage.tsx';
 import TuningPage from './pages/TuningPage.tsx';
+import LogsPage from './pages/LogsPage.tsx';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="benchmarks" element={<Benchmarks />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="tuning" element={<TuningPage />} />
+          <Route path="logs" element={<LogsPage />} />
           <Route path="config" element={<Config />} />
         </Route>
       </Routes>
