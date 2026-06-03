@@ -6,6 +6,8 @@ This guide explains how to configure OpenCode to use ia-framework's MCP server f
 
 The installer (`./install.sh`) automatically configures OpenCode MCP integration. After running the installer, restart OpenCode to load the ia-framework tools.
 
+The installer also configures a custom **explore** agent (`~/.config/opencode/agents/explore.md`) that overrides OpenCode's built-in explorer. This agent is optimized for ia-framework codebase exploration using semantic search via MCP tools.
+
 ## Manual Setup
 
 If you need to configure OpenCode manually (or the automatic setup failed):
