@@ -1,20 +1,45 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DashboardClient } from '../api/client.ts';
 import type { McpRequestsStatsResponse } from '../api/client.ts';
 import McpDailyChart from '../components/McpDailyChart.tsx';
 import McpRequestTable from '../components/McpRequestTable.tsx';
 
+const POLL_INTERVAL_MS = 30_000;
+
 export default function TokenUsage() {
   const [stats, setStats] = useState<McpRequestsStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const fetchingRef = useRef(false);
 
   useEffect(() => {
-    DashboardClient.getMcpRequestsStats()
-      .then(setStats)
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }, []);
+    let cancelled = false;
+
+    const fetchStats = () => {
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
+      DashboardClient.getMcpRequestsStats()
+        .then((data) => {
+          if (!cancelled) setStats(data);
+        })
+        .catch(() => {
+          // Only show error on initial load; polling failures keep last data
+          if (!cancelled && stats === null) setError(true);
+        })
+        .finally(() => {
+          fetchingRef.current = false;
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    fetchStats();
+    const interval = setInterval(fetchStats, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="p-8">
