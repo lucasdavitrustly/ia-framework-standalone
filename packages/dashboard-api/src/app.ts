@@ -21,6 +21,7 @@ import { dbRouter } from './routes/db.js';
 import { searchRouter } from './routes/search.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { tuningRouter } from './routes/tuning.js';
+import { logsRouter } from './routes/logs.js';
 
 export interface MetricsStoreDep {
   getTotalStats(): TotalStats;
@@ -88,6 +89,7 @@ export function createApp(deps: AppDependencies): Hono {
   app.route('/api/analytics', analyticsApp);
   app.route('/api/indexing', indexingApp);
   app.route('/api/db', dbRouter({ frameworkDir: deps.frameworkDir }));
+  app.route('/api/logs', logsRouter({ frameworkDir: deps.frameworkDir }));
 
   if (deps.search) {
     const searchApp = searchRouter(deps.search);

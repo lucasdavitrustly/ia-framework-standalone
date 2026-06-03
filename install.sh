@@ -43,6 +43,17 @@ source "${SCRIPT_DIR}/scripts/start-services.sh"
 source "${SCRIPT_DIR}/scripts/init-config.sh"
 
 # ──────────────────────────────────────────────────────
+# Setup: Log directory and truncation
+# ──────────────────────────────────────────────────────
+LOG_DIR="${SCRIPT_DIR}/.ia-framework/logs"
+mkdir -p "$LOG_DIR"
+
+# Truncate log files at start of each install run
+if [ -f "${LOG_DIR}/mcp-server.log" ]; then
+  : > "${LOG_DIR}/mcp-server.log"
+fi
+
+# ──────────────────────────────────────────────────────
 # Banner
 # ──────────────────────────────────────────────────────
 echo -e "${BLUE}${BOLD}"
@@ -51,6 +62,13 @@ echo "║   ia-framework installer v0.1.0      ║"
 echo "║   AI codebase context for OpenCode   ║"
 echo "╚══════════════════════════════════════╝"
 echo -e "${NC}"
+
+# ──────────────────────────────────────────────────────
+# Step 0: Node version gate (must pass before anything)
+# ──────────────────────────────────────────────────────
+if ! check_node_active; then
+  exit 1
+fi
 
 # ──────────────────────────────────────────────────────
 # Step 1: Check & install prerequisites

@@ -72,10 +72,15 @@ if (!config.mcp['ia-framework']) {
     environment: {
       IA_FRAMEWORK_CONFIG: ia_config
     },
-    enabled: true
+    enabled: true,
+    stderr: '2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log'
   };
   console.log('  Added: ia-framework MCP server');
 } else {
+  // Ensure stderr redirect is set on existing config
+  if (!config.mcp['ia-framework'].stderr) {
+    config.mcp['ia-framework'].stderr = '2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log';
+  }
   console.log('  Skipped: ia-framework MCP server (already configured)');
 }
 
@@ -120,7 +125,8 @@ EOF
       "environment": {
         "IA_FRAMEWORK_CONFIG": "${config_path}"
       },
-      "enabled": true
+      "enabled": true,
+      "stderr": "2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log"
     },
     "context7": {
       "type": "local",
