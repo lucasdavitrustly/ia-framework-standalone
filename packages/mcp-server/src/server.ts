@@ -8,6 +8,7 @@ import type { ModuleDepsEngine } from './tools/get-module-dependencies.js';
 import { registerBenchmarkPreflightTool } from './tools/benchmark-preflight.js';
 import { registerQueryDatabaseTool } from './tools/query-database.js';
 import { registerIndexDatabaseSchemaTool } from './tools/index-database-schema.js';
+import { withRequestLogging, type RequestLoggerDeps } from './request-logger.js';
 import type { SearchEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 import type { ModuleChunkResult } from './tools/get-module-dependencies.js';
@@ -142,5 +143,45 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     }
   }
 
+  // Wire request logging for all registered tools if metricsStore + tokenCounter available
+  if (config.metricsStore && config.tokenCounter) {
+    const loggerDeps: RequestLoggerDeps = {
+      metricsStore: config.metricsStore,
+      tokenCounter: config.tokenCounter,
+      sessionId: config.sessionId ?? 'unknown',
+    };
+    wrapToolsWithLogging(server, loggerDeps);
+  }
+
   return server;
 }
+
+/**
+ * Wrap all registered tool handlers with request logging.
+ * Accesses internal _registeredTools to decorate handlers post-registration.
+ */
+function wrapToolsWithLogging(server: McpServer, deps: RequestLoggerDeps): void {
+  // Access internal registered tools map (McpServer internals)
+  const registeredTools = (
+    server as unknown as {
+      _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<unknown> }>;
+    }
+  )._registeredTools;
+  if (!registeredTools) return;
+
+  for (const [toolName, toolEntry] of Object.entries(registeredTools)) {
+    const originalHandler = toolEntry.handler;
+    if (typeof originalHandler === 'function') {
+      toolEntry.handler = withRequestLogging(
+        toolName,
+        originalHandler as (
+          input: Record<string, unknown>,
+          ...rest: unknown[]
+        ) => Promise<{ content: Array<{ type: string; text?: string }> }>,
+        deps,
+      ) as unknown as typeof originalHandler;
+    }
+  }
+}
+
+type ToolHandler = (...args: unknown[]) => unknown;

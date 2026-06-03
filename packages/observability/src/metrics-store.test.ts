@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { MetricsStore } from './metrics-store.js';
-import type { RagEvent, ModuleGraphJSON } from './types.js';
+import type { RagEvent, ModuleGraphJSON, McpRequest } from './types.js';
 
 function makeEvent(overrides: Partial<RagEvent> = {}): RagEvent {
   return {
@@ -284,6 +284,165 @@ describe('MetricsStore', () => {
       store = new MetricsStore(':memory:');
       const result = store.getModuleGraph('/nonexistent');
       expect(result).toBeNull();
+    });
+  });
+
+  describe('MCP Requests', () => {
+    function makeRequest(overrides: Partial<McpRequest> = {}): McpRequest {
+      return {
+        id: crypto.randomUUID(),
+        sessionId: 'session-1',
+        toolName: 'search_codebase',
+        inputParams: { query: 'auth middleware', limit: 10 },
+        responseContent: 'Found 3 results...',
+        inputTokens: 50,
+        outputTokens: 200,
+        durationMs: 150,
+        timestamp: new Date().toISOString(),
+        isTruncated: false,
+        ...overrides,
+      };
+    }
+
+    describe('logRequest()', () => {
+      it('stores a request retrievable by ID', () => {
+        store = new MetricsStore(':memory:');
+        const req = makeRequest();
+        store.logRequest(req);
+        const result = store.getRequestById(req.id);
+        expect(result).toEqual(req);
+      });
+
+      it('stores multiple requests', () => {
+        store = new MetricsStore(':memory:');
+        store.logRequest(makeRequest());
+        store.logRequest(makeRequest());
+        const page = store.listRequests({ limit: 10, offset: 0 });
+        expect(page.total).toBe(2);
+      });
+    });
+
+    describe('getRequestById()', () => {
+      it('returns null for unknown ID', () => {
+        store = new MetricsStore(':memory:');
+        expect(store.getRequestById('nonexistent')).toBeNull();
+      });
+
+      it('returns full response content', () => {
+        store = new MetricsStore(':memory:');
+        const req = makeRequest({ responseContent: 'full content here' });
+        store.logRequest(req);
+        const result = store.getRequestById(req.id);
+        expect(result!.responseContent).toBe('full content here');
+      });
+    });
+
+    describe('listRequests()', () => {
+      it('returns paginated results without response content', () => {
+        store = new MetricsStore(':memory:');
+        for (let i = 0; i < 5; i++) {
+          store.logRequest(makeRequest());
+        }
+        const page = store.listRequests({ limit: 2, offset: 0 });
+        expect(page.items).toHaveLength(2);
+        expect(page.total).toBe(5);
+        // Items should not have responseContent
+        expect((page.items[0] as unknown as McpRequest).responseContent).toBeUndefined();
+      });
+
+      it('filters by tool name', () => {
+        store = new MetricsStore(':memory:');
+        store.logRequest(makeRequest({ toolName: 'search_codebase' }));
+        store.logRequest(makeRequest({ toolName: 'get_file' }));
+        store.logRequest(makeRequest({ toolName: 'search_codebase' }));
+        const page = store.listRequests({ limit: 10, offset: 0, toolName: 'get_file' });
+        expect(page.total).toBe(1);
+        expect(page.items[0]!.toolName).toBe('get_file');
+      });
+
+      it('filters by date range', () => {
+        store = new MetricsStore(':memory:');
+        store.logRequest(makeRequest({ timestamp: '2026-06-01T10:00:00.000Z' }));
+        store.logRequest(makeRequest({ timestamp: '2026-06-02T10:00:00.000Z' }));
+        store.logRequest(makeRequest({ timestamp: '2026-06-03T10:00:00.000Z' }));
+        const page = store.listRequests({
+          limit: 10,
+          offset: 0,
+          from: '2026-06-02T00:00:00.000Z',
+          to: '2026-06-02T23:59:59.999Z',
+        });
+        expect(page.total).toBe(1);
+      });
+    });
+
+    describe('getRequestStats()', () => {
+      it('returns zero stats when no requests', () => {
+        store = new MetricsStore(':memory:');
+        const stats = store.getRequestStats();
+        expect(stats.totalRequests).toBe(0);
+        expect(stats.totalInputTokens).toBe(0);
+        expect(stats.totalOutputTokens).toBe(0);
+      });
+
+      it('returns correct aggregated stats', () => {
+        store = new MetricsStore(':memory:');
+        store.logRequest(makeRequest({ inputTokens: 100, outputTokens: 500, durationMs: 200 }));
+        store.logRequest(makeRequest({ inputTokens: 50, outputTokens: 300, durationMs: 100 }));
+        const stats = store.getRequestStats();
+        expect(stats.totalRequests).toBe(2);
+        expect(stats.totalInputTokens).toBe(150);
+        expect(stats.totalOutputTokens).toBe(800);
+        expect(stats.avgDurationMs).toBe(150);
+      });
+    });
+
+    describe('getDailyRequestStats()', () => {
+      it('groups by day', () => {
+        store = new MetricsStore(':memory:');
+        store.logRequest(
+          makeRequest({
+            timestamp: '2026-06-01T10:00:00.000Z',
+            inputTokens: 10,
+            outputTokens: 100,
+          }),
+        );
+        store.logRequest(
+          makeRequest({
+            timestamp: '2026-06-01T14:00:00.000Z',
+            inputTokens: 20,
+            outputTokens: 200,
+          }),
+        );
+        store.logRequest(
+          makeRequest({
+            timestamp: '2026-06-02T10:00:00.000Z',
+            inputTokens: 30,
+            outputTokens: 300,
+          }),
+        );
+        const daily = store.getDailyRequestStats();
+        expect(daily).toHaveLength(2);
+        expect(daily[0]!.date).toBe('2026-06-01');
+        expect(daily[0]!.requestCount).toBe(2);
+        expect(daily[0]!.totalInputTokens).toBe(30);
+        expect(daily[1]!.date).toBe('2026-06-02');
+        expect(daily[1]!.requestCount).toBe(1);
+      });
+    });
+
+    describe('getToolRequestStats()', () => {
+      it('groups by tool', () => {
+        store = new MetricsStore(':memory:');
+        store.logRequest(makeRequest({ toolName: 'search_codebase' }));
+        store.logRequest(makeRequest({ toolName: 'search_codebase' }));
+        store.logRequest(makeRequest({ toolName: 'get_file' }));
+        const byTool = store.getToolRequestStats();
+        expect(byTool).toHaveLength(2);
+        expect(byTool[0]!.toolName).toBe('search_codebase');
+        expect(byTool[0]!.requestCount).toBe(2);
+        expect(byTool[1]!.toolName).toBe('get_file');
+        expect(byTool[1]!.requestCount).toBe(1);
+      });
     });
   });
 });
