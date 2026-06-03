@@ -34,3 +34,13 @@ Re-running `install.sh` (or `source scripts/configure-opencode.sh && configure_o
 - Remove the invalid `stderr` field from existing config
 - Rewrite the `command` array to use the shell wrapper format
 - Preserve all other settings (`environment`, `enabled`, etc.)
+
+## OpenCode Installation
+
+The install script now offers multiple official installation methods:
+
+- **macOS (default)**: `brew install anomalyco/tap/opencode`
+- **Linux/Other (default)**: `curl -fsSL https://opencode.ai/install | bash`
+- **Alternatives**: `npm i -g opencode-ai`, `bun add -g opencode-ai`, `paru -S opencode`
+
+Only methods with detected package managers are shown. Use `IA_NON_INTERACTIVE=1` to auto-select the platform default without prompting.
