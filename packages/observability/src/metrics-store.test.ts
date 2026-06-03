@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { MetricsStore } from './metrics-store.js';
 import type { RagEvent, ModuleGraphJSON, McpRequest } from './types.js';
 
@@ -28,6 +31,49 @@ describe('MetricsStore', () => {
     it('creates an in-memory database without error', () => {
       store = new MetricsStore(':memory:');
       expect(store).toBeInstanceOf(MetricsStore);
+    });
+
+    it('enables WAL journal mode for cross-process visibility', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'metrics-wal-'));
+      const dbPath = join(tmpDir, 'wal-test.sqlite');
+      store = new MetricsStore(dbPath);
+      const result = (store as unknown as { db: { pragma(s: string): unknown } }).db.pragma(
+        'journal_mode',
+      );
+      expect(result).toEqual([{ journal_mode: 'wal' }]);
+      store.close();
+      rmSync(tmpDir, { recursive: true });
+      store = new MetricsStore(':memory:'); // reset for afterEach
+    });
+
+    it('two instances on same file see each others writes (WAL cross-process simulation)', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'metrics-test-'));
+      const dbPath = join(tmpDir, 'test.sqlite');
+      const writer = new MetricsStore(dbPath);
+      const reader = new MetricsStore(dbPath);
+
+      // Writer logs a request
+      writer.logRequest({
+        id: 'req-1',
+        sessionId: 'sess-1',
+        toolName: 'search_codebase',
+        inputParams: { query: 'hello' },
+        responseContent: 'result',
+        inputTokens: 10,
+        outputTokens: 20,
+        durationMs: 100,
+        timestamp: new Date().toISOString(),
+        isTruncated: false,
+      });
+
+      // Reader should see it immediately
+      const stats = reader.getRequestStats();
+      expect(stats.totalRequests).toBe(1);
+      expect(stats.totalInputTokens).toBe(10);
+
+      writer.close();
+      reader.close();
+      rmSync(tmpDir, { recursive: true });
     });
   });
 

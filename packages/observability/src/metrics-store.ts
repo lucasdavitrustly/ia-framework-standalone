@@ -29,6 +29,11 @@ export class MetricsStore {
   }
 
   private initialize(): void {
+    // WAL mode enables concurrent read/write from separate processes (e.g., MCP server writes, dashboard reads).
+    // :memory: databases don't support WAL, so skip for them.
+    if (this.db.name !== ':memory:' && this.db.name !== '') {
+      this.db.pragma('journal_mode = WAL');
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS rag_events (
         id          TEXT    PRIMARY KEY,
