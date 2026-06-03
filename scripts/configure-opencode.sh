@@ -65,23 +65,30 @@ try {
 config.mcp = config.mcp || {};
 
 // ia-framework MCP server
+const logFile = '${ia_framework_dir}/.ia-framework/logs/mcp-server.log';
+const wrapperCmd = ['sh', '-c', 'node ' + mcp_bin + ' 2>> ' + logFile];
+
 if (!config.mcp['ia-framework']) {
   config.mcp['ia-framework'] = {
     type: 'local',
-    command: ['node', mcp_bin],
+    command: wrapperCmd,
     environment: {
       IA_FRAMEWORK_CONFIG: ia_config
     },
-    enabled: true,
-    stderr: '2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log'
+    enabled: true
   };
   console.log('  Added: ia-framework MCP server');
 } else {
-  // Ensure stderr redirect is set on existing config
-  if (!config.mcp['ia-framework'].stderr) {
-    config.mcp['ia-framework'].stderr = '2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log';
+  // Migrate broken config: remove invalid stderr field, fix command
+  const needsMigration = config.mcp['ia-framework'].stderr ||
+    (config.mcp['ia-framework'].command && config.mcp['ia-framework'].command[0] !== 'sh');
+  if (needsMigration) {
+    delete config.mcp['ia-framework'].stderr;
+    config.mcp['ia-framework'].command = wrapperCmd;
+    console.log('  Migrated: ia-framework MCP server (fixed command to use shell wrapper for log capture)');
+  } else {
+    console.log('  Skipped: ia-framework MCP server (already configured)');
   }
-  console.log('  Skipped: ia-framework MCP server (already configured)');
 }
 
 // Context7 MCP server
@@ -121,12 +128,11 @@ EOF
   "mcp": {
     "ia-framework": {
       "type": "local",
-      "command": ["node", "${mcp_bin}"],
+      "command": ["sh", "-c", "node ${mcp_bin} 2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log"],
       "environment": {
         "IA_FRAMEWORK_CONFIG": "${config_path}"
       },
-      "enabled": true,
-      "stderr": "2>> ${ia_framework_dir}/.ia-framework/logs/mcp-server.log"
+      "enabled": true
     },
     "context7": {
       "type": "local",
