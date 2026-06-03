@@ -13,6 +13,9 @@
 ### Session 2026-06-03
 
 - Q: How should stderr be captured given that OpenCode's MCP config schema has no `stderr` field (only `type`, `command`, `environment`, `enabled`, `timeout`)? → A: Use a wrapper shell command (`sh -c "node bin.js 2>> logfile"`) as the `command` array entry instead of an invalid `stderr` field.
+- Q: If OpenCode is already installed, should the install script skip or reinstall? → A: Skip if already installed (print "already installed").
+- Q: Should the install script support non-interactive mode for CI? → A: Yes, support `--non-interactive` flag or detect non-TTY to auto-select default.
+- Q: Should the script only offer install methods whose package managers are detected? → A: Yes, only show methods with detected package managers (curl always available).
 
 ## User Scenarios & Testing _(mandatory)_
 
@@ -52,6 +55,7 @@ As a developer debugging MCP server issues, I want the MCP server's stderr outpu
 - What happens when the log file has restrictive permissions?
 - What happens when disk space is exhausted while writing logs?
 - What happens on a fresh install where no prior `opencode.json` exists?
+- What happens when no supported package manager (other than curl) is detected on the system?
 
 ## Requirements _(mandatory)_
 
@@ -62,6 +66,10 @@ As a developer debugging MCP server issues, I want the MCP server's stderr outpu
 - **FR-003**: The install script MUST correct the broken `stderr` field when re-running on a system with an existing (broken) configuration.
 - **FR-004**: The MCP server `command` in `opencode.json` MUST use a shell wrapper (`sh -c "node <bin> 2>> <logfile>"`) to redirect stderr to the log file, and the invalid `stderr` field MUST be removed.
 - **FR-005**: The logs directory MUST be created during installation if it does not already exist.
+- **FR-006**: The install script MUST install OpenCode using one of the official methods: `curl -fsSL https://opencode.ai/install | bash`, `npm i -g opencode-ai`, `bun add -g opencode-ai`, `brew install anomalyco/tap/opencode`, or `paru -S opencode`. On macOS, `brew` is the preferred default; on other platforms, the curl installer is the default.
+- **FR-007**: The install script MUST skip OpenCode installation if `opencode` is already available on PATH (print "already installed").
+- **FR-008**: The install script MUST support non-interactive mode (`--non-interactive` flag or non-TTY detection) that auto-selects the platform default without prompting.
+- **FR-009**: The install script MUST only present installation methods whose package managers are detected on the system (curl is always available as fallback).
 
 ### Key Entities
 
