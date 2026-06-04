@@ -5,9 +5,10 @@ import type { McpRequestListItem, McpRequest, McpToolRequestStats } from '../api
 interface Props {
   tools: McpToolRequestStats[];
   initialLimit?: number;
+  refreshKey?: number;
 }
 
-export default function McpRequestTable({ tools, initialLimit = 20 }: Props) {
+export default function McpRequestTable({ tools, initialLimit = 20, refreshKey = 0 }: Props) {
   const [items, setItems] = useState<McpRequestListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -30,7 +31,7 @@ export default function McpRequestTable({ tools, initialLimit = 20 }: Props) {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [offset, limit, toolFilter]);
+  }, [offset, limit, toolFilter, refreshKey]);
 
   // Reset offset when filter changes
   useEffect(() => {

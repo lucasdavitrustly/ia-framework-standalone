@@ -29,10 +29,12 @@ export class MetricsStore {
   }
 
   private initialize(): void {
-    // WAL mode enables concurrent read/write from separate processes (e.g., MCP server writes, dashboard reads).
-    // :memory: databases don't support WAL, so skip for them.
+    // Use DELETE journal mode for cross-filesystem compatibility (e.g., Docker-mounted volumes).
+    // WAL requires shared memory (-shm) which doesn't work over SFTP/9p/NFS mounts.
+    // busy_timeout prevents SQLITE_BUSY errors during concurrent read/write.
     if (this.db.name !== ':memory:' && this.db.name !== '') {
-      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('journal_mode = DELETE');
+      this.db.pragma('busy_timeout = 5000');
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS rag_events (

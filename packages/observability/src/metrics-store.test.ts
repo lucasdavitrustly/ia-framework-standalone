@@ -33,20 +33,20 @@ describe('MetricsStore', () => {
       expect(store).toBeInstanceOf(MetricsStore);
     });
 
-    it('enables WAL journal mode for cross-process visibility', () => {
+    it('enables DELETE journal mode for cross-filesystem compatibility', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'metrics-wal-'));
       const dbPath = join(tmpDir, 'wal-test.sqlite');
       store = new MetricsStore(dbPath);
       const result = (store as unknown as { db: { pragma(s: string): unknown } }).db.pragma(
         'journal_mode',
       );
-      expect(result).toEqual([{ journal_mode: 'wal' }]);
+      expect(result).toEqual([{ journal_mode: 'delete' }]);
       store.close();
       rmSync(tmpDir, { recursive: true });
       store = new MetricsStore(':memory:'); // reset for afterEach
     });
 
-    it('two instances on same file see each others writes (WAL cross-process simulation)', () => {
+    it('two instances on same file see each others writes (cross-process simulation)', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'metrics-test-'));
       const dbPath = join(tmpDir, 'test.sqlite');
       const writer = new MetricsStore(dbPath);

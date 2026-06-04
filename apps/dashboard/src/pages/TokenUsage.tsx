@@ -10,6 +10,7 @@ export default function TokenUsage() {
   const [stats, setStats] = useState<McpRequestsStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const fetchingRef = useRef(false);
 
   useEffect(() => {
@@ -20,7 +21,10 @@ export default function TokenUsage() {
       fetchingRef.current = true;
       DashboardClient.getMcpRequestsStats()
         .then((data) => {
-          if (!cancelled) setStats(data);
+          if (!cancelled) {
+            setStats(data);
+            setRefreshKey((k) => k + 1);
+          }
         })
         .catch(() => {
           // Only show error on initial load; polling failures keep last data
@@ -110,7 +114,7 @@ export default function TokenUsage() {
       {/* Request log table */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <h3 className="text-sm font-medium text-gray-400 mb-4">Request Log</h3>
-        <McpRequestTable tools={stats?.byTool ?? []} initialLimit={20} />
+        <McpRequestTable tools={stats?.byTool ?? []} initialLimit={20} refreshKey={refreshKey} />
       </div>
     </div>
   );
