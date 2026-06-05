@@ -314,6 +314,20 @@ This is the minimum path to prove the full value chain: index with enrichment �
 
 ---
 
+## Phase 10: Enrichment Progress Visibility
+
+**Goal**: Make the `enriching` stage show a real progress bar with elapsed time and ETA so operators can track long Ollama runs.
+
+- [x] T083 Add `EnrichmentProgress` interface and optional `onProgress` callback to `LlmEnricher.enrich()` in `packages/indexer/src/enrichment/enricher.ts`. Pre-compute `batchesTotal` upfront; call `onProgress({ batchesCompleted, batchesTotal, currentFile })` after every batch (both successful and failed).
+
+- [x] T084 Wire enrichment progress into `IndexingProgress` in `packages/indexer/src/pipeline.ts`: pass a callback to `enricher.enrich()` that updates `progress.batchesTotal`, `progress.batchesCompleted`, `progress.currentFile` and calls `onProgress`. Reset `batchesTotal`/`batchesCompleted` to `undefined` before transitioning to the embedding stage.
+
+- [x] T085 Replace the static spinner in the CLI enriching renderer (`packages/cli/src/commands/index.command.ts`) with a progress bar showing `X/Y batches`, elapsed time, and ETA: `[████░░] 42%  enriching  130/308 batches  4m32s  ~6m left  FileName.java`.
+
+**Checkpoint**: Running `ia-framework index` with enrichment enabled shows a live progress bar during Ollama calls.
+
+---
+
 ## Notes
 
 - [P] tasks = different files, no dependencies

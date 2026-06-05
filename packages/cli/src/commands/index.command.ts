@@ -340,6 +340,7 @@ Browse available models: https://ollama.com/search
           console.log('');
 
           const BAR_WIDTH = 20;
+          let enrichmentStartedAt: number | null = null;
           const renderProgress = (progress: IndexingProgress): void => {
             let line: string;
             switch (progress.stage) {
@@ -359,9 +360,38 @@ Browse available models: https://ollama.com/search
                 line = `  [${bar}] ${String(pct).padStart(3)}%  parsing  ${progress.filesProcessed}/${progress.filesTotal} files${fileName}`;
                 break;
               }
-              case 'enriching':
-                line = `  ⠋ Enriching ${progress.chunksIndexed > 0 ? progress.chunksIndexed : ''} chunks with LLM metadata...`;
+              case 'enriching': {
+                // Track when enrichment started (first enriching event)
+                if (enrichmentStartedAt === null) enrichmentStartedAt = Date.now();
+                const completed = progress.batchesCompleted ?? 0;
+                const total = progress.batchesTotal ?? 0;
+                const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+                const filled = Math.round((pct / 100) * BAR_WIDTH);
+                const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+                const fileName = progress.currentFile
+                  ? ` ${progress.currentFile.split('/').pop()}`
+                  : '';
+                // Elapsed / ETA
+                const elapsedMs = Date.now() - enrichmentStartedAt;
+                const elapsedSec = Math.floor(elapsedMs / 1000);
+                const elapsedStr =
+                  elapsedSec >= 60
+                    ? `${Math.floor(elapsedSec / 60)}m${String(elapsedSec % 60).padStart(2, '0')}s`
+                    : `${elapsedSec}s`;
+                let etaStr = '';
+                if (completed > 0 && total > 0 && completed < total) {
+                  const etaMs = (elapsedMs / completed) * (total - completed);
+                  const etaSec = Math.ceil(etaMs / 1000);
+                  const etaFmt =
+                    etaSec >= 60
+                      ? `${Math.floor(etaSec / 60)}m${String(etaSec % 60).padStart(2, '0')}s`
+                      : `${etaSec}s`;
+                  etaStr = `  ~${etaFmt} left`;
+                }
+                const batchStr = total > 0 ? `${completed}/${total}` : '…';
+                line = `  [${bar}] ${String(pct).padStart(3)}%  enriching  ${batchStr} batches  ${elapsedStr}${etaStr}${fileName}`;
                 break;
+              }
               case 'embedding': {
                 const batchPct =
                   (progress.batchesTotal ?? 0) > 0

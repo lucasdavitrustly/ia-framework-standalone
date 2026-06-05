@@ -49,9 +49,21 @@ interface EnrichmentConfig {
 const enricherSpecifier = './enricher.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const enricherModule = (await import(enricherSpecifier).catch(() => null)) as any;
+
+interface EnrichmentProgress {
+  batchesCompleted: number;
+  batchesTotal: number;
+  currentFile?: string;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 const LlmEnricher = enricherModule?.LlmEnricher as
-  | (new (config: EnrichmentConfig) => { enrich(chunks: TestChunk[]): Promise<TestChunk[]> })
+  | (new (config: EnrichmentConfig) => {
+      enrich(
+        chunks: TestChunk[],
+        onProgress?: (p: EnrichmentProgress) => void,
+      ): Promise<TestChunk[]>;
+    })
   | undefined;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -516,5 +528,123 @@ describe('LlmEnricher — graceful degradation (T017)', () => {
 
     const enricher = new LlmEnricher!({ ...baseConfig, skipOnFailure: true });
     await expect(enricher.enrich([makeChunk('chunk-1', 'fn')])).resolves.not.toThrow();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('LlmEnricher — enrichment progress callback (T083)', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    warnSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  function makeOllamaResponse(chunks: TestChunk[]) {
+    const enriched = chunks.map((c) => ({
+      id: c.id,
+      description: `Description of ${c.name}`,
+      businessContext: 'payments',
+      semanticTags: ['tag'],
+      relationships: [],
+    }));
+    return {
+      ok: true,
+      json: async () => ({ response: JSON.stringify({ chunks: enriched }) }),
+    } as Response;
+  }
+
+  it('T083: onProgress is called once per batch during flat batching', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    // 12 chunks → 2 batches of 10 and 2
+    const chunks = Array.from({ length: 12 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+
+    const progressEvents: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
+    const enricher = new LlmEnricher!(baseConfig);
+    await enricher.enrich(chunks, (p) => progressEvents.push({ ...p }));
+
+    expect(progressEvents.length).toBe(2);
+  });
+
+  it('T083: batchesTotal matches the total number of Ollama calls made', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+
+    const events: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
+    const enricher = new LlmEnricher!(baseConfig);
+    await enricher.enrich(chunks, (p) => events.push({ ...p }));
+
+    // 25 chunks / 10 per batch = 3 batches
+    expect(events[0]!.batchesTotal).toBe(3);
+    expect(events[events.length - 1]!.batchesTotal).toBe(3);
+  });
+
+  it('T083: batchesCompleted increments from 1 to batchesTotal', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    const chunks = Array.from({ length: 20 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+
+    const completed: number[] = [];
+    const enricher = new LlmEnricher!(baseConfig);
+    await enricher.enrich(chunks, (p) => completed.push(p.batchesCompleted));
+
+    expect(completed).toEqual([1, 2]);
+  });
+
+  it('T083: onProgress receives currentFile from the batch', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    const chunks = [makeChunk('c0', 'fn0'), makeChunk('c1', 'fn1')];
+    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+
+    const events: Array<{ batchesCompleted: number; batchesTotal: number; currentFile?: string }> =
+      [];
+    const enricher = new LlmEnricher!(baseConfig);
+    await enricher.enrich(chunks, (p) => events.push({ ...p }));
+
+    // currentFile should be the filePath of the first chunk in the batch
+    expect(events[0]!.currentFile).toBe(chunks[0]!.filePath);
+  });
+
+  it('T083: onProgress is NOT called when chunks array is empty', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    const onProgress = vi.fn();
+    const enricher = new LlmEnricher!(baseConfig);
+    await enricher.enrich([], onProgress);
+
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('T083: onProgress is still called for successful batches when a batch fails (skipOnFailure=true)', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chunks = Array.from({ length: 20 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) throw new Error('Network error');
+      return makeOllamaResponse(chunks.slice(10, 20));
+    });
+
+    const completed: number[] = [];
+    const enricher = new LlmEnricher!({ ...baseConfig, skipOnFailure: true });
+    await enricher.enrich(chunks, (p) => completed.push(p.batchesCompleted));
+
+    // Both batches should emit progress (even the failed one)
+    expect(completed.length).toBe(2);
+    expect(completed).toEqual([1, 2]);
   });
 });

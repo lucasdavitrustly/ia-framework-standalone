@@ -558,3 +558,139 @@ describe('T082: enriching progress stage', () => {
     expect(stages).not.toContain('enriching');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T084: enrichment progress bar — batchesTotal/batchesCompleted during enriching', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `pipeline-t084-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'Payment.java'), 'public class Payment {}');
+
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockClassify.mockReturnValue({ stereotype: 'unknown' });
+    mockParseFile.mockResolvedValue([makeRichChunk(tmpDir)]);
+  });
+
+  const makeEnrichmentConfig = () => ({
+    provider: 'ollama' as const,
+    model: 'qwen2.5-coder:0.5b',
+    baseUrl: 'http://localhost:11434',
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  it('T084: batchesTotal is set on enriching progress events', async () => {
+    mockLlmEnricherEnrich.mockImplementation(
+      async (
+        chunks: unknown[],
+        onProgress?: (p: { batchesCompleted: number; batchesTotal: number }) => void,
+      ) => {
+        onProgress?.({ batchesCompleted: 1, batchesTotal: 1 });
+        return chunks;
+      },
+    );
+
+    const enrichingEvents: IndexingProgress[] = [];
+    await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }), (p) => {
+      if (p.stage === 'enriching') enrichingEvents.push({ ...p });
+    });
+
+    const withBatches = enrichingEvents.filter((e) => e.batchesTotal != null);
+    expect(withBatches.length).toBeGreaterThan(0);
+    expect(withBatches[0]!.batchesTotal).toBe(1);
+  });
+
+  it('T084: batchesCompleted increments in enriching progress events', async () => {
+    mockLlmEnricherEnrich.mockImplementation(
+      async (
+        chunks: unknown[],
+        onProgress?: (p: { batchesCompleted: number; batchesTotal: number }) => void,
+      ) => {
+        onProgress?.({ batchesCompleted: 1, batchesTotal: 3 });
+        onProgress?.({ batchesCompleted: 2, batchesTotal: 3 });
+        onProgress?.({ batchesCompleted: 3, batchesTotal: 3 });
+        return chunks;
+      },
+    );
+
+    const completedValues: number[] = [];
+    await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }), (p) => {
+      if (p.stage === 'enriching' && p.batchesCompleted != null) {
+        completedValues.push(p.batchesCompleted);
+      }
+    });
+
+    expect(completedValues).toEqual([1, 2, 3]);
+  });
+
+  it('T084: currentFile is set on enriching progress events', async () => {
+    const expectedFile = join(tmpDir, 'Payment.java');
+    mockLlmEnricherEnrich.mockImplementation(
+      async (
+        chunks: unknown[],
+        onProgress?: (p: {
+          batchesCompleted: number;
+          batchesTotal: number;
+          currentFile?: string;
+        }) => void,
+      ) => {
+        onProgress?.({ batchesCompleted: 1, batchesTotal: 1, currentFile: expectedFile });
+        return chunks;
+      },
+    );
+
+    const enrichingEvents: IndexingProgress[] = [];
+    await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }), (p) => {
+      if (p.stage === 'enriching') enrichingEvents.push({ ...p });
+    });
+
+    const withFile = enrichingEvents.filter((e) => e.currentFile != null);
+    expect(withFile.length).toBeGreaterThan(0);
+    expect(withFile[0]!.currentFile).toBe(expectedFile);
+  });
+
+  it('T084: batchesTotal and batchesCompleted are reset (undefined) when transitioning to embedding', async () => {
+    mockLlmEnricherEnrich.mockImplementation(
+      async (
+        chunks: unknown[],
+        onProgress?: (p: { batchesCompleted: number; batchesTotal: number }) => void,
+      ) => {
+        onProgress?.({ batchesCompleted: 1, batchesTotal: 1 });
+        return chunks;
+      },
+    );
+
+    // Capture the first embedding progress event
+    let firstEmbeddingEvent: IndexingProgress | undefined;
+    await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }), (p) => {
+      if (p.stage === 'embedding' && firstEmbeddingEvent === undefined) {
+        firstEmbeddingEvent = { ...p };
+      }
+    });
+
+    // When embedding starts, enrichment batch counts should be cleared
+    expect(firstEmbeddingEvent).toBeDefined();
+    expect(firstEmbeddingEvent!.batchesCompleted).toBeUndefined();
+    expect(firstEmbeddingEvent!.batchesTotal).toBeUndefined();
+  });
+});

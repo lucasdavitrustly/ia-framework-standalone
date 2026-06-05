@@ -44,6 +44,17 @@ export type EnrichedCodeChunk = CodeChunk & {
   enrichmentModel?: string | undefined;
 };
 
+// ── Progress callback type ────────────────────────────────────────────────────
+
+export interface EnrichmentProgress {
+  /** Number of Ollama calls completed so far */
+  batchesCompleted: number;
+  /** Total number of Ollama calls that will be made */
+  batchesTotal: number;
+  /** filePath of the first chunk in the current batch */
+  currentFile?: string | undefined;
+}
+
 // ── LlmEnricher class ─────────────────────────────────────────────────────────
 
 export class LlmEnricher {
@@ -76,7 +87,10 @@ export class LlmEnricher {
    * one Ollama call. This avoids mixing unrelated classes in a single
    * prompt and keeps each prompt within a manageable context budget.
    */
-  async enrich(chunks: CodeChunk[]): Promise<EnrichedCodeChunk[]> {
+  async enrich(
+    chunks: CodeChunk[],
+    onProgress?: (p: EnrichmentProgress) => void,
+  ): Promise<EnrichedCodeChunk[]> {
     if (chunks.length === 0) return [];
 
     const BATCH_SIZE = 10;
@@ -89,6 +103,21 @@ export class LlmEnricher {
     const isLargeFile = totalTokens > LARGE_FILE_THRESHOLD * numCtx;
 
     const result: EnrichedCodeChunk[] = [...chunks] as EnrichedCodeChunk[];
+
+    // Pre-compute batchesTotal so we can report it on every progress event
+    const batchGroups: CodeChunk[][] = [];
+    if (isLargeFile) {
+      const groups = this.groupByClass(chunks);
+      for (const group of groups.values()) {
+        batchGroups.push(group);
+      }
+    } else {
+      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        batchGroups.push(chunks.slice(i, i + BATCH_SIZE));
+      }
+    }
+    const batchesTotal = batchGroups.length;
+    let batchesCompleted = 0;
 
     const applyBatch = async (batch: CodeChunk[]): Promise<void> => {
       const filePath = batch[0]?.filePath ?? '(unknown)';
@@ -111,19 +140,12 @@ export class LlmEnricher {
           throw err;
         }
       }
+      batchesCompleted++;
+      onProgress?.({ batchesCompleted, batchesTotal, currentFile: batch[0]?.filePath });
     };
 
-    if (isLargeFile) {
-      // Large-file strategy: group by class, one call per group
-      const groups = this.groupByClass(chunks);
-      for (const group of groups.values()) {
-        await applyBatch(group);
-      }
-    } else {
-      // Standard strategy: flat batches of BATCH_SIZE
-      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-        await applyBatch(chunks.slice(i, i + BATCH_SIZE));
-      }
+    for (const batch of batchGroups) {
+      await applyBatch(batch);
     }
 
     return result;

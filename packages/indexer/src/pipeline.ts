@@ -8,7 +8,11 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import PQueue from 'p-queue';
-import { LlmEnricher, type EnrichedCodeChunk } from './enrichment/enricher.js';
+import {
+  LlmEnricher,
+  type EnrichedCodeChunk,
+  type EnrichmentProgress,
+} from './enrichment/enricher.js';
 import { walkFiles } from './file-walker.js';
 import {
   getLastIndexedCommit,
@@ -501,13 +505,23 @@ export class IndexingPipeline {
     let processedChunks: EnrichedCodeChunk[];
     if (config.enrichmentConfig && !config.skipEnrichment) {
       progress.stage = 'enriching';
+      progress.batchesTotal = undefined;
+      progress.batchesCompleted = undefined;
       onProgress?.({ ...progress });
       const enricher = new LlmEnricher(config.enrichmentConfig);
-      processedChunks = await enricher.enrich(allChunks);
+      processedChunks = await enricher.enrich(allChunks, (ep: EnrichmentProgress) => {
+        progress.batchesTotal = ep.batchesTotal;
+        progress.batchesCompleted = ep.batchesCompleted;
+        progress.currentFile = ep.currentFile;
+        onProgress?.({ ...progress });
+      });
     } else {
       processedChunks = allChunks as EnrichedCodeChunk[];
     }
 
+    // Reset batch counters before embedding so the embedding renderer starts fresh
+    progress.batchesTotal = undefined;
+    progress.batchesCompleted = undefined;
     progress.stage = 'embedding';
     onProgress?.({ ...progress });
 
