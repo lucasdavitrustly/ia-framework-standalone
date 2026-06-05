@@ -857,3 +857,95 @@ describe('T068: searchWithFallback() glob/grep zero-result fallback', () => {
     expect(result.found).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T078: filePath reconstruction from projectRoot when stored filePath is absent
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T078: SearchEngine reconstructs filePath from projectRoot when payload.filePath is absent', () => {
+  function makePayloadWithoutFilePath(relativePath: string) {
+    return {
+      chunkId: 'c1',
+      // filePath intentionally omitted (new schema — not stored)
+      filePath: '' as string,
+      relativePath,
+      language: 'java',
+      chunkType: 'class',
+      name: 'Payment',
+      content: '',
+      startLine: 1,
+      endLine: 5,
+      imports: [],
+      exports: ['Payment'],
+      indexedAt: '2026-06-05T00:00:00Z',
+    };
+  }
+
+  test('T078: reconstructs absolute filePath from projectRoot + relativePath when stored filePath is empty', async () => {
+    const mockSearch = vi.fn().mockResolvedValue([
+      {
+        id: 'qdrant-uuid-c1',
+        score: 0.9,
+        vectorName: 'semantic',
+        payload: makePayloadWithoutFilePath('src/Payment.java'),
+      },
+    ]);
+
+    const cfg = makeConfig({
+      projectRoot: '/home/user/myproject',
+      vectorStore: { search: mockSearch },
+    });
+    const engine = new SearchEngine(cfg);
+
+    const results = await engine.search({ text: 'payment entity' });
+
+    expect(results[0]?.filePath).toBe('/home/user/myproject/src/Payment.java');
+  });
+
+  test('T078: falls back to relativePath when projectRoot is not configured', async () => {
+    const mockSearch = vi.fn().mockResolvedValue([
+      {
+        id: 'qdrant-uuid-c1',
+        score: 0.9,
+        vectorName: 'semantic',
+        payload: makePayloadWithoutFilePath('src/Payment.java'),
+      },
+    ]);
+
+    const cfg = makeConfig({
+      // no projectRoot
+      vectorStore: { search: mockSearch },
+    });
+    const engine = new SearchEngine(cfg);
+
+    const results = await engine.search({ text: 'payment entity' });
+
+    // When no projectRoot, filePath = relativePath (best effort)
+    expect(results[0]?.filePath).toBe('src/Payment.java');
+  });
+
+  test('T078: uses stored filePath when it is present (backward compat)', async () => {
+    const mockSearch = vi.fn().mockResolvedValue([
+      {
+        id: 'qdrant-uuid-c1',
+        score: 0.9,
+        vectorName: 'semantic',
+        payload: {
+          ...makePayloadWithoutFilePath('src/Payment.java'),
+          filePath: '/old/absolute/path/src/Payment.java',
+        },
+      },
+    ]);
+
+    const cfg = makeConfig({
+      projectRoot: '/home/user/myproject',
+      vectorStore: { search: mockSearch },
+    });
+    const engine = new SearchEngine(cfg);
+
+    const results = await engine.search({ text: 'payment entity' });
+
+    // Stored filePath takes priority over reconstruction (backward compat)
+    expect(results[0]?.filePath).toBe('/old/absolute/path/src/Payment.java');
+  });
+});

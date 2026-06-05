@@ -49,6 +49,7 @@ vi.mock('@ia-framework/ast-parser', () => ({
   parseFile: mockParseFile,
   extractCalls: () => undefined,
   buildCalledByIndex: () => new Map(),
+  classify: vi.fn().mockReturnValue({ stereotype: 'unknown' }),
 }));
 
 // ── Mock incremental helpers ─────────────────────────────────────────────────

@@ -104,6 +104,11 @@ export interface SearchEngineConfig {
     embed(text: string, taskType?: 'document' | 'query'): Promise<number[]>;
     dimensions: number;
   };
+  /**
+   * Absolute path to the indexed project root.
+   * Used to reconstruct absolute filePaths from relativePaths when stored filePath is absent.
+   */
+  projectRoot?: string | undefined;
   /** Vector store to search against */
   vectorStore: {
     search(
@@ -120,7 +125,8 @@ export interface SearchEngineConfig {
         score: number;
         payload: {
           chunkId: string;
-          filePath: string;
+          /** @deprecated not stored by new indexer — reconstructed at retrieval time from projectRoot + relativePath */
+          filePath?: string | undefined;
           relativePath: string;
           language: string;
           chunkType: string;
@@ -151,7 +157,7 @@ export interface SearchEngineConfig {
         score: number;
         payload: {
           chunkId: string;
-          filePath: string;
+          filePath?: string | undefined;
           relativePath: string;
           language: string;
           chunkType: string;
@@ -187,7 +193,7 @@ export interface SearchEngineConfig {
         score: number;
         payload: {
           chunkId: string;
-          filePath: string;
+          filePath?: string | undefined;
           relativePath: string;
           language: string;
           chunkType: string;
@@ -220,7 +226,7 @@ export interface SearchEngineConfig {
         id: string;
         payload: {
           chunkId: string;
-          filePath: string;
+          filePath?: string | undefined;
           relativePath: string;
           language: string;
           chunkType: string;

@@ -296,10 +296,27 @@ This is the minimum path to prove the full value chain: index with enrichment �
 
 ---
 
+## Phase 9: Pipeline Completeness (Post-MVP Gap-Fill)
+
+**Goal**: Fix all pipeline wiring gaps discovered during live testing against a real Java project.
+
+- [x] T078 Remove `filePath` from `embedBatchAndStore()` payload in `packages/indexer/src/pipeline.ts` — stop writing it to Qdrant. Update `toRetrievalResult()` in `packages/retrieval/src/search-engine.ts` to reconstruct absolute path as `projectRoot + '/' + relativePath` when stored `filePath` is absent. Update `packages/mcp-server/src/tools/search-codebase.ts` and `get-file.ts` `readFileFn` call sites to use `result.filePath ?? (projectRoot + '/' + result.relativePath)`.
+
+- [x] T079 Wire classifier into parsing loop in `packages/indexer/src/pipeline.ts`: after `parseFile()`, call `classify(chunk)` from `packages/ast-parser/src/classifier.ts` on each chunk; set `chunk.stereotype` and `chunk.archLayer`. Copy `stereotype` and `archLayer` to `ChunkPayload` in `embedBatchAndStore()`.
+
+- [x] T080 Wire missing `CodeChunk` fields to `ChunkPayload` in `embedBatchAndStore()` in `packages/indexer/src/pipeline.ts`: add `annotations`, `visibility`, `dependencyEdges`, `contextHeader`, `classSignature`, `moduleInfo` (structured `{group, module, submodule}` block), and `contentHash` (SHA256 of the reloaded content, computed from `contents[j]` before embedding).
+
+- [x] T081 Wire LLM enricher into pipeline in `packages/indexer/src/pipeline.ts`: between the parsing loop and embedding loop (new `enriching` stage), call `LlmEnricher.enrich()` from `packages/indexer/src/enrichment/enricher.ts` on `allChunks` when `enrichmentConfig` is set and `skipEnrichment` is not true. Copy enrichment results (`description`, `businessContext`, `semanticTags`, `relationships`, `enrichedAt`, `enrichmentModel`) to `ChunkPayload` in `embedBatchAndStore()`.
+
+- [x] T082 Add `enriching` to the `stage` union in `IndexingProgress` in `packages/indexer/src/pipeline.ts`. Emit `enriching` progress between the parsing and embedding loops. Update CLI progress renderer in `packages/cli/src/commands/index.command.ts` to show an enriching bar.
+
+**Checkpoint**: Pipeline stores all metadata that the spec defines; no host-path leakage; LLM enricher is reachable from the CLI.
+
+---
+
 ## Notes
 
 - [P] tasks = different files, no dependencies
-- [Story] label maps task to specific user story for traceability
 - Constitution mandates TDD — all tests written before implementation
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently

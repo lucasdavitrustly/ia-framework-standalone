@@ -18,7 +18,8 @@ type VectorSearchResult = {
   vectorName: string;
   payload: {
     chunkId: string;
-    filePath: string;
+    /** @deprecated not written by new indexer — reconstructed from projectRoot + relativePath */
+    filePath?: string | undefined;
     relativePath: string;
     language: string;
     chunkType: string;
@@ -52,10 +53,20 @@ type VectorSearchResult = {
   };
 };
 
-function toRetrievalResult(raw: VectorSearchResult, matchedVector: string): RetrievalResult {
+function toRetrievalResult(
+  raw: VectorSearchResult,
+  matchedVector: string,
+  projectRoot?: string,
+): RetrievalResult {
+  // T078: filePath is no longer stored in Qdrant by the new indexer.
+  // Reconstruct absolute path from projectRoot + relativePath.
+  // Fall back to stored filePath for backward compat with old-schema collections.
+  const filePath =
+    raw.payload.filePath ||
+    (projectRoot ? `${projectRoot}/${raw.payload.relativePath}` : raw.payload.relativePath);
   return {
     chunkId: raw.payload.chunkId,
-    filePath: raw.payload.filePath,
+    filePath,
     relativePath: raw.payload.relativePath,
     language: raw.payload.language,
     chunkType: raw.payload.chunkType,
@@ -243,12 +254,19 @@ export class SearchEngine {
         const existing = merged.get(chunkId);
         if (existing) {
           if (raw.score > existing.score) {
-            merged.set(chunkId, toRetrievalResult(raw, `${existing.matchedVector}+${vectorName}`));
+            merged.set(
+              chunkId,
+              toRetrievalResult(
+                raw,
+                `${existing.matchedVector}+${vectorName}`,
+                this.config.projectRoot,
+              ),
+            );
           } else {
             existing.matchedVector = `${existing.matchedVector}+${vectorName}`;
           }
         } else {
-          merged.set(chunkId, toRetrievalResult(raw, vectorName));
+          merged.set(chunkId, toRetrievalResult(raw, vectorName, this.config.projectRoot));
         }
       }
     }
@@ -379,7 +397,7 @@ export class SearchEngine {
       filter,
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'semantic'));
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 
   /**
@@ -405,7 +423,7 @@ export class SearchEngine {
       filter,
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'semantic'));
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 
   /**
@@ -444,8 +462,7 @@ export class SearchEngine {
 
     return results
       .map((raw) => ({
-        ...toRetrievalResult(raw, 'semantic'),
-        expansionSource: 'adjacent' as const,
+        ...toRetrievalResult(raw, 'semantic', this.config.projectRoot),
       }))
       .sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
   }
@@ -489,8 +506,7 @@ export class SearchEngine {
     });
 
     return hits
-      .map((raw) => toRetrievalResult(raw, 'semantic'))
-      .filter((r) => !seenIds.has(r.chunkId))
+      .map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot))
       .map((r) => ({ ...r, expansionSource: 'call-chain' as const }));
   }
 
@@ -653,7 +669,12 @@ export class SearchEngine {
 
     return matched.slice(0, 5).map((p) => ({
       chunkId: p.payload.chunkId,
-      filePath: p.payload.filePath,
+      // T078: reconstruct filePath from projectRoot when not stored
+      filePath:
+        p.payload.filePath ||
+        (this.config.projectRoot
+          ? `${this.config.projectRoot}/${p.payload.relativePath}`
+          : p.payload.relativePath),
       relativePath: p.payload.relativePath,
       content: p.payload.content ?? '',
       startLine: p.payload.startLine ?? 0,
@@ -694,7 +715,7 @@ export class SearchEngine {
       filter,
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'semantic'));
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 
   /**
@@ -730,7 +751,9 @@ export class SearchEngine {
       semanticPrefetchMultiplier: this.config.semanticPrefetchMultiplier,
     });
 
-    const rawResults = results.map((raw) => toRetrievalResult(raw, 'both'));
+    const rawResults = results.map((raw) =>
+      toRetrievalResult(raw, 'both', this.config.projectRoot),
+    );
 
     // Post-retrieval RRF threshold: filter out low-relevance results.
     // RRF scores are rank-based (~0.01–0.03), not cosine (~0–1).

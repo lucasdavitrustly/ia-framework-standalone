@@ -7,8 +7,8 @@ export interface ChunkPayload {
   // === Identity ===
   /** Original string chunk ID (sha1 hash) */
   chunkId: string;
-  /** @deprecated use relativePath — kept for backward compat */
-  filePath: string;
+  /** @deprecated use relativePath — kept for backward compat with old-schema collections. Not written by new indexer. */
+  filePath?: string | undefined;
   relativePath: string;
   repoId?: string | undefined;
 

@@ -1,12 +1,14 @@
 import type { EmbeddingProvider } from '@ia-framework/embedding';
 import type { VectorStore, VectorPoint, ChunkPayload } from '@ia-framework/vector-store';
 import type { CodeChunk } from '@ia-framework/ast-parser';
-import { parseFile, extractCalls, buildCalledByIndex } from '@ia-framework/ast-parser';
+import { parseFile, extractCalls, buildCalledByIndex, classify } from '@ia-framework/ast-parser';
 import type { ContextSource, EnrichmentConfig } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
 import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import PQueue from 'p-queue';
+import { LlmEnricher, type EnrichedCodeChunk } from './enrichment/enricher.js';
 import { walkFiles } from './file-walker.js';
 import {
   getLastIndexedCommit,
@@ -92,7 +94,7 @@ export interface IndexingConfig {
 }
 
 export interface IndexingProgress {
-  stage: 'walking' | 'parsing' | 'embedding' | 'storing' | 'done';
+  stage: 'walking' | 'parsing' | 'enriching' | 'embedding' | 'storing' | 'done';
   filesTotal: number;
   filesProcessed: number;
   chunksTotal: number;
@@ -191,7 +193,7 @@ async function reloadBatchContents(batch: CodeChunk[]): Promise<string[]> {
  * Retries once on failure; if both attempts fail, throws.
  */
 async function embedBatchAndStore(
-  batch: CodeChunk[],
+  batch: EnrichedCodeChunk[],
   provider: EmbeddingProvider,
   vectorStore: VectorStore,
   maxRetries = 1,
@@ -218,10 +220,13 @@ async function embedBatchAndStore(
         const chunk = batch[j]!;
         const content = contents[j]!;
         const embedResult = embedResults[j]!;
-        // Lean payload — no raw code content (T019)
+        // T078: filePath NOT stored — absolute path leaks host machine paths.
+        // Reconstruct at retrieval time as projectRoot + '/' + relativePath.
+        // T080: contentHash computed from reloaded content (not the truncated in-memory copy).
+        const contentHash = createHash('sha256').update(content).digest('hex');
+        // Lean payload — no raw code content (T019), no filePath (T078)
         const payload: ChunkPayload = {
           chunkId: chunk.id,
-          filePath: chunk.filePath,
           relativePath: chunk.relativePath,
           language: chunk.language,
           chunkType: chunk.chunkType,
@@ -232,6 +237,7 @@ async function embedBatchAndStore(
           modulePath: inferModulePath(chunk.relativePath),
           packageName: inferPackageName(chunk.relativePath, content),
           layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, content),
+          contentHash,
           indexedAt: new Date().toISOString(),
           ...(chunk.name != null ? { name: chunk.name } : {}),
           ...(chunk.parentName != null ? { parentName: chunk.parentName } : {}),
@@ -241,6 +247,23 @@ async function embedBatchAndStore(
           ...(chunk.chunkIndex != null ? { chunkIndex: chunk.chunkIndex } : {}),
           ...(chunk.totalChunks != null ? { totalChunks: chunk.totalChunks } : {}),
           ...(repoId ? { repoId } : {}),
+          // T079: classifier results (only when positive evidence found — 'unknown' skipped)
+          ...(chunk.stereotype != null ? { stereotype: chunk.stereotype } : {}),
+          ...(chunk.archLayer != null ? { archLayer: chunk.archLayer } : {}),
+          // T080: missing CodeChunk fields
+          ...(chunk.annotations != null ? { annotations: chunk.annotations } : {}),
+          ...(chunk.visibility != null ? { visibility: chunk.visibility } : {}),
+          ...(chunk.contextHeader != null ? { contextHeader: chunk.contextHeader } : {}),
+          ...(chunk.classSignature != null ? { classSignature: chunk.classSignature } : {}),
+          ...(chunk.dependencyEdges != null ? { dependencyEdges: chunk.dependencyEdges } : {}),
+          ...(chunk.moduleInfo != null ? { moduleInfo: chunk.moduleInfo } : {}),
+          // T081: LLM enrichment fields (present only when LlmEnricher ran)
+          ...(chunk.description != null ? { description: chunk.description } : {}),
+          ...(chunk.businessContext != null ? { businessContext: chunk.businessContext } : {}),
+          ...(chunk.semanticTags != null ? { semanticTags: chunk.semanticTags } : {}),
+          ...(chunk.relationships != null ? { relationships: chunk.relationships } : {}),
+          ...(chunk.enrichedAt != null ? { enrichedAt: chunk.enrichedAt } : {}),
+          ...(chunk.enrichmentModel != null ? { enrichmentModel: chunk.enrichmentModel } : {}),
         };
         // Call-chain metadata enrichment
         if (callMeta) {
@@ -400,6 +423,18 @@ export class IndexingPipeline {
           }
         }
 
+        // T079: Classify each chunk — assign stereotype/archLayer from heuristic rules.
+        // Only set when positive evidence found (skip 'unknown' to avoid noise in payload).
+        for (const chunk of chunks) {
+          const classification = classify(chunk);
+          if (classification.stereotype !== 'unknown') {
+            chunk.stereotype = classification.stereotype;
+          }
+          if (classification.archLayer) {
+            chunk.archLayer = classification.archLayer;
+          }
+        }
+
         // Extract call-chain info while content is in memory
         for (const chunk of chunks) {
           const info = extractCalls(chunk.content, chunk.language, chunk.name ?? undefined);
@@ -460,6 +495,19 @@ export class IndexingPipeline {
     }
 
     progress.chunksTotal = allChunks.length;
+
+    // T081: Run LLM enricher if configured and not skipped.
+    // T082: Emit 'enriching' progress stage between parsing and embedding.
+    let processedChunks: EnrichedCodeChunk[];
+    if (config.enrichmentConfig && !config.skipEnrichment) {
+      progress.stage = 'enriching';
+      onProgress?.({ ...progress });
+      const enricher = new LlmEnricher(config.enrichmentConfig);
+      processedChunks = await enricher.enrich(allChunks);
+    } else {
+      processedChunks = allChunks as EnrichedCodeChunk[];
+    }
+
     progress.stage = 'embedding';
     onProgress?.({ ...progress });
 
@@ -471,10 +519,10 @@ export class IndexingPipeline {
     let chunksIndexed = 0;
     let skippedChunks = 0;
 
-    // Build batch list (references into allChunks — no copy)
-    const batches: CodeChunk[][] = [];
-    for (let i = 0; i < allChunks.length; i += embeddingBatchSize) {
-      batches.push(allChunks.slice(i, i + embeddingBatchSize));
+    // Build batch list (references into processedChunks — no copy)
+    const batches: EnrichedCodeChunk[][] = [];
+    for (let i = 0; i < processedChunks.length; i += embeddingBatchSize) {
+      batches.push(processedChunks.slice(i, i + embeddingBatchSize));
     }
 
     progress.batchesTotal = batches.length;

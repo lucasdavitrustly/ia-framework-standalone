@@ -359,6 +359,9 @@ Browse available models: https://ollama.com/search
                 line = `  [${bar}] ${String(pct).padStart(3)}%  parsing  ${progress.filesProcessed}/${progress.filesTotal} files${fileName}`;
                 break;
               }
+              case 'enriching':
+                line = `  ⠋ Enriching ${progress.chunksIndexed > 0 ? progress.chunksIndexed : ''} chunks with LLM metadata...`;
+                break;
               case 'embedding': {
                 const batchPct =
                   (progress.batchesTotal ?? 0) > 0
