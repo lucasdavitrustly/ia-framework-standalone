@@ -105,6 +105,7 @@ export function tuningRouter(deps: TuningDeps): Hono {
         startLine: r.startLine,
         endLine: r.endLine,
         score: r.score,
+        ...(r.scoreType !== undefined ? { scoreType: r.scoreType } : {}),
         source: r.source === 'llm' ? 'llm' : 'ast',
         chunkType: r.chunkType,
         content: r.content,

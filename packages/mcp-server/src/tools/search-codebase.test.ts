@@ -941,3 +941,19 @@ describe('T069: contentHash drift detection', () => {
     expect(text).toContain('[stale]');
   });
 });
+
+describe('Phase 12 (US7): formatResult score type labels', () => {
+  it('T098: renders "score: X.XX" for cosine results', () => {
+    const r = makeResult({ score: 0.82, scoreType: 'cosine' });
+    const output = formatResult(r, 1);
+    expect(output).toContain('score: 0.82');
+    expect(output).not.toContain('rrf:');
+  });
+
+  it('T098: renders "rrf: X.XXXX" for RRF results', () => {
+    const r = makeResult({ score: 0.0213, scoreType: 'rrf' });
+    const output = formatResult(r, 1);
+    expect(output).toContain('rrf: 0.0213');
+    expect(output).not.toContain('score: 0.02');
+  });
+});

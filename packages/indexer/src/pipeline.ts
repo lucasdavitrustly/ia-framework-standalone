@@ -7,6 +7,7 @@ import { createLogger } from '@ia-framework/core';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
+import { relative } from 'node:path';
 import PQueue from 'p-queue';
 import {
   LlmEnricher,
@@ -370,7 +371,7 @@ export class IndexingPipeline {
         const changedFiles = await getChangedFiles(targetProjectPath, lastCommit);
         // Delete old chunks for changed files before re-indexing
         for (const filePath of changedFiles) {
-          await vectorStore.deleteByFilter({ filePath });
+          await vectorStore.deleteByFilter({ relativePath: relative(targetProjectPath, filePath) });
           if (dependencyGraph) {
             dependencyGraph.deleteEdgesForFile(filePath);
           }

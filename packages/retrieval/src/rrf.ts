@@ -39,6 +39,7 @@ export function rrfMerge(lists: RankedList[], limit: number, k = 60): RetrievalR
           ...result,
           source,
           score: 1 / (k + rank + 1),
+          scoreType: 'rrf' as const,
         }),
       )
       .slice(0, limit);
@@ -70,5 +71,11 @@ export function rrfMerge(lists: RankedList[], limit: number, k = 60): RetrievalR
   return Array.from(scores.values())
     .sort((a, b) => b.rrfScore - a.rrfScore)
     .slice(0, limit)
-    .map(({ result, rrfScore }): RetrievalResult => ({ ...result, score: rrfScore }));
+    .map(
+      ({ result, rrfScore }): RetrievalResult => ({
+        ...result,
+        score: rrfScore,
+        scoreType: 'rrf' as const,
+      }),
+    );
 }

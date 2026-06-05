@@ -262,6 +262,18 @@ function buildSearchResponse(
 }
 
 /**
+ * Format a score value with an appropriate label.
+ * RRF scores are rank-based (~0.01–0.03) and shown as 'rrf: X.XXXX'.
+ * Cosine scores (0-1) are shown as 'score: X.XX'.
+ * @internal
+ */
+function formatScore(result: RetrievalResult): string {
+  return result.scoreType === 'rrf'
+    ? `rrf: ${result.score.toFixed(4)}`
+    : `score: ${result.score.toFixed(2)}`;
+}
+
+/**
  * Format a single RetrievalResult as a markdown section.
  * @internal Exported for testing only.
  */
@@ -270,9 +282,10 @@ export function formatResult(result: RetrievalResult, index: number): string {
   const hierarchyTag = result.expansionSource === 'hierarchy' ? ' [hierarchy]' : '';
   const staleTag = result.stale ? ' [stale]' : '';
   const lineRange = `:${result.startLine}-${result.endLine}`;
+  const scoreLabel = formatScore(result);
   const header = result.name
-    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`
-    : `### ${index}. ${result.relativePath}${lineRange} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`;
+    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — ${scoreLabel} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`
+    : `### ${index}. ${result.relativePath}${lineRange} — ${scoreLabel} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`;
   const contextLine = formatRetrievalContext(result);
 
   // T059: metadata-only when content is empty (results 6-10 per token budget contract)
@@ -592,7 +605,7 @@ export async function searchCodebaseHandler(
 
     if (highConfidence.length > 0) {
       const sections = highConfidence.map((r, i) => formatResult(r, i + 1));
-      const text = `## Existence check: "${input.query}"\n\n**Found.** ${highConfidence.length} relevant ${highConfidence.length === 1 ? 'match' : 'matches'} in the codebase (best score: ${highConfidence[0]!.score.toFixed(2)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${highConfidence.length} results | ${latencyMs}ms`;
+      const text = `## Existence check: "${input.query}"\n\n**Found.** ${highConfidence.length} relevant ${highConfidence.length === 1 ? 'match' : 'matches'} in the codebase (best ${formatScore(highConfidence[0]!)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${highConfidence.length} results | ${latencyMs}ms`;
       return toTextResult(text, { answered: true, route: 'existence' });
     } else {
       // Not found — show what the codebase has instead (top results regardless of score)
@@ -667,7 +680,7 @@ export async function searchCodebaseHandler(
     )) {
       const itemLines = items.map((r) => {
         const name = r.name || r.relativePath.split('/').pop() || 'unknown';
-        return `  - **${name}** \`${r.relativePath}\` (score: ${r.score.toFixed(2)})`;
+        return `  - **${name}** \`${r.relativePath}\` (${formatScore(r)})`;
       });
       groupSections.push(`### ${dir}/\n${itemLines.join('\n')}`);
     }
@@ -803,14 +816,18 @@ export async function searchCodebaseHandler(
   // Confidence gate: if configured and best result is below threshold, reject immediately
   // This prevents low-quality chunks from being injected even when they pass scoreThreshold.
   // Enhanced with negative-knowledge: show what WAS found so the LLM knows what's available.
-  if (observability?.confidenceThreshold !== undefined && results.length > 0) {
+  // Skip gate for RRF-scored results: RRF rank scores (~0.016–0.033) are not on the same
+  // 0–1 cosine scale the threshold is calibrated for — gating them would reject every
+  // multi-collection semantic search regardless of actual relevance.
+  const allRrf = results.length > 0 && results.every((r) => r.scoreType === 'rrf');
+  if (!allRrf && observability?.confidenceThreshold !== undefined && results.length > 0) {
     const bestScore = Math.max(...results.map((r) => r.score));
     if (bestScore < observability.confidenceThreshold) {
       // Negative-knowledge: surface low-confidence results as "nearby but not matching"
       const nearbyResults = results.sort((a, b) => b.score - a.score).slice(0, 5);
       const nearbySection =
         nearbyResults.length > 0
-          ? `\n\n**What the search DID find** (below confidence threshold ${observability.confidenceThreshold.toFixed(2)}):\n${nearbyResults.map((r) => `- \`${r.relativePath}\` — ${r.name || r.chunkType} (score: ${r.score.toFixed(2)})`).join('\n')}\n\nThese results were too weakly related to be trustworthy. The codebase may not contain what you're looking for, or try rephrasing the query.`
+          ? `\n\n**What the search DID find** (below confidence threshold ${observability.confidenceThreshold.toFixed(2)}):\n${nearbyResults.map((r) => `- \`${r.relativePath}\` — ${r.name || r.chunkType} (${formatScore(r)}) [${r.matchedVector}]${r.source ? ` [${r.source}]` : ''}`).join('\n')}\n\nThese results were too weakly related to be trustworthy. The codebase may not contain what you're looking for, or try rephrasing the query.`
           : '';
 
       const gateText =
@@ -829,7 +846,11 @@ export async function searchCodebaseHandler(
   // Score threshold filtering (client-side, per D-01, D-02, D-03)
   // Hierarchy-expanded and adjacent-expanded results are excluded from threshold
   // since they are structurally-related chunks, not relevance-ranked results.
-  const scoreThreshold = input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5;
+  // For RRF-scored results, the cosine threshold (0.5–0.6) is meaningless — skip it
+  // so RRF results (~0.016–0.033) are not silently discarded before reaching the LLM.
+  const scoreThreshold = allRrf
+    ? 0
+    : (input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5);
   let thresholdFiltered = false;
   if (scoreThreshold > 0) {
     const isExpansion = (r: RetrievalResult) =>
@@ -983,7 +1004,7 @@ export async function searchCodebaseHandler(
   // to use this context before exploring files further
   let ragSufficientNote: string | undefined;
   if (results.length >= 3 && results[0]?.score !== undefined && results[0].score > 0.75) {
-    ragSufficientNote = `[Retrieved ${results.length} high-confidence results (best: ${results[0].score.toFixed(2)}). Consider using this context before exploring files further.]`;
+    ragSufficientNote = `[Retrieved ${results.length} high-confidence results (best: ${formatScore(results[0])}). Consider using this context before exploring files further.]`;
   }
 
   return buildSearchResponse(

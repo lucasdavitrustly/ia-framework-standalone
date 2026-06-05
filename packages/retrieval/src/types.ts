@@ -43,6 +43,8 @@ export interface RetrievalResult {
   exports: string[];
   /** Best similarity score across searched vectors (0-1) */
   score: number;
+  /** Score type — 'cosine' for primary dense search, 'rrf' for hybrid RRF fallback */
+  scoreType?: 'cosine' | 'rrf' | undefined;
   /** Which vector(s) contributed to this result */
   matchedVector: string;
   /** Which collection/strategy produced this result */

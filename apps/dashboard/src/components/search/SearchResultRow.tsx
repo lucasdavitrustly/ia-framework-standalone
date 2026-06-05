@@ -31,7 +31,16 @@ export default function SearchResultRow({
         <span className="w-24 text-gray-400">
           {result.startLine}–{result.endLine}
         </span>
-        <span className="w-20 font-mono">{result.score.toFixed(3)}</span>
+        <span className="w-24 font-mono text-right">
+          {result.scoreType === 'rrf' ? (
+            <>
+              <span className="text-xs text-yellow-500 mr-0.5">rrf</span>
+              {result.score.toFixed(4)}
+            </>
+          ) : (
+            result.score.toFixed(3)
+          )}
+        </span>
         <span className="w-20">
           <SourceTag source={result.source} />
         </span>

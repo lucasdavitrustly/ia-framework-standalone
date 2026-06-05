@@ -27,6 +27,7 @@ function mapResult(r: RetrievalResult): {
   startLine: number;
   endLine: number;
   score: number;
+  scoreType?: 'cosine' | 'rrf';
   source: string;
   chunkType: string;
   matchedVector: string;
@@ -39,6 +40,7 @@ function mapResult(r: RetrievalResult): {
     startLine: r.startLine,
     endLine: r.endLine,
     score: r.score,
+    ...(r.scoreType !== undefined ? { scoreType: r.scoreType } : {}),
     source: r.source ?? 'ast',
     chunkType: r.chunkType,
     matchedVector: r.matchedVector,

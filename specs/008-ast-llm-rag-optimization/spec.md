@@ -822,6 +822,59 @@ Query
 
 ---
 
+---
+
+### User Story 6 - Retrieval Correctness: Fix Silent Bugs in the Search Pipeline (Priority: P1)
+
+After deploying the lean-payload schema (no raw code stored in Qdrant), five silent bugs were discovered through live testing against the payment-gateway repo. Each bug causes a search pipeline component to silently produce incorrect results without error — scores near 0.02 even for LLM-enriched collections, zero diversity from MMR, zero contribution from BM25, broken dependency graph expansion, and accumulating stale chunks on incremental re-index.
+
+**Why this priority**: These are correctness bugs, not feature requests. They undermine the value of all prior work (enrichment, 3 vectors, dependency graph) because the retrieval pipeline silently ignores the data it worked hard to produce.
+
+**Root cause summary**: The lean-payload schema stores no `content` in Qdrant (code is read from filesystem at query time). Several pipeline components were written assuming `content` is always populated; when it is `""` they degrade silently to no-ops. Additionally, two places still reference the deprecated `filePath` field that the new indexer no longer writes.
+
+**Independent Test**: Can be tested by running the benchmark suite with a lean-payload collection and comparing Hit@K and MRR before and after the fixes.
+
+**Acceptance Scenarios**:
+
+1. **Given** a keyword or mixed query (e.g., "FiGatewayClient"), **When** `search()` is called, **Then** the sparse vector is queried via `searchKeyword()` in parallel with the dense vectors — BM25 keyword matching contributes to results.
+
+2. **Given** a lean-payload collection (chunk `content = ""`), **When** `mmrRerank()` is called, **Then** MMR diversity uses chunk metadata (relativePath + name + defines) as a similarity proxy — results show diversity across files and classes, not pure relevance sort.
+
+3. **Given** a lean-payload collection, **When** BM25 reranking is applied, **Then** `bm25Rerank()` tokenizes available metadata fields (name, packageName, defines, calls) when `content` is empty — BM25 score is non-zero for matching chunks.
+
+4. **Given** a SQLite dependency graph with edges for the base search results, **When** `searchWithExpansion()` expands neighbors, **Then** the expansion fetches neighboring chunks by `relativePath` filter (not the deprecated `filePath`) — expansion returns results for new-schema collections.
+
+5. **Given** a changed file detected by git-diff during incremental re-index, **When** the pipeline deletes old chunks before re-indexing, **Then** it filters by `relativePath` (not the deprecated `filePath`) — stale chunks are actually deleted and don't accumulate.
+
+**Bugs fixed (with locations):**
+
+| Bug                                           | File                                                              | Line | Symptom                                                             |
+| --------------------------------------------- | ----------------------------------------------------------------- | ---- | ------------------------------------------------------------------- |
+| Sparse vector dropped from `search()`         | `packages/retrieval/src/search-engine.ts`                         | 234  | BM25 path dead in base search — only reachable via `searchHybrid()` |
+| MMR Jaccard on empty `content`                | `packages/retrieval/src/search-engine.ts` (caller) + `mmr.ts:123` | —    | MMR diversity disabled for lean-payload chunks                      |
+| BM25 tokenizes empty `content`                | `packages/retrieval/src/bm25-reranker.ts`                         | 110  | BM25 score = 0 for all lean-payload chunks                          |
+| Dependency expansion by deprecated `filePath` | `packages/retrieval/src/search-engine.ts`                         | 387  | SQLite graph expansion returns nothing for new-schema collections   |
+| Incremental delete by deprecated `filePath`   | `packages/indexer/src/pipeline.ts`                                | 373  | Stale chunks accumulate on re-index                                 |
+
+---
+
+### User Story 7 - Score Type Transparency in MCP Output (Priority: P2)
+
+A developer searches the indexed codebase via the MCP tool and receives results. When the primary cosine search succeeds, results show `score: 0.82` (cosine, 0–1 scale). When the primary search fails and the hybrid RRF fallback fires, results show `rrf: 0.0213` (Reciprocal Rank Fusion, ~0.01–0.05 scale). The score label makes the retrieval path and score magnitude immediately interpretable.
+
+**Why this priority**: The single untyped `score` field currently causes confusion — a score of `0.02` looks like a near-failure when it is in fact a strong RRF match. Labelling the score type makes the MCP output self-documenting and removes the need for users to know the internals of the retrieval pipeline.
+
+**Independent Test**: Can be tested by mocking `searchHybrid` to return results and verifying that `formatResult` renders `rrf:` prefix; and by verifying that primary `search()` results have `scoreType: 'cosine'`.
+
+**Acceptance Scenarios**:
+
+1. **Given** a query where the primary cosine search returns results above the threshold, **When** the MCP tool formats results, **Then** each result header shows `score: X.XX` (2 decimal places, cosine scale).
+2. **Given** a query where the primary cosine search returns nothing and the hybrid RRF fallback fires, **When** the MCP tool formats results, **Then** each result header shows `rrf: X.XXXX` (4 decimal places, RRF scale ~0.01–0.05).
+3. **Given** a `RetrievalResult` produced by `search()`, **When** its `scoreType` field is read, **Then** it equals `'cosine'`.
+4. **Given** a `RetrievalResult` produced by `searchHybrid()`, **When** its `scoreType` field is read, **Then** it equals `'rrf'`.
+
+---
+
 ## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes

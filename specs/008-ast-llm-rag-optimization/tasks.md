@@ -195,8 +195,8 @@
 - [x] T073 [P] Update MCP server tool registration (remove deleted tools, update descriptions) in packages/mcp-server/src/server.ts
 - [x] T074 Run full test suite (pnpm test) and fix any failures
 - [x] T075 Run pnpm build and fix any type errors
-- [ ] T076 Run benchmark suite to validate precision@5 and recall@10 improvements
-- [ ] T077 Validate quickstart.md flow end-to-end (fresh index → search → verify results)
+- [x] T076 Run benchmark suite to validate precision@5 and recall@10 improvements
+- [x] T077 Validate quickstart.md flow end-to-end (fresh index → search → verify results)
 
 ---
 
@@ -325,6 +325,72 @@ This is the minimum path to prove the full value chain: index with enrichment �
 - [x] T085 Replace the static spinner in the CLI enriching renderer (`packages/cli/src/commands/index.command.ts`) with a progress bar showing `X/Y batches`, elapsed time, and ETA: `[████░░] 42%  enriching  130/308 batches  4m32s  ~6m left  FileName.java`.
 
 **Checkpoint**: Running `ia-framework index` with enrichment enabled shows a live progress bar during Ollama calls.
+
+---
+
+---
+
+## Phase 11: Retrieval Correctness — Fix Silent Lean-Payload Bugs (US6)
+
+**Goal**: Fix five silent bugs introduced when migrating to the lean-payload schema (no raw code in Qdrant). Each bug causes a search pipeline component to silently degrade to a no-op, undermining the value of the enriched index.
+
+**Root cause**: Several pipeline components assume `chunk.content` is always populated. In the lean-payload schema `content = ""` — code is read from filesystem at query time. Additionally two places still reference the deprecated `filePath` field the new indexer no longer writes.
+
+### Tests for Phase 11
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T086 [P] [US6] Test that `search()` queries the sparse vector when query type is `keyword` or `mixed`: given a mock `vectorStore.searchKeyword`, a keyword query MUST call it and merge its results — in `packages/retrieval/src/search-engine.test.ts`
+
+- [x] T087 [P] [US6] Test that MMR provides diversity for lean-payload chunks (content = ""): given two chunks with the same score but different `relativePath`/`name`/`defines`, MMR must not select both when lambda < 1.0 — in `packages/retrieval/src/search-engine.test.ts`
+
+- [x] T088 [P] [US6] Test that `bm25Rerank()` produces non-zero scores for lean-payload chunks: given results with `content = ""` but populated `name`/`defines`/`calls`, the reranker MUST produce a non-zero BM25 score for a matching query term — in `packages/retrieval/src/bm25-reranker.test.ts`
+
+- [x] T089 [P] [US6] Test that `searchWithExpansion()` fetches neighbor chunks by `relativePath` (not `filePath`): given a mock SQLite graph returning neighbor paths, the Qdrant filter MUST use `key: 'relativePath'` — in `packages/retrieval/src/search-engine.test.ts`
+
+- [x] T090 [P] [US6] Test that incremental re-index deletes chunks using `relativePath`: given a changed file path returned by git-diff, `deleteByFilter` MUST be called with `{ relativePath: ... }` not `{ filePath: ... }` — in `packages/indexer/src/pipeline.test.ts`
+
+### Implementation for Phase 11
+
+- [x] T091 [US6] Fix sparse vector routing in `search()` in `packages/retrieval/src/search-engine.ts:234`: when `vectorsToSearch` includes `'sparse'`, compute `computeTermFrequencySparseVector(query.text)` and call `vectorStore.searchKeyword()` in parallel with the dense searches; merge results into the max-score dedup map; guard gracefully when `vectorStore.searchKeyword` is undefined.
+
+- [x] T092 [US6] Fix MMR pairSim for lean-payload chunks in `packages/retrieval/src/search-engine.ts`: when calling `mmrRerank()`, pass a custom `similarityFn` that uses `jaccardSimilarity` on `(a.relativePath + ' ' + (a.name ?? '') + ' ' + (a.defines?.join(' ') ?? ''))` as a proxy for content similarity — no change to `mmr.ts` itself (the `similarityFn` option already exists).
+
+- [x] T093 [US6] Fix BM25 reranker for lean-payload chunks in `packages/retrieval/src/bm25-reranker.ts:110`: change `tokenize(r.content)` to fall back to metadata text when `r.content` is empty: `tokenize(r.content || [r.name, r.packageName, ...(r.defines ?? []), ...(r.calls ?? [])].filter(Boolean).join(' '))`.
+
+- [x] T094 [US6] Fix SQLite graph expansion deprecated `filePath` filter in `packages/retrieval/src/search-engine.ts:330,353`: change `baseFilePaths` collection from `r.filePath` to `r.relativePath`; replace call to `this.fetchChunksForFiles(newFiles)` with `this.fetchChunksForRelativePaths(newFiles)` (which already uses `relativePath` correctly); mark `fetchChunksForFiles()` as `@deprecated`.
+
+- [x] T095 [US6] Fix incremental delete deprecated `filePath` filter in `packages/indexer/src/pipeline.ts:373`: change `vectorStore.deleteByFilter({ filePath })` to `vectorStore.deleteByFilter({ relativePath: filePath })` (git-diff paths are already relative to the project root).
+
+**Checkpoint**: All 5 bugs fixed. Benchmark Hit@K and MRR improve for lean-payload collections. No stale chunk accumulation on incremental re-index.
+
+---
+
+## Phase 12: Score Type Transparency — Label Cosine vs RRF in MCP Output (US7)
+
+**Goal**: Add a `scoreType: 'cosine' | 'rrf'` field to `RetrievalResult` and update the MCP `formatResult` display so users can distinguish primary cosine search results (scale 0–1) from hybrid RRF fallback results (scale ~0.01–0.05).
+
+**Root cause**: `RetrievalResult.score` is an untyped `number`. When the hybrid RRF fallback fires, its rank-based scores (~0.02) are displayed identically to cosine scores, causing users to misread valid matches as near-failures.
+
+### Tests for Phase 12
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T096 [P] [US7] Test that `search()` results have `scoreType: 'cosine'`: given a mock vector store returning one result, the returned `RetrievalResult` must have `scoreType === 'cosine'` — in `packages/retrieval/src/search-engine.test.ts`
+
+- [x] T097 [P] [US7] Test that `searchHybrid()` results have `scoreType: 'rrf'`: given a mock `searchHybrid` returning one result, the returned `RetrievalResult` must have `scoreType === 'rrf'` — in `packages/retrieval/src/search-engine.test.ts`
+
+- [x] T098 [P] [US7] Test that `formatResult` renders `rrf: X.XXXX` for RRF results and `score: X.XX` for cosine results — in `packages/mcp-server/src/tools/search-codebase.test.ts`
+
+### Implementation for Phase 12
+
+- [x] T099 [P] [US7] Add `scoreType?: 'cosine' | 'rrf'` field to `RetrievalResult` in `packages/retrieval/src/types.ts` (after the `score` field).
+
+- [x] T100 [US7] Set `scoreType: 'cosine'` in `toRetrievalResult()` in `packages/retrieval/src/search-engine.ts`; set `scoreType: 'rrf'` on results mapped in `searchHybrid()`.
+
+- [x] T101 [US7] Update `formatResult` in `packages/mcp-server/src/tools/search-codebase.ts` (lines 273–275, 595, 671): render `rrf: ${score.toFixed(4)}` when `scoreType === 'rrf'`, keep `score: ${score.toFixed(2)}` otherwise.
+
+**Checkpoint**: MCP output unambiguously labels cosine vs RRF scores. No score interpretation required by users.
 
 ---
 

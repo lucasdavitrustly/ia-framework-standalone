@@ -247,7 +247,8 @@ describe('SearchEngine.searchWithExpansion', () => {
 
     const results = await eng.searchWithExpansion({ text: 'auth' }, { hops: 1 });
 
-    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['/project/src/auth.ts'], 1);
+    // T094 fix: getNeighborFiles is now called with relativePath, not absolute filePath
+    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['src/auth.ts'], 1);
     expect(results).toHaveLength(2);
     expect(results[0]!.chunkId).toBe('chunk-base');
     expect(results[0]!.score).toBe(0.9);
@@ -274,7 +275,8 @@ describe('SearchEngine.searchWithExpansion', () => {
 
     const results = await eng.searchWithExpansion({ text: 'handler' }, { hops: 2 });
 
-    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['/project/src/handler.ts'], 2);
+    // T094 fix: getNeighborFiles is now called with relativePath, not absolute filePath
+    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['src/handler.ts'], 2);
     expect(results).toHaveLength(2);
   });
 
@@ -947,5 +949,159 @@ describe('T078: SearchEngine reconstructs filePath from projectRoot when payload
 
     // Stored filePath takes priority over reconstruction (backward compat)
     expect(results[0]?.filePath).toBe('/old/absolute/path/src/Payment.java');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 11 (US6): Retrieval correctness — fix silent lean-payload bugs
+// T086: sparse vector routing  T087: MMR diversity with empty content
+// T089: dependency expansion uses relativePath filter
+// ---------------------------------------------------------------------------
+describe('Phase 11 (US6): Lean-payload retrieval correctness', () => {
+  /** Build a mock Qdrant result with no content (lean-payload schema). */
+  function makeLean(
+    chunkId: string,
+    score: number,
+    overrides: Partial<{
+      relativePath: string;
+      name: string;
+      defines: string[];
+    }> = {},
+  ) {
+    return {
+      id: `uuid-${chunkId}`,
+      score,
+      vectorName: 'semantic',
+      payload: {
+        chunkId,
+        relativePath: overrides.relativePath ?? 'src/A.java',
+        language: 'java',
+        chunkType: 'method',
+        name: overrides.name ?? 'processPayment',
+        // content intentionally absent — lean payload stores no raw code
+        startLine: 1,
+        endLine: 10,
+        imports: [] as string[],
+        exports: [] as string[],
+        defines: overrides.defines ?? [],
+        indexedAt: '2026-06-01T00:00:00Z',
+      },
+    };
+  }
+
+  test('T086: search() calls vectorStore.searchKeyword for keyword/symbol/mixed queries', async () => {
+    const mockSearchKeyword = vi.fn().mockResolvedValue([]);
+    const cfg = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchKeyword: mockSearchKeyword,
+      },
+    });
+    const engine = new SearchEngine(cfg);
+
+    // 'PaymentProcessor' → keyword type → ['sparse', 'semantic'] → must call searchKeyword
+    await engine.search({ text: 'PaymentProcessor', scoreThreshold: 0 });
+
+    expect(mockSearchKeyword).toHaveBeenCalledOnce();
+    const args = mockSearchKeyword.mock.calls[0]![0] as { sparseVector: unknown };
+    expect(args.sparseVector).toBeDefined();
+    expect(args.sparseVector).toHaveProperty('indices');
+    expect(args.sparseVector).toHaveProperty('values');
+  });
+
+  test('T087: search() MMR provides file diversity for lean-payload chunks with empty content', async () => {
+    // 4 chunks from src/A.java (all top by raw score), 2 from src/B.java
+    // With content='', jaccardSim=0 for every pair → MMR degrades to pure score sort → no diversity
+    // After fix (path+name similarityFn), same-file chunks are penalised → B.java must appear
+    const mockSearch = vi
+      .fn()
+      .mockResolvedValue([
+        makeLean('c1', 0.95, { relativePath: 'src/A.java', name: 'methodA1' }),
+        makeLean('c2', 0.9, { relativePath: 'src/A.java', name: 'methodA2' }),
+        makeLean('c3', 0.85, { relativePath: 'src/A.java', name: 'methodA3' }),
+        makeLean('c4', 0.8, { relativePath: 'src/A.java', name: 'methodA4' }),
+        makeLean('c5', 0.75, { relativePath: 'src/B.java', name: 'methodB1' }),
+        makeLean('c6', 0.7, { relativePath: 'src/B.java', name: 'methodB2' }),
+      ]);
+    const cfg = makeConfig({
+      mmrEnabled: true,
+      mmrLambda: 0.5, // force diversity lambda
+      vectorStore: { search: mockSearch },
+    });
+    const engine = new SearchEngine(cfg);
+
+    const results = await engine.search({
+      text: 'how does payment processing work',
+      limit: 4,
+      scoreThreshold: 0,
+    });
+
+    const uniquePaths = new Set(results.map((r) => r.relativePath));
+    // After fix: path-based pairSim penalises A.java duplicates → B.java must appear
+    expect(uniquePaths.size).toBeGreaterThanOrEqual(2);
+  });
+
+  test('T089: searchWithExpansion() filters neighbor chunks by relativePath, not filePath', async () => {
+    const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+    const mockSearch = vi.fn();
+    const mockGetNeighborFiles = vi
+      .fn()
+      .mockResolvedValue(['src/main/java/com/acme/OrderRepository.java']);
+
+    // Call 1: base semantic search
+    mockSearch
+      .mockResolvedValueOnce([
+        makeLean('base-chunk', 0.9, {
+          relativePath: 'src/main/java/com/acme/OrderController.java',
+          name: 'createOrder',
+        }),
+      ])
+      // Call 2: SQLite graph expansion fetch (should use relativePath key)
+      .mockResolvedValueOnce([]);
+
+    const cfg: SearchEngineConfig = {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch },
+      dependencyGraph: { getNeighborFiles: mockGetNeighborFiles },
+    };
+    const engine = new SearchEngine(cfg);
+
+    await engine.searchWithExpansion(
+      { text: 'order repository data access', scoreThreshold: 0 },
+      { hops: 1 },
+    );
+
+    // The second vectorStore.search call is the SQLite graph expansion fetch
+    const calls = mockSearch.mock.calls as Array<
+      [number[], { filter?: { should?: Array<{ key: string; match: { value: string } }> } }]
+    >;
+    const expansionCall = calls[1];
+    expect(expansionCall).toBeDefined();
+    // After fix: key must be 'relativePath', not the deprecated 'filePath'
+    const filterKey = expansionCall?.[1]?.filter?.should?.[0]?.key;
+    expect(filterKey).toBe('relativePath');
+  });
+});
+
+describe('Phase 12 (US7): scoreType tagging', () => {
+  test('T096: search() results have scoreType: "cosine"', async () => {
+    const config = makeConfig();
+    const engine = new SearchEngine(config);
+    getMockSearch(config).mockResolvedValueOnce([makeMockResult('c1', 0.9, 'semantic')]);
+    const results = await engine.search({ text: 'payment', scoreThreshold: 0 });
+    expect(results[0]?.scoreType).toBe('cosine');
+  });
+
+  test('T097: searchHybrid() results have scoreType: "rrf"', async () => {
+    const mockHybrid = vi.fn().mockResolvedValueOnce([makeMockResult('h1', 0.021, 'both')]);
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchHybrid: mockHybrid,
+      },
+    });
+    const engine = new SearchEngine(config);
+    const results = await engine.searchHybrid({ text: 'payment', scoreThreshold: 0 });
+    expect(results[0]?.scoreType).toBe('rrf');
   });
 });

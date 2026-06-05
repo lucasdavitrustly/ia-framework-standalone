@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ChunkMetadata } from '@ia-framework/core';
 
@@ -227,10 +227,23 @@ describe('IndexingPipeline', () => {
 
     await pipeline.run(makeConfig({ incremental: true }));
 
-    // Should call deleteByFilter for the changed file before re-indexing
-    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ filePath: changedFile });
+    // T095 fix: deleteByFilter is called with relativePath (not absolute filePath)
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ relativePath: 'foo.ts' });
     // Should call parseFile for the changed file
     expect(mockParseFile).toHaveBeenCalledWith(changedFile, expect.any(Object));
+  });
+
+  it('T090: incremental run deletes stale chunks by relativePath, not absolute filePath', async () => {
+    const changedFile = join(tmpDir, 'foo.ts');
+    const expectedRelativePath = relative(tmpDir, changedFile); // = 'foo.ts'
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit-hash');
+    mockGetChangedFiles.mockResolvedValue([changedFile]);
+
+    await pipeline.run(makeConfig({ incremental: true }));
+
+    // After fix: deleteByFilter must use relativePath, not the deprecated absolute filePath
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ relativePath: expectedRelativePath });
+    expect(vectorStore.deleteByFilter).not.toHaveBeenCalledWith({ filePath: changedFile });
   });
 
   it('Test 7: run() calls vectorStore.initialize() before upserting', async () => {

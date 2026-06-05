@@ -6,7 +6,7 @@ import type {
   FallbackSuggestion,
 } from './types.js';
 import { analyzeRetrievalQuery } from './query-intelligence.js';
-import { mmrRerank, classifyQueryLambda } from './mmr.js';
+import { mmrRerank, classifyQueryLambda, jaccardSimilarity } from './mmr.js';
 import { getRelatedTerms } from './search-synonyms.js';
 import { applyElbowTruncation } from './elbow-detection.js';
 import { DependencyGraph } from './dependency-graph.js';
@@ -90,6 +90,7 @@ function toRetrievalResult(
     calledBy: raw.payload.calledBy,
     repoId: raw.payload.repoId,
     score: raw.score,
+    scoreType: 'cosine' as const,
     matchedVector,
     ...(raw.payload.dependencyEdges != null
       ? { dependencyEdges: raw.payload.dependencyEdges }
@@ -229,10 +230,12 @@ export class SearchEngine {
     // Embed the query once (same dense vector for semantic and signature searches)
     const queryVector = await embeddingProvider.embed(query.text, 'query');
 
-    // Search each relevant vector in parallel
-    const searchPromises = vectorsToSearch
-      .filter((v) => v !== 'sparse') // sparse uses searchKeyword, handled separately
-      .map((vectorName) =>
+    // Collect all search promises (dense + optionally sparse/keyword)
+    const allSearchPromises: Promise<{ vectorName: string; results: VectorSearchResult[] }>[] = [];
+
+    // Dense vector searches
+    for (const vectorName of vectorsToSearch.filter((v) => v !== 'sparse')) {
+      allSearchPromises.push(
         vectorStore
           .search(queryVector, {
             vectorName,
@@ -242,8 +245,23 @@ export class SearchEngine {
           })
           .then((results) => ({ vectorName, results })),
       );
+    }
 
-    const vectorResults = await Promise.all(searchPromises);
+    // T091: fire searchKeyword for sparse vector when the query type calls for it
+    if (vectorsToSearch.includes('sparse') && vectorStore.searchKeyword) {
+      const sparseVector = computeTermFrequencySparseVector(query.text);
+      allSearchPromises.push(
+        vectorStore
+          .searchKeyword({
+            sparseVector,
+            limit: searchLimit,
+            filter: query.filter,
+          })
+          .then((results) => ({ vectorName: 'sparse', results })),
+      );
+    }
+
+    const vectorResults = await Promise.all(allSearchPromises);
 
     // Merge by chunkId — max-score strategy, tracking which vectors matched
     const merged = new Map<string, RetrievalResult>();
@@ -276,7 +294,17 @@ export class SearchEngine {
 
     if (this.config.mmrEnabled !== false) {
       const lambda = this.config.mmrLambda ?? classifyQueryLambda(query.text);
-      const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit });
+      // T092: when content is absent (lean-payload), jaccardSimilarity on content is always 0,
+      // causing MMR to degrade to pure score sort with no diversity. Pass a custom similarityFn
+      // that uses relativePath + name + defines as a proxy for content similarity.
+      const similarityFn = (a: RetrievalResult, b: RetrievalResult): number => {
+        const textA =
+          a.content || [a.relativePath, a.name, ...(a.defines ?? [])].filter(Boolean).join(' ');
+        const textB =
+          b.content || [b.relativePath, b.name, ...(b.defines ?? [])].filter(Boolean).join(' ');
+        return jaccardSimilarity(textA, textB);
+      };
+      const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit, similarityFn });
       // Apply domain bonuses after MMR so diversity is not overridden by rerankResults
       const reranked = rerankResults(mmrResult, query);
       // Elbow detection: truncate at significant score drops
@@ -327,14 +355,18 @@ export class SearchEngine {
 
     // --- SQLite dependency graph expansion (when graph is configured) ---
     if (this.config.dependencyGraph) {
-      const baseFilePaths = [...new Set(baseResults.map((r) => r.filePath))];
+      // T094: use relativePath for both graph lookup and Qdrant filter — filePath is deprecated
+      const baseRelativePaths = [...new Set(baseResults.map((r) => r.relativePath))];
       const intent = analyzeRetrievalQuery(query.text);
       const dominantModule =
         query.preferredModule ??
         baseResults.find((result) => result.modulePath)?.modulePath ??
         undefined;
 
-      let neighborFiles = await this.config.dependencyGraph.getNeighborFiles(baseFilePaths, hops);
+      let neighborFiles = await this.config.dependencyGraph.getNeighborFiles(
+        baseRelativePaths,
+        hops,
+      );
 
       if ((intent.architectureQuery || intent.dataFlowQuery) && dominantModule) {
         const normalizedModule = normalizePath(dominantModule);
@@ -346,11 +378,12 @@ export class SearchEngine {
         ];
       }
 
-      const baseFileSet = new Set(baseFilePaths);
-      const newFiles = neighborFiles.filter((f) => !baseFileSet.has(f));
+      const baseRelativeSet = new Set(baseRelativePaths);
+      const newFiles = neighborFiles.filter((f) => !baseRelativeSet.has(f));
 
       if (newFiles.length > 0) {
-        const sqliteChunks = await this.fetchChunksForFiles(newFiles);
+        // T094: use fetchChunksForRelativePaths (relativePath filter) instead of deprecated fetchChunksForFiles
+        const sqliteChunks = await this.fetchChunksForRelativePaths(newFiles);
         for (const chunk of sqliteChunks) {
           if (!baseChunkIds.has(chunk.chunkId)) {
             baseChunkIds.add(chunk.chunkId);
@@ -751,9 +784,10 @@ export class SearchEngine {
       semanticPrefetchMultiplier: this.config.semanticPrefetchMultiplier,
     });
 
-    const rawResults = results.map((raw) =>
-      toRetrievalResult(raw, 'both', this.config.projectRoot),
-    );
+    const rawResults = results.map((raw) => ({
+      ...toRetrievalResult(raw, 'both', this.config.projectRoot),
+      scoreType: 'rrf' as const,
+    }));
 
     // Post-retrieval RRF threshold: filter out low-relevance results.
     // RRF scores are rank-based (~0.01–0.03), not cosine (~0–1).
