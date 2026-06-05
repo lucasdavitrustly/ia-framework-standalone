@@ -141,17 +141,22 @@ describe('agents inject', () => {
     expect(content).toContain('search_codebase');
   });
 
-  // Test 3c: search_codebase_hybrid is present in injected content
-  it('includes search_codebase_hybrid tool in injected content', async () => {
+  // Test 3c: New 3-tool content is present in injected content (search_codebase_hybrid removed)
+  it('includes new 3-tool documentation in injected content', async () => {
     const agentsPath = join(targetDir, 'AGENTS.md');
     await writeFile(agentsPath, '# Project\n');
 
     await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
 
     const content = await readFile(agentsPath, 'utf-8');
-    expect(content).toContain('search_codebase_hybrid');
-    expect(content).toContain('BM25');
-    expect(content).toContain('Reciprocal Rank Fusion');
+    expect(content).toContain('search_codebase');
+    expect(content).toContain('get_file');
+    expect(content).toContain('get_dependencies');
+    // Old tool should NOT appear
+    expect(content).not.toContain('search_codebase_hybrid');
+    // New filter params should be documented
+    expect(content).toContain('stereotype');
+    expect(content).toContain('archLayer');
   });
 
   // Test 4: Exits with error when config load fails

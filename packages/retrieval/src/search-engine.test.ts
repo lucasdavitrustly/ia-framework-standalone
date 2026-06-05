@@ -18,7 +18,7 @@ function getMockEmbed(config: SearchEngineConfig): MockSearchFn {
 function makeMockResult(
   chunkId: string,
   score: number,
-  vectorName: 'text' | 'code',
+  vectorName: string,
   overrides: Partial<{
     relativePath: string;
     name: string;
@@ -82,51 +82,52 @@ describe('SearchEngine', () => {
     expect(getMockEmbed(config)).toHaveBeenCalledWith('authentication middleware', 'query');
   });
 
-  test('Test 2: search() calls vectorStore.search() twice — once for text, once for code', async () => {
-    await engine.search({ text: 'auth' });
+  test('Test 2: search() with a natural language query calls vectorStore.search() once with semantic vector', async () => {
+    await engine.search({ text: 'authentication middleware' });
 
-    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: 'text' | 'code' }][];
-    expect(calls).toHaveLength(2);
-    const vectorNames = calls.map((c) => c[1].vectorName);
-    expect(vectorNames).toContain('text');
-    expect(vectorNames).toContain('code');
+    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: string }][];
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1].vectorName).toBe('semantic');
   });
 
-  test('Test 3: results from both vectors are merged and deduplicated by chunkId', async () => {
-    const textResult = makeMockResult('chunk-1', 0.9, 'text');
-    const codeResult = makeMockResult('chunk-2', 0.8, 'code');
+  test('Test 3: results from semantic vector are returned as RetrievalResults', async () => {
+    const result1 = makeMockResult('chunk-1', 0.9, 'semantic', { relativePath: 'src/a.ts' });
+    const result2 = makeMockResult('chunk-2', 0.8, 'semantic', { relativePath: 'src/b.ts' });
 
-    getMockSearch(config).mockResolvedValueOnce([textResult]).mockResolvedValueOnce([codeResult]);
+    getMockSearch(config).mockResolvedValueOnce([result1, result2]);
 
     const results = await engine.search({ text: 'auth' });
 
-    expect(results).toHaveLength(2);
     const ids = results.map((r) => r.chunkId);
     expect(ids).toContain('chunk-1');
     expect(ids).toContain('chunk-2');
   });
 
-  test('Test 4: when same chunk appears in both results, score=max and matchedVector=both', async () => {
-    const textResult = makeMockResult('chunk-1', 0.7, 'text');
-    const codeResult = makeMockResult('chunk-1', 0.9, 'code');
+  test('Test 4: when same chunk appears in multiple vector results, score=max and matchedVector includes both vectors', async () => {
+    const semanticResult = makeMockResult('chunk-1', 0.7, 'semantic');
+    const signatureResult = makeMockResult('chunk-1', 0.9, 'signature');
 
-    getMockSearch(config).mockResolvedValueOnce([textResult]).mockResolvedValueOnce([codeResult]);
+    // Mixed query triggers both semantic + signature vector searches
+    getMockSearch(config)
+      .mockResolvedValueOnce([semanticResult])
+      .mockResolvedValueOnce([signatureResult]);
 
-    const results = await engine.search({ text: 'auth' });
+    const results = await engine.search({ text: 'how does PaymentService work' });
 
     expect(results).toHaveLength(1);
     expect(results[0]!.score).toBe(0.9);
-    expect(results[0]!.matchedVector).toBe('both');
+    expect(results[0]!.matchedVector).toContain('semantic');
+    expect(results[0]!.matchedVector).toContain('signature');
   });
 
   test('Test 5: results are sorted by score descending', async () => {
-    const results_text = [
-      makeMockResult('chunk-a', 0.6, 'text', { relativePath: 'src/a.ts' }),
-      makeMockResult('chunk-b', 0.9, 'text', { relativePath: 'src/b.ts' }),
+    const semanticResults = [
+      makeMockResult('chunk-a', 0.6, 'semantic', { relativePath: 'src/a.ts' }),
+      makeMockResult('chunk-b', 0.9, 'semantic', { relativePath: 'src/b.ts' }),
+      makeMockResult('chunk-c', 0.75, 'semantic', { relativePath: 'src/c.ts' }),
     ];
-    const results_code = [makeMockResult('chunk-c', 0.75, 'code', { relativePath: 'src/c.ts' })];
 
-    getMockSearch(config).mockResolvedValueOnce(results_text).mockResolvedValueOnce(results_code);
+    getMockSearch(config).mockResolvedValueOnce(semanticResults);
 
     const results = await engine.search({ text: 'auth' });
 
@@ -169,23 +170,23 @@ describe('SearchEngine', () => {
     expect(results[0]!.relativePath).toBe('src/auth.ts');
   });
 
-  test('Test 8: search() with scoreThreshold filters out results below the threshold', async () => {
-    const highScore = makeMockResult('chunk-high', 0.9, 'text', { relativePath: 'src/a.ts' });
-    const lowScore = makeMockResult('chunk-low', 0.3, 'text', { relativePath: 'src/b.ts' });
+  test('Test 8: search() with scoreThreshold passes it to the semantic vector search', async () => {
+    const highScore = makeMockResult('chunk-high', 0.9, 'semantic', { relativePath: 'src/a.ts' });
+    const lowScore = makeMockResult('chunk-low', 0.3, 'semantic', { relativePath: 'src/b.ts' });
 
     // The vectorStore receives the scoreThreshold and should filter — but in our mock
     // we return both; the engine should apply threshold too
-    getMockSearch(config).mockResolvedValueOnce([highScore, lowScore]).mockResolvedValueOnce([]);
+    getMockSearch(config).mockResolvedValueOnce([highScore, lowScore]);
 
     await engine.search({ text: 'auth', scoreThreshold: 0.5 });
 
     // Verify the scoreThreshold was passed to the vector store
     const calls = getMockSearch(config).mock.calls as [
       number[],
-      { vectorName: 'text' | 'code'; scoreThreshold?: number | undefined },
+      { vectorName: string; scoreThreshold?: number | undefined },
     ][];
-    const textCall = calls.find((c) => c[1].vectorName === 'text');
-    expect(textCall![1].scoreThreshold).toBe(0.5);
+    const semanticCall = calls.find((c) => c[1].vectorName === 'semantic');
+    expect(semanticCall![1].scoreThreshold).toBe(0.5);
   });
 });
 
@@ -236,11 +237,10 @@ describe('SearchEngine.searchWithExpansion', () => {
       relativePath: 'src/types.ts',
     });
 
-    // First search call returns base results (text), second (code) empty
+    // First search call returns base results (semantic vector)
     mockSearch
       .mockResolvedValueOnce([baseResult])
-      .mockResolvedValueOnce([])
-      // Expansion: search for files from graph (text vector with filePath filter)
+      // Expansion: search for files from graph (semantic vector with filePath filter)
       .mockResolvedValueOnce([expandedResult]);
 
     mockGetNeighborFiles.mockResolvedValue(['/project/src/types.ts']);
@@ -268,10 +268,7 @@ describe('SearchEngine.searchWithExpansion', () => {
       relativePath: 'src/utils.ts',
     });
 
-    mockSearch
-      .mockResolvedValueOnce([baseResult])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([expandedResult]);
+    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([expandedResult]);
 
     mockGetNeighborFiles.mockResolvedValue(['/project/src/utils.ts']);
 
@@ -319,10 +316,7 @@ describe('SearchEngine.searchWithExpansion', () => {
       relativePath: 'src/types.ts',
     });
 
-    mockSearch
-      .mockResolvedValueOnce([baseResult])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([expandedResult]);
+    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([expandedResult]);
 
     mockGetNeighborFiles.mockResolvedValue(['/project/src/types.ts']);
 
@@ -516,6 +510,80 @@ describe('SearchEngine module-aware expansion', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// T056: Unified search pipeline routing tests
+// ---------------------------------------------------------------------------
+
+describe('T056: Unified search pipeline routing', () => {
+  let config: SearchEngineConfig;
+  let engine: SearchEngine;
+
+  beforeEach(() => {
+    config = makeConfig();
+    engine = new SearchEngine(config);
+  });
+
+  test('semantic query routes to semantic vector only', async () => {
+    await engine.search({ text: 'payment retry logic' });
+
+    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: string }][];
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1].vectorName).toBe('semantic');
+  });
+
+  test('symbol query routes to signature vector (sparse filtered out of dense path)', async () => {
+    await engine.search({ text: 'PaymentService.processPayment' });
+
+    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: string }][];
+    const vectorNames = calls.map((c) => c[1].vectorName);
+    // Symbol: ['signature', 'sparse'] → sparse excluded → only 'signature' dense call
+    expect(vectorNames).toContain('signature');
+    expect(vectorNames).not.toContain('semantic');
+    expect(vectorNames).not.toContain('sparse');
+  });
+
+  test('keyword query routes to semantic vector (sparse filtered out of dense path)', async () => {
+    await engine.search({ text: 'PaymentService' });
+
+    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: string }][];
+    const vectorNames = calls.map((c) => c[1].vectorName);
+    // Keyword: ['sparse', 'semantic'] → sparse excluded → only 'semantic' dense call
+    expect(vectorNames).toContain('semantic');
+    expect(vectorNames).not.toContain('signature');
+  });
+
+  test('mixed query routes to semantic and signature vectors (2 dense calls)', async () => {
+    await engine.search({ text: 'how does PaymentService handle retries' });
+
+    const calls = getMockSearch(config).mock.calls as [number[], { vectorName: string }][];
+    const vectorNames = calls.map((c) => c[1].vectorName);
+    // Mixed: ['semantic', 'signature', 'sparse'] → sparse excluded → 2 dense calls
+    expect(vectorNames).toContain('semantic');
+    expect(vectorNames).toContain('signature');
+    expect(calls).toHaveLength(2);
+  });
+
+  test('multi-vector results are merged by chunkId with max-score strategy', async () => {
+    const semanticResult = makeMockResult('chunk-1', 0.7, 'semantic', {
+      relativePath: 'src/a.ts',
+    });
+    const signatureResult = makeMockResult('chunk-2', 0.9, 'signature', {
+      relativePath: 'src/b.ts',
+    });
+
+    getMockSearch(config)
+      .mockResolvedValueOnce([semanticResult])
+      .mockResolvedValueOnce([signatureResult]);
+
+    // Mixed query triggers semantic + signature
+    const results = await engine.search({ text: 'how does PaymentService work' });
+
+    const ids = results.map((r) => r.chunkId);
+    expect(ids).toContain('chunk-1');
+    expect(ids).toContain('chunk-2');
+  });
+});
+
 describe('computeTermFrequencySparseVector', () => {
   test('tokenizes text and returns sorted indices with TF values', () => {
     const result = computeTermFrequencySparseVector('the quick brown fox the');
@@ -574,7 +642,7 @@ describe('MMR integration', () => {
     return {
       id: `uuid-${chunkId}`,
       score,
-      vectorName: 'text' as const,
+      vectorName: 'semantic' as const,
       payload: {
         chunkId,
         filePath: `/project/${relativePath}`,
@@ -687,5 +755,105 @@ describe('MMR integration', () => {
 
     // With λ=0.8 (relevance dominates), the highest-score chunk (0.95) should be first
     expect(results[0]!.score).toBe(0.95);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T067: Internal health check — lazy probe on first search
+// ---------------------------------------------------------------------------
+
+describe('T067: SearchEngine.healthCheck()', () => {
+  test('returns { ok: true } when vector store probe succeeds', async () => {
+    const cfg = makeConfig();
+    const eng = new SearchEngine(cfg);
+
+    const result = await eng.healthCheck();
+
+    expect(result.ok).toBe(true);
+    expect(typeof result.latencyMs).toBe('number');
+  });
+
+  test('returns { ok: false, error } when vector store probe throws', async () => {
+    const cfg = makeConfig();
+    vi.mocked(cfg.embeddingProvider.embed).mockRejectedValueOnce(new Error('Qdrant down'));
+    const eng = new SearchEngine(cfg);
+
+    const result = await eng.healthCheck();
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Qdrant down');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T068: Zero-result fallback — glob for path-like queries, grep for identifiers
+// ---------------------------------------------------------------------------
+
+describe('T068: searchWithFallback() glob/grep zero-result fallback', () => {
+  function makeScrollPoint(relativePath: string, name = 'fn') {
+    return {
+      id: `point-${relativePath}`,
+      payload: {
+        chunkId: `chunk-${relativePath}`,
+        filePath: `/project/${relativePath}`,
+        relativePath,
+        language: 'typescript',
+        chunkType: 'function',
+        name,
+        content: 'function fn() {}',
+        startLine: 1,
+        endLine: 5,
+        imports: [],
+        exports: [],
+        indexedAt: '2026-01-01T00:00:00Z',
+      },
+    };
+  }
+
+  function makeScrollConfig(scrollPoints: ReturnType<typeof makeScrollPoint>[]) {
+    const cfg = makeConfig();
+    // All vector searches return empty → force fallback path
+    vi.mocked(cfg.vectorStore.search).mockResolvedValue([]);
+    (cfg.vectorStore as Record<string, unknown>).scroll = vi
+      .fn()
+      .mockResolvedValue({ points: scrollPoints });
+    return cfg;
+  }
+
+  test('uses scroll to glob-match path-like query when dense search returns empty', async () => {
+    const points = [
+      makeScrollPoint('src/auth/middleware.ts', 'authMiddleware'),
+      makeScrollPoint('src/auth/utils.ts', 'hashPassword'),
+    ];
+    const cfg = makeScrollConfig(points);
+    const eng = new SearchEngine(cfg);
+
+    const result = await eng.searchWithFallback({ text: 'src/auth/middleware.ts' });
+
+    expect((cfg.vectorStore as any).scroll).toHaveBeenCalled();
+    expect(result.fallback_used).toBe(true);
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.results[0]!.relativePath).toContain('middleware.ts');
+  });
+
+  test('uses scroll to grep-match CamelCase identifier when dense search returns empty', async () => {
+    const points = [makeScrollPoint('src/payment/service.ts', 'PaymentService')];
+    const cfg = makeScrollConfig(points);
+    const eng = new SearchEngine(cfg);
+
+    const result = await eng.searchWithFallback({ text: 'PaymentService' });
+
+    expect((cfg.vectorStore as any).scroll).toHaveBeenCalled();
+    expect(result.fallback_used).toBe(true);
+    expect(result.results.some((r) => r.name === 'PaymentService')).toBe(true);
+  });
+
+  test('returns found=false with empty results when scroll also finds nothing', async () => {
+    const cfg = makeScrollConfig([]);
+    const eng = new SearchEngine(cfg);
+
+    const result = await eng.searchWithFallback({ text: 'NonExistentClass' });
+
+    expect(result.found).toBe(false);
   });
 });

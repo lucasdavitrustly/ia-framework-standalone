@@ -115,3 +115,113 @@ public class BigAspect {
     expect(aspectChunk!.content).toContain('@Component');
   });
 });
+
+// ── T034: dependency edge extraction ─────────────────────────────────────────
+
+describe('parseJava - dependency edges (T034)', () => {
+  it('produces 3 DependencyEdge entries from 3 import declarations', () => {
+    const source = `
+package com.example.service;
+
+import com.example.repository.PaymentRepository;
+import com.example.service.OrderService;
+import java.util.List;
+
+public class PaymentService {
+  public void processPayment() {
+    // payment logic
+  }
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/PaymentService.java', 'src/PaymentService.java');
+    const methodChunk = chunks.find((c) => c.name === 'processPayment');
+    expect(methodChunk).toBeDefined();
+    expect(methodChunk!.dependencyEdges).toHaveLength(3);
+
+    const relations = methodChunk!.dependencyEdges!.map((e) => e.relation);
+    expect(relations.every((r) => r === 'imports')).toBe(true);
+
+    const targetPaths = methodChunk!.dependencyEdges!.map((e) => e.targetPath);
+    expect(targetPaths).toContain('com/example/repository/PaymentRepository.java');
+    expect(targetPaths).toContain('com/example/service/OrderService.java');
+    expect(targetPaths).toContain('java/util/List.java');
+  });
+
+  it('each dependency edge carries the simple class name as symbols', () => {
+    const source = `
+import com.example.Foo;
+
+public class Bar {
+  public void test() {}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/Bar.java', 'src/Bar.java');
+    const method = chunks.find((c) => c.name === 'test');
+    expect(method?.dependencyEdges).toBeDefined();
+    expect(method!.dependencyEdges![0]!.symbols).toContain('Foo');
+  });
+
+  it('produces no dependency edges when file has no imports', () => {
+    const source = `
+public class Plain {
+  public void run() {}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/Plain.java', 'src/Plain.java');
+    const method = chunks.find((c) => c.name === 'run');
+    expect(method).toBeDefined();
+    // Either empty array or undefined is acceptable
+    expect((method!.dependencyEdges ?? []).length).toBe(0);
+  });
+});
+
+// ── T041: class chunking with 8 methods ──────────────────────────────────────
+
+describe('parseJava - 200-line class with 8 methods (T041)', () => {
+  it('produces 8 method chunks + 1 class-signature chunk, each method has contextHeader', () => {
+    // Build a class with 8 methods, each ~10 lines → total ~80+ lines
+    const methods = Array.from(
+      { length: 8 },
+      (_, i) => `
+  public void method${i + 1}() {
+    // body line 1
+    // body line 2
+    // body line 3
+    // body line 4
+    // body line 5
+    System.out.println("method${i + 1}");
+  }`,
+    ).join('\n');
+
+    const source = `
+package com.example;
+
+import com.example.Dep;
+
+public class BigService {
+  private final String name = "service";
+  private final int count = 0;
+${methods}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/BigService.java', 'src/BigService.java');
+
+    const methodChunks = chunks.filter(
+      (c) => c.chunkType === 'function' || c.chunkType === 'method',
+    );
+    const sigChunk = chunks.find((c) => c.chunkType === 'class-signature');
+
+    expect(methodChunks).toHaveLength(8);
+    expect(sigChunk).toBeDefined();
+
+    // Each method chunk should have contextHeader containing the class name
+    for (const m of methodChunks) {
+      expect(m.contextHeader, `method ${m.name} should have contextHeader`).toBeDefined();
+      expect(m.contextHeader).toContain('BigService');
+    }
+  });
+});

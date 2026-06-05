@@ -127,6 +127,53 @@ function extractImports(rootNode: Parser.SyntaxNode): string[] {
 }
 
 /**
+ * T038: Extract named symbols from a single import_statement node.
+ * e.g. `import { Foo, Bar } from './utils'` → ['Foo', 'Bar']
+ */
+function extractImportSymbols(importNode: Parser.SyntaxNode): string[] {
+  const clause = importNode.children.find(
+    (c) => c.type === 'import_clause' || c.type === 'named_imports',
+  );
+  if (!clause) return [];
+  const symbols: string[] = [];
+  // Walk to named_imports list
+  const named = clause.children.find((c) => c.type === 'named_imports') ?? clause;
+  for (const child of named.children) {
+    if (child.type === 'import_specifier') {
+      const name = child.childForFieldName('name') ?? child.children[0];
+      if (name) symbols.push(name.text);
+    }
+  }
+  return symbols;
+}
+
+/**
+ * T038: Build dependencyEdges from parsed import_statement nodes.
+ * Returns `{ targetPath, relation: 'imports', symbols }` per import.
+ */
+function buildImportEdges(
+  rootNode: Parser.SyntaxNode,
+): Array<{ targetPath: string; relation: string; symbols?: string[] }> {
+  const edges: Array<{ targetPath: string; relation: string; symbols?: string[] }> = [];
+  for (const child of rootNode.children) {
+    if (child.type === 'import_statement') {
+      const source = child.childForFieldName('source');
+      if (!source) continue;
+      const raw = source.text;
+      const targetPath = raw.slice(1, raw.length - 1);
+      const symbols = extractImportSymbols(child);
+      const edge: { targetPath: string; relation: string; symbols?: string[] } = {
+        targetPath,
+        relation: 'imports',
+      };
+      if (symbols.length > 0) edge.symbols = symbols;
+      edges.push(edge);
+    }
+  }
+  return edges;
+}
+
+/**
  * Extract individual members (methods, fields) from a class body node.
  * This decomposes large classes into smaller, semantically meaningful chunks —
  * each method becomes its own chunk with `parentName` linking back to the class.
@@ -139,6 +186,7 @@ function extractClassMembers(
   relativePath: string,
   language: string,
   allImports: string[],
+  importEdges: Array<{ targetPath: string; relation: string; symbols?: string[] }>,
 ): CodeChunk[] {
   const classBody = classNode.children.find((c) => c.type === 'class_body');
   if (!classBody) return [];
@@ -151,11 +199,12 @@ function extractClassMembers(
 
     const endLine = member.endPosition.row + 1;
 
-    // Decorators appear as sibling nodes immediately preceding the method in the class body
+    // Decorators and leading comments appear as sibling nodes immediately
+    // preceding the method in the class body. Walk backwards to capture them.
     let effectiveStart = member.startPosition.row + 1;
     for (let j = i - 1; j >= 0; j--) {
       const prev = classBody.children[j]!;
-      if (prev.type === 'decorator') {
+      if (prev.type === 'decorator' || prev.type === 'comment') {
         effectiveStart = prev.startPosition.row + 1;
       } else if (prev.type !== '{') {
         break;
@@ -180,6 +229,7 @@ function extractClassMembers(
       imports: allImports,
       exports: [],
       parentName: className,
+      ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
   }
 
@@ -201,6 +251,7 @@ export function parseTypeScript(
   const lines = sourceCode.split('\n');
 
   const allImports = extractImports(root);
+  const importEdges = buildImportEdges(root);
   const chunks: CodeChunk[] = [];
   let hasDeclarations = false;
 
@@ -262,6 +313,7 @@ export function parseTypeScript(
       imports: allImports,
       exports: chunkExports,
       ...heritage,
+      ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
 
     // For class declarations, also extract individual members as sub-chunks
@@ -277,6 +329,7 @@ export function parseTypeScript(
         relativePath,
         language,
         allImports,
+        importEdges,
       );
       chunks.push(...memberChunks);
     }
@@ -296,6 +349,7 @@ export function parseTypeScript(
       endLine: lines.length,
       imports: allImports,
       exports: [],
+      ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
   }
 

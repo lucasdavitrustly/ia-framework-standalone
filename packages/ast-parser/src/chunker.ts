@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto';
 import type { CodeChunk, ChunkerConfig } from './types.js';
 import { parseTypeScript } from './parsers/typescript.js';
 import { parseJava } from './parsers/java.js';
+import { parseProto } from './parsers/proto.js';
+import { parseYaml } from './parsers/yaml.js';
+import { parseXml } from './parsers/xml.js';
+import { parseSql } from './parsers/sql.js';
 import { splitOversizedChunks } from './splitter.js';
 
 const LANGUAGE_MAP: Record<string, string> = {
@@ -14,6 +18,11 @@ const LANGUAGE_MAP: Record<string, string> = {
   '.mjs': 'javascript',
   '.cjs': 'javascript',
   '.java': 'java',
+  '.proto': 'proto',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
+  '.xml': 'xml',
+  '.sql': 'sql',
 };
 
 export type { CodeChunk, ChunkerConfig };
@@ -81,10 +90,19 @@ export async function parseFile(
         },
       ];
     }
+  } else if (language === 'proto') {
+    chunks = parseProto(content, filePath, relativePath);
+  } else if (language === 'yaml') {
+    chunks = parseYaml(content, filePath, relativePath);
+  } else if (language === 'xml') {
+    chunks = parseXml(content, filePath, relativePath);
+  } else if (language === 'sql') {
+    // SQL files are never split — one migration per file
+    return parseSql(content, filePath, relativePath);
   } else {
     chunks = parseTypeScript(content, filePath, relativePath, language);
   }
 
-  // Split any chunks exceeding maxChunkLines
+  // Split any chunks exceeding maxChunkLines (not applicable for proto/yaml/xml/sql)
   return splitOversizedChunks(chunks, config.maxChunkLines);
 }

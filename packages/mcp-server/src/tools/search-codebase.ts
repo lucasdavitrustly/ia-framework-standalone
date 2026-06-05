@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { bm25Rerank, multiHopExpand } from '@ia-framework/retrieval';
 import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
@@ -71,6 +72,14 @@ export interface SearchCodebaseInput {
   use_template?: boolean | undefined;
   /** Filter results to a specific repo by name. When omitted, searches all repos. */
   repo?: string | undefined;
+  /** Filter by stereotype (e.g. 'service', 'repository', 'controller') */
+  stereotype?: string | undefined;
+  /** Filter by architectural layer (e.g. 'controller', 'service', 'repository') */
+  archLayer?: string | undefined;
+  /** Filter by module name (maps to moduleInfo.module) */
+  module?: string | undefined;
+  /** Filter by programming language (e.g. 'java', 'typescript') */
+  language?: string | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -90,6 +99,13 @@ export interface ObservabilityConfig {
   /** Confidence gate: if the best result score is below this, return "no relevant code found"
    *  and skip fallback entirely. Prevents low-quality chunks from being injected. Undefined = disabled. */
   confidenceThreshold?: number | undefined;
+  /**
+   * T058: Read live file content at retrieval time.
+   * Receives (relativePath, startLine, endLine) and returns the code snippet.
+   * Used for top-5 results to guard against indexed content drift.
+   * Falls back to stored Qdrant payload content on error or when not provided.
+   */
+  readFileFn?: (relativePath: string, startLine: number, endLine: number) => Promise<string>;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -233,6 +249,7 @@ function buildSearchResponse(
     name: r.name,
     score: r.score,
     ...(r.repoId ? { repo: r.repoId } : {}),
+    ...(r.stale ? { stale: true } : {}),
   }));
 
   return toTextResult(text, {
@@ -251,11 +268,17 @@ function buildSearchResponse(
 export function formatResult(result: RetrievalResult, index: number): string {
   const sourceTag = result.source ? ` [${result.source}]` : '';
   const hierarchyTag = result.expansionSource === 'hierarchy' ? ' [hierarchy]' : '';
+  const staleTag = result.stale ? ' [stale]' : '';
   const lineRange = `:${result.startLine}-${result.endLine}`;
   const header = result.name
-    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`
-    : `### ${index}. ${result.relativePath}${lineRange} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`;
+    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`
+    : `### ${index}. ${result.relativePath}${lineRange} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`;
   const contextLine = formatRetrievalContext(result);
+
+  // T059: metadata-only when content is empty (results 6-10 per token budget contract)
+  if (!result.content) {
+    return `${header}\n${contextLine}`;
+  }
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
 
@@ -420,10 +443,20 @@ export async function searchCodebaseHandler(
 ): Promise<ToolOutput> {
   const startTime = Date.now();
 
-  // Build repo filter if specified
-  const repoFilter = input.repo
-    ? { must: [{ key: 'repoId', match: { value: input.repo } }] }
-    : undefined;
+  // Build combined Qdrant filter from all filter params (repo, stereotype, archLayer, module, language)
+  const filterConditions: Array<{ key: string; match: { value: string } }> = [];
+  if (input.repo) filterConditions.push({ key: 'repoId', match: { value: input.repo } });
+  if (input.stereotype)
+    filterConditions.push({ key: 'stereotype', match: { value: input.stereotype } });
+  if (input.archLayer)
+    filterConditions.push({ key: 'archLayer', match: { value: input.archLayer } });
+  if (input.module)
+    filterConditions.push({ key: 'moduleInfo.module', match: { value: input.module } });
+  if (input.language) filterConditions.push({ key: 'language', match: { value: input.language } });
+  const combinedFilter = filterConditions.length > 0 ? { must: filterConditions } : undefined;
+
+  // Keep repoFilter alias for backward-compatible usage in keyword/existence/aggregation paths
+  const repoFilter = combinedFilter;
 
   // Query classification gate (Phase 37 — QCC-01, QCC-02)
   const classification = classifyQuery(input.query);
@@ -874,6 +907,40 @@ export async function searchCodebaseHandler(
     ? { token_cap_applied: true as const, results_trimmed: resultsTrimmed }
     : undefined;
 
+  // T058: Filesystem read for top-5 results (guards against indexed content drift).
+  // T059: Results 6-10 are metadata-only (content stripped to reduce token usage).
+  // T069: contentHash drift detection — compare stored hash vs live file hash.
+  if (results.length > 0) {
+    const topN = 5;
+    // Step 1: Read live content for top-5 results; detect hash drift
+    if (observability?.readFileFn) {
+      for (let i = 0; i < Math.min(topN, results.length); i++) {
+        try {
+          const liveContent = await observability.readFileFn(
+            results[i]!.relativePath,
+            results[i]!.startLine,
+            results[i]!.endLine,
+          );
+          // T069: drift detection — compare SHA256 of live content vs stored contentHash
+          let stale: boolean | undefined;
+          if (results[i]!.contentHash) {
+            const liveHash = createHash('sha256').update(liveContent).digest('hex');
+            if (liveHash !== results[i]!.contentHash) {
+              stale = true;
+            }
+          }
+          results[i] = { ...results[i]!, content: liveContent, ...(stale ? { stale } : {}) };
+        } catch {
+          // Silent degradation: fallback to stored payload content
+        }
+      }
+    }
+    // Step 2: Strip content for results 6-10 (metadata-only per contract)
+    for (let i = topN; i < results.length; i++) {
+      results[i] = { ...results[i]!, content: '' };
+    }
+  }
+
   // Zero-result fallback: if primary search returned nothing and fallback not disabled,
   // call searchWithFallback for keyword-based suggestions
   if (results.length === 0 && input.fallback !== false && engine.searchWithFallback) {
@@ -943,8 +1010,11 @@ export function registerSearchCodebaseTool(
     {
       description:
         'Search the indexed codebase using a natural language query. Returns relevant code chunks ranked by similarity. ' +
+        'Query is auto-classified (semantic / keyword / existence / aggregation) and routed accordingly. ' +
+        'Top-5 results include live file content; results 6-10 are metadata-only to reduce token usage. ' +
         'Results can be expanded along the dependency graph to include related files (imports/dependencies). ' +
-        'Use expand_hops=0 to disable expansion, 1 for direct imports, or 2 for transitive dependencies (default).',
+        'Use expand_hops=0 to disable expansion, 1 for direct imports, or 2 for transitive dependencies (default). ' +
+        'Supports optional metadata filters: stereotype, archLayer, module, language for precise retrieval.',
       inputSchema: {
         query: z.string().describe('Natural language search query'),
         limit: z.number().optional().describe('Maximum number of results (default: 10)'),
@@ -974,6 +1044,26 @@ export function registerSearchCodebaseTool(
           .string()
           .optional()
           .describe('Filter results to a specific repo by name. When omitted, searches all repos.'),
+        stereotype: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by architectural stereotype (e.g. 'service', 'repository', 'controller', 'entity', 'dto').",
+          ),
+        archLayer: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by architectural layer (e.g. 'presentation', 'service', 'domain', 'persistence', 'infrastructure').",
+          ),
+        module: z
+          .string()
+          .optional()
+          .describe('Filter by module name (maps to moduleInfo.module in the Qdrant payload).'),
+        language: z
+          .string()
+          .optional()
+          .describe("Filter by programming language (e.g. 'java', 'typescript', 'python')."),
       },
     },
     async (input) => {

@@ -17,6 +17,10 @@ function makeChunkId(filePath: string, startLine: number, endLine: number): stri
   return createHash('sha1').update(`${filePath}:${startLine}:${endLine}`).digest('hex');
 }
 
+function makeClassSignatureChunkId(filePath: string, startLine: number, endLine: number): string {
+  return createHash('sha1').update(`${filePath}:sig:${startLine}:${endLine}`).digest('hex');
+}
+
 // Java top-level declaration types we want to chunk
 const CHUNK_TYPE_MAP: Partial<Record<string, CodeChunk['chunkType']>> = {
   class_declaration: 'class',
@@ -90,6 +94,21 @@ function extractImports(rootNode: Parser.SyntaxNode): string[] {
 }
 
 /**
+ * T037: Convert Java import paths to DependencyEdge objects.
+ * `com.example.Foo` → { targetPath: 'com/example/Foo.java', relation: 'imports', symbols: ['Foo'] }
+ */
+function importsToDependencyEdges(
+  imports: string[],
+): Array<{ targetPath: string; relation: string; symbols?: string[] }> {
+  return imports.map((imp) => {
+    const parts = imp.split('.');
+    const symbol = parts[parts.length - 1] ?? imp;
+    const targetPath = imp.replace(/\./g, '/') + '.java';
+    return { targetPath, relation: 'imports', symbols: [symbol] };
+  });
+}
+
+/**
  * Extract package declaration text from root node (e.g., "package com.example.service;")
  */
 function extractPackage(rootNode: Parser.SyntaxNode): string {
@@ -112,6 +131,138 @@ function hasAspectAnnotation(classNode: Parser.SyntaxNode): boolean {
   return modifiers.children.some(
     (c) => (c.type === 'marker_annotation' || c.type === 'annotation') && c.text.includes('Aspect'),
   );
+}
+
+// ── T024: annotations and visibility helpers ────────────────────────────────
+
+function getModifiers(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
+  return (
+    node.childForFieldName('modifiers') ??
+    node.children.find((c) => c.type === 'modifiers') ??
+    undefined
+  );
+}
+
+function extractAnnotations(node: Parser.SyntaxNode): string[] {
+  const modifiers = getModifiers(node);
+  if (!modifiers) return [];
+  return modifiers.children
+    .filter((c) => c.type === 'marker_annotation' || c.type === 'annotation')
+    .map((c) => c.text);
+}
+
+function extractVisibility(
+  node: Parser.SyntaxNode,
+): 'public' | 'protected' | 'private' | 'package' {
+  const modifiers = getModifiers(node);
+  if (!modifiers) return 'package';
+  for (const c of modifiers.children) {
+    const txt = c.text;
+    if (txt === 'public') return 'public';
+    if (txt === 'protected') return 'protected';
+    if (txt === 'private') return 'private';
+  }
+  return 'package';
+}
+
+// ── T025: contextHeader and class-signature helpers ─────────────────────────
+
+/**
+ * Build a contextHeader for method chunks:
+ * class declaration line + field declarations, at most 5 non-empty lines total.
+ */
+function buildContextHeader(classNode: Parser.SyntaxNode, sourceLines: string[]): string {
+  const headerLines: string[] = [];
+
+  // Find the class/interface/enum/record declaration line
+  const startRow = classNode.startPosition.row;
+  const endRow = classNode.endPosition.row;
+  for (let r = startRow; r <= Math.min(endRow, startRow + 10); r++) {
+    const line = sourceLines[r] ?? '';
+    if (/\b(class|interface|enum|record)\b/.test(line)) {
+      headerLines.push(line.trimEnd());
+      break;
+    }
+  }
+
+  // Add field declarations (first line of each) until we have 5 non-empty lines
+  const classBody = classNode.children.find(
+    (c) => c.type === 'class_body' || c.type === 'interface_body' || c.type === 'enum_body',
+  );
+  if (classBody) {
+    for (const child of classBody.children) {
+      if (child.type !== 'field_declaration') continue;
+      const firstLine = sourceLines[child.startPosition.row]?.trimEnd();
+      if (firstLine != null && firstLine.trim().length > 0) {
+        headerLines.push(firstLine);
+      }
+      if (headerLines.filter((l) => l.trim().length > 0).length >= 5) break;
+    }
+  }
+
+  return headerLines.join('\n');
+}
+
+/**
+ * Return the method signature (everything up to but not including the body block),
+ * with the opening brace replaced by '{ }' to indicate an empty stub.
+ */
+function getMethodSignatureLine(methodNode: Parser.SyntaxNode, sourceLines: string[]): string {
+  const bodyNode = methodNode.childForFieldName('body');
+  if (!bodyNode) {
+    // Abstract method — no body
+    return sourceLines
+      .slice(methodNode.startPosition.row, methodNode.endPosition.row + 1)
+      .join('\n')
+      .trimEnd();
+  }
+  const bodyStartRow = bodyNode.startPosition.row;
+  const bodyStartCol = bodyNode.startPosition.column;
+  const sigLines = sourceLines.slice(methodNode.startPosition.row, bodyStartRow + 1);
+  if (sigLines.length > 0) {
+    sigLines[sigLines.length - 1] =
+      (sourceLines[bodyStartRow] ?? '').substring(0, bodyStartCol).trimEnd() + ' { }';
+  }
+  return sigLines.join('\n').trimEnd();
+}
+
+/**
+ * Build the content for a class-signature chunk:
+ * class declaration + field declarations + method signatures (no bodies).
+ */
+function buildClassSignatureContent(classNode: Parser.SyntaxNode, sourceLines: string[]): string {
+  const parts: string[] = [];
+
+  // 1. Class declaration line
+  const startRow = classNode.startPosition.row;
+  const endRow = classNode.endPosition.row;
+  for (let r = startRow; r <= Math.min(endRow, startRow + 10); r++) {
+    const line = sourceLines[r] ?? '';
+    if (/\b(class|interface|enum|record)\b/.test(line)) {
+      parts.push(line.trimEnd());
+      break;
+    }
+  }
+
+  // 2. Class body: fields and method/constructor signatures (no bodies)
+  const classBody = classNode.children.find((c) => c.type === 'class_body');
+  if (classBody) {
+    for (const child of classBody.children) {
+      if (child.type === 'field_declaration') {
+        parts.push(
+          sourceLines
+            .slice(child.startPosition.row, child.endPosition.row + 1)
+            .join('\n')
+            .trimEnd(),
+        );
+      } else if (child.type === 'method_declaration' || child.type === 'constructor_declaration') {
+        parts.push(getMethodSignatureLine(child, sourceLines));
+      }
+    }
+    parts.push('}');
+  }
+
+  return parts.join('\n');
 }
 
 /**
@@ -250,6 +401,9 @@ function collectDeclarations(
         superclass: extractSuperclass(targetNode),
         interfaces: extractInterfaces(targetNode),
         isInnerClass: enclosingName != null ? true : undefined,
+        annotations: extractAnnotations(targetNode),
+        visibility: extractVisibility(targetNode),
+        ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
       });
       // Do NOT recurse — entire @Aspect class is emitted as one chunk
       continue;
@@ -282,11 +436,16 @@ function collectDeclarations(
     let parentName: string | undefined;
 
     // Method/constructor members inside a class/interface get preamble + parentName
+    let contextHeader: string | undefined;
     if (isMember && enclosingNode && rootNode && enclosingName) {
       const isInsideAspect = hasAspectAnnotation(enclosingNode);
       const preamble = buildPreamble(rootNode, enclosingNode, sourceLines, isInsideAspect);
       content = preamble + '\n\n' + rawContent;
       parentName = enclosingName;
+      // T025: set contextHeader for method/constructor chunks
+      if (chunkType === 'function' || chunkType === 'method') {
+        contextHeader = buildContextHeader(enclosingNode, sourceLines);
+      }
     }
 
     // Inner class (top-level declaration inside another class) gets parentName from enclosing
@@ -307,6 +466,10 @@ function collectDeclarations(
       imports: allImports,
       exports: name ? [name] : [],
       parentName,
+      annotations: extractAnnotations(targetNode),
+      visibility: extractVisibility(targetNode),
+      ...(contextHeader != null ? { contextHeader } : {}),
+      ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
       ...(isTopLevel &&
       (targetNode.type === 'class_declaration' || targetNode.type === 'record_declaration')
         ? {
@@ -322,6 +485,32 @@ function collectDeclarations(
           }
         : {}),
     });
+
+    // T025: emit class-signature chunk for top-level class/record declarations
+    if (
+      isTopLevel &&
+      (targetNode.type === 'class_declaration' || targetNode.type === 'record_declaration')
+    ) {
+      const className = getNodeName(targetNode);
+      const sigContent = buildClassSignatureContent(targetNode, sourceLines);
+      chunks.push({
+        id: makeClassSignatureChunkId(filePath, startLine, endLine),
+        filePath,
+        relativePath,
+        language: 'java',
+        chunkType: 'class-signature',
+        name: className,
+        content: sigContent,
+        startLine,
+        endLine,
+        imports: allImports,
+        exports: className ? [className] : [],
+        parentName: enclosingName,
+        annotations: extractAnnotations(targetNode),
+        visibility: extractVisibility(targetNode),
+        ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
+      });
+    }
 
     // Recurse into class/interface bodies for inner declarations — pass enclosing context
     if (isTopLevel) {
@@ -383,6 +572,7 @@ export function parseJava(sourceCode: string, filePath: string, relativePath: st
       endLine: lines.length,
       imports: allImports,
       exports: [],
+      ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
     });
   }
 

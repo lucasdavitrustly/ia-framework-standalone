@@ -41,10 +41,10 @@ export interface RetrievalResult {
   imports: string[];
   /** Names this chunk exports */
   exports: string[];
-  /** Best similarity score across text + code vectors (0-1) */
+  /** Best similarity score across searched vectors (0-1) */
   score: number;
   /** Which vector(s) contributed to this result */
-  matchedVector: 'text' | 'code' | 'both';
+  matchedVector: string;
   /** Which collection/strategy produced this result */
   source?: 'ast' | 'llm' | undefined;
   /** Best-effort module or package root used for reranking */
@@ -75,6 +75,24 @@ export interface RetrievalResult {
   expansionRepo?: string | undefined;
   /** Source repository identifier (kebab-case from RepoRegistry) */
   repoId?: string | undefined;
+  /** Import/dependency edges extracted from AST (used for payload-edge graph expansion) */
+  dependencyEdges?:
+    | Array<{
+        targetPath: string;
+        relation: string;
+        symbols?: string[] | undefined;
+      }>
+    | undefined;
+  /**
+   * SHA256 of the chunk content at index time.
+   * Used at retrieval time to detect drift (file changed since indexing).
+   */
+  contentHash?: string | undefined;
+  /**
+   * Set to true at retrieval time when live file content hash differs from stored contentHash.
+   * Indicates the indexed chunk may be stale.
+   */
+  stale?: boolean | undefined;
 }
 
 /**
@@ -91,7 +109,7 @@ export interface SearchEngineConfig {
     search(
       queryVector: number[],
       options: {
-        vectorName: 'text' | 'code';
+        vectorName: string;
         limit: number;
         scoreThreshold?: number | undefined;
         filter?: Record<string, unknown> | undefined;
@@ -107,17 +125,19 @@ export interface SearchEngineConfig {
           language: string;
           chunkType: string;
           name?: string | undefined;
-          content: string;
+          /** Raw code content — optional in new lean-payload schema (code read from filesystem at retrieval time) */
+          content?: string | undefined;
           startLine: number;
           endLine: number;
           imports: string[];
           exports: string[];
+          contentHash?: string | undefined;
           modulePath?: string | undefined;
           packageName?: string | undefined;
           layerHints?: string[] | undefined;
           indexedAt: string;
         };
-        vectorName: 'text' | 'code';
+        vectorName: string;
       }>
     >;
     /** Optional: sparse-only BM25 keyword search. Falls back to skipping keyword step if absent. */
@@ -136,17 +156,19 @@ export interface SearchEngineConfig {
           language: string;
           chunkType: string;
           name?: string | undefined;
-          content: string;
+          /** Raw code content — optional in new lean-payload schema (code read from filesystem at retrieval time) */
+          content?: string | undefined;
           startLine: number;
           endLine: number;
           imports: string[];
           exports: string[];
+          contentHash?: string | undefined;
           modulePath?: string | undefined;
           packageName?: string | undefined;
           layerHints?: string[] | undefined;
           indexedAt: string;
         };
-        vectorName: 'text' | 'code';
+        vectorName: string;
       }>
     >;
     /** Optional: hybrid search combining dense + sparse + RRF. Falls back to search() if absent. */
@@ -170,19 +192,55 @@ export interface SearchEngineConfig {
           language: string;
           chunkType: string;
           name?: string | undefined;
-          content: string;
+          /** Raw code content — optional in new lean-payload schema (code read from filesystem at retrieval time) */
+          content?: string | undefined;
           startLine: number;
           endLine: number;
           imports: string[];
           exports: string[];
+          contentHash?: string | undefined;
           modulePath?: string | undefined;
           packageName?: string | undefined;
           layerHints?: string[] | undefined;
           indexedAt: string;
         };
-        vectorName: 'text' | 'code';
+        vectorName: string;
       }>
     >;
+    /**
+     * Optional: T068 scroll (paginate) through all points without a query vector.
+     * Used as last-resort glob/grep fallback when all dense searches return empty.
+     */
+    scroll?(options: {
+      limit: number;
+      offset?: string | number | undefined;
+      filter?: Record<string, unknown> | undefined;
+    }): Promise<{
+      points: Array<{
+        id: string;
+        payload: {
+          chunkId: string;
+          filePath: string;
+          relativePath: string;
+          language: string;
+          chunkType: string;
+          name?: string | undefined;
+          /** Raw code content — optional in new lean-payload schema (code read from filesystem at retrieval time) */
+          content?: string | undefined;
+          startLine: number;
+          endLine: number;
+          imports: string[];
+          exports: string[];
+          contentHash?: string | undefined;
+          repoId?: string | undefined;
+          modulePath?: string | undefined;
+          packageName?: string | undefined;
+          layerHints?: string[] | undefined;
+          indexedAt: string;
+        };
+      }>;
+      nextOffset?: string | number | undefined;
+    }>;
   };
   /** Default number of results (default: 10) */
   defaultLimit?: number | undefined;

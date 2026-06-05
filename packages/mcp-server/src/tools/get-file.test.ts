@@ -87,3 +87,77 @@ describe('getFileHandler multi-repo', () => {
     expect((result as any).structuredContent.chunks[0].repo).toBe('core');
   });
 });
+
+// ---------------------------------------------------------------------------
+// T063: Filesystem read primary, semantic search fallback, return chunk metadata
+// ---------------------------------------------------------------------------
+
+describe('T063: get_file filesystem read primary + semantic fallback', () => {
+  function makeChunk(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
+    return {
+      chunkId: 'chunk-1',
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+      content: 'const x = 1;',
+      startLine: 1,
+      endLine: 10,
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'authFn',
+      imports: [],
+      exports: [],
+      score: 1.0,
+      matchedVector: 'semantic',
+      ...overrides,
+    };
+  }
+
+  test('returns filesystem content when readFileFn succeeds', async () => {
+    const chunk = makeChunk();
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockResolvedValue('full file content from disk');
+
+    const result = await getFileHandler(engine, { path: 'src/auth.ts' }, { readFileFn });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('full file content from disk');
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts');
+  });
+
+  test('structuredContent includes indexed chunk metadata when readFileFn provided', async () => {
+    const chunk = makeChunk({ name: 'authFn', chunkType: 'function', startLine: 5, endLine: 15 });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockResolvedValue('file content');
+
+    const result = await getFileHandler(engine, { path: 'src/auth.ts' }, { readFileFn });
+    const structured = (result as any).structuredContent;
+    expect(structured.content).toBe('file content');
+    expect(structured.chunks).toBeDefined();
+    expect(structured.chunks[0].name).toBe('authFn');
+    expect(structured.chunks[0].startLine).toBe(5);
+  });
+
+  test('falls back to stored Qdrant content when readFileFn throws ENOENT', async () => {
+    const chunk = makeChunk({ content: 'stored-qdrant-content' });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockRejectedValue(new Error('ENOENT: no such file'));
+
+    const result = await getFileHandler(engine, { path: 'src/auth.ts' }, { readFileFn });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('stored-qdrant-content');
+    const structured = (result as any).structuredContent;
+    expect(structured.fallbackUsed).toBe(true);
+  });
+
+  test('uses semantic search when getFile returns empty and readFileFn not provided', async () => {
+    const chunk = makeChunk({ relativePath: 'src/auth-service.ts' });
+    const engine = {
+      getFile: vi.fn().mockResolvedValue([]),
+      search: vi.fn().mockResolvedValue([chunk]),
+    };
+
+    const result = await getFileHandler(engine, { path: 'src/auth.ts' });
+    const text = (result.content[0] as { text: string }).text;
+    expect(engine.search).toHaveBeenCalled();
+    expect(text).toContain('auth');
+  });
+});

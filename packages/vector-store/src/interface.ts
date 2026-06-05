@@ -1,51 +1,105 @@
 /**
  * Payload stored in Qdrant for each chunk point.
- * Mirrors ChunkMetadata from @ia-framework/core.
+ * Lean metadata — does NOT store raw code content.
+ * Code is read from filesystem at retrieval time using relativePath + startLine:endLine.
  */
 export interface ChunkPayload {
+  // === Identity ===
   /** Original string chunk ID (sha1 hash) */
   chunkId: string;
+  /** @deprecated use relativePath — kept for backward compat */
   filePath: string;
   relativePath: string;
+  repoId?: string | undefined;
+
+  // === Location (for filesystem retrieval) ===
+  startLine: number;
+  endLine: number;
+  /** SHA256 of content at index time (drift detection) */
+  contentHash?: string | undefined;
+
+  // === Signatures ===
+  signature?: string | undefined;
+  classSignature?: string | undefined;
+  contextHeader?: string | undefined;
+
+  // === AST-Derived (deterministic) ===
   language: string;
   chunkType: string;
   name?: string | undefined;
-  content: string;
-  startLine: number;
-  endLine: number;
+  parentName?: string | undefined;
+  packageName?: string | undefined;
+  moduleInfo?:
+    | {
+        group: string;
+        module: string;
+        submodule?: string | undefined;
+      }
+    | undefined;
+  mavenCoordinates?:
+    | {
+        groupId: string;
+        artifactId: string;
+        version: string;
+      }
+    | undefined;
+  /** @deprecated use mavenCoordinates */
+  mavenModule?: { groupId: string; artifactId: string; version: string } | undefined;
+  visibility?: 'public' | 'protected' | 'package' | 'private' | undefined;
+  annotations?: string[] | undefined;
   imports: string[];
   exports: string[];
-  /** Parent construct name when this is a sub-chunk */
-  parentName?: string | undefined;
-  /** Direct superclass name from extends clause */
-  superclass?: string | undefined;
-  /** Interfaces/traits this class implements */
-  interfaces?: string[] | undefined;
-  /** True if this is an inner/nested class */
-  isInnerClass?: boolean | undefined;
-  /** Best-effort module or package root used for retrieval/reranking */
-  modulePath?: string | undefined;
-  /** Best-effort package or namespace name */
-  packageName?: string | undefined;
-  /** Heuristic architectural role hints */
-  layerHints?: string[] | undefined;
-  indexedAt: string;
-  /** Source repository identifier (kebab-case name from RepoRegistry) */
-  repoId?: string | undefined;
-  /** Heuristic quality score for chunk summary (0-100). Present only for LLM-chunked points. */
-  qualityScore?: number | undefined;
-  /** Maven module coordinates, populated for files inside a Maven project */
-  mavenModule?: { groupId: string; artifactId: string; version: string } | undefined;
-  /** 0-based position of this chunk within its source file */
-  chunkIndex?: number | undefined;
-  /** Total number of chunks produced from the same source file */
-  totalChunks?: number | undefined;
-  /** Method/function names this chunk defines */
   defines?: string[] | undefined;
-  /** Method/function names this chunk invokes */
   calls?: string[] | undefined;
-  /** Method/function names that invoke something defined in this chunk */
+  /** @deprecated */
   calledBy?: string[] | undefined;
+  superclass?: string | undefined;
+  interfaces?: string[] | undefined;
+  /** @deprecated */
+  isInnerClass?: boolean | undefined;
+  /** @deprecated use moduleInfo.module */
+  modulePath?: string | undefined;
+  /** @deprecated use stereotype/archLayer */
+  layerHints?: string[] | undefined;
+
+  // === Classification (heuristic, no LLM) ===
+  stereotype?: string | undefined;
+  archLayer?: string | undefined;
+  complexity?: 'low' | 'medium' | 'high' | undefined;
+
+  // === LLM-Enriched (Ollama) ===
+  description?: string | undefined;
+  businessContext?: string | undefined;
+  serviceBoundary?: string | undefined;
+  semanticTags?: string[] | undefined;
+  relationships?:
+    | Array<{
+        target: string;
+        type: string;
+        label?: string | undefined;
+      }>
+    | undefined;
+
+  // === Dependency Graph ===
+  dependencyEdges?:
+    | Array<{
+        targetPath: string;
+        relation: string;
+        symbols?: string[] | undefined;
+      }>
+    | undefined;
+
+  // === Index Metadata ===
+  indexedAt: string;
+  enrichedAt?: string | undefined;
+  enrichmentModel?: string | undefined;
+  qualityScore?: number | undefined;
+
+  // === Legacy fields (backward compat) ===
+  /** @deprecated raw code no longer stored in Qdrant */
+  content?: string | undefined;
+  chunkIndex?: number | undefined;
+  totalChunks?: number | undefined;
 }
 
 /**
@@ -59,19 +113,27 @@ export interface SparseVector {
 }
 
 /**
- * A point to be stored in Qdrant with dual named vectors.
+ * A point to be stored in Qdrant with 3 named vectors (semantic, signature, sparse).
  */
 export interface VectorPoint {
   /** Original chunk ID (sha1 string) — stored in payload.chunkId */
   id: string;
-  /** Text embedding (from text/natural language embedding model) */
-  textVector: number[];
-  /** Code embedding (from code-specialized embedding model) */
-  codeVector: number[];
-  /** Optional BM25 sparse vector. Required when collection has sparse_vectors config. */
-  sparseVector?: SparseVector | undefined;
-  /** Metadata payload */
+  /** Semantic embedding (from description + businessContext + semanticTags) */
+  semantic: number[];
+  /** Signature embedding (from signature + contextHeader) */
+  signature: number[];
+  /** BM25 sparse vector (tokenized: name + defines + imports + annotations) */
+  sparse: SparseVector;
+  /** Metadata payload (no raw code) */
   payload: ChunkPayload;
+
+  // === Backward compatibility ===
+  /** @deprecated use semantic */
+  textVector?: number[] | undefined;
+  /** @deprecated use signature */
+  codeVector?: number[] | undefined;
+  /** @deprecated use sparse */
+  sparseVector?: SparseVector | undefined;
 }
 
 /**
@@ -97,7 +159,7 @@ export interface HybridSearchOptions {
  */
 export interface SearchOptions {
   /** Which named vector to search against */
-  vectorName: 'text' | 'code';
+  vectorName: 'semantic' | 'signature' | 'sparse' | 'text' | 'code';
   /** Maximum results to return */
   limit: number;
   /** Minimum similarity score (0-1). Results below threshold are excluded. */
@@ -117,7 +179,7 @@ export interface SearchResult {
   /** Chunk metadata */
   payload: ChunkPayload;
   /** Which vector matched */
-  vectorName: 'text' | 'code';
+  vectorName: 'semantic' | 'signature' | 'sparse' | 'text' | 'code';
 }
 
 /**
@@ -126,9 +188,11 @@ export interface SearchResult {
 export interface CollectionInfo {
   name: string;
   pointCount: number;
-  vectorDimensions: { text: number; code: number };
+  vectorDimensions: { text: number; code: number; semantic?: number; signature?: number };
   status: string;
-  hasSparseVector: boolean; // true if 'sparse' named sparse vector exists
+  hasSparseVector: boolean;
+  /** true if collection uses new 3-vector schema (semantic/signature/sparse) */
+  isNewSchema?: boolean;
 }
 
 /**

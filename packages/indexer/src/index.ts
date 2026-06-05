@@ -10,19 +10,7 @@ export {
   getLastPromptContentHash,
   saveLastIndexedCommit,
 } from './incremental.js';
-export { chunkToDescription } from './chunk-description.js';
-export { PROMPT_CONTENT_HASH } from './strategies/prompt.js';
-export {
-  AstChunkingStrategy,
-  LlmChunkingStrategy,
-  LlmChunkCache,
-  isOllamaReachable,
-} from './strategies/index.js';
-export type {
-  ChunkingStrategy,
-  ChunkingConfig,
-  LlmChunkingOptions,
-  CachedChunkEntry,
-} from './strategies/index.js';
+export { AstChunkingStrategy, LlmChunkCache, isOllamaReachable } from './strategies/index.js';
+export type { ChunkingStrategy, ChunkingConfig, CachedChunkEntry } from './strategies/index.js';
 export { scanMavenModuleGraph } from './maven-graph-scanner.js';
 export type { MavenGraphScannerOptions } from './maven-graph-scanner.js';

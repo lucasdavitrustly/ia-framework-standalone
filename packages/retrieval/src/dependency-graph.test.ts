@@ -287,3 +287,75 @@ describe('resolveJavaImport', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 });
+
+// ── T035: expandFromPayloadEdges ──────────────────────────────────────────────
+
+describe('DependencyGraph.expandFromPayloadEdges (T035)', () => {
+  test('expand_hops=1 returns direct dependency target paths from payload edges', () => {
+    const results = [
+      {
+        relativePath: 'src/A.java',
+        dependencyEdges: [
+          { targetPath: 'src/B.java', relation: 'imports' },
+          { targetPath: 'src/C.java', relation: 'imports' },
+        ],
+      },
+    ];
+
+    const expanded = DependencyGraph.expandFromPayloadEdges(results, 1);
+    expect(expanded).toContain('src/B.java');
+    expect(expanded).toContain('src/C.java');
+    // Source file itself should not appear in expansion
+    expect(expanded).not.toContain('src/A.java');
+  });
+
+  test('deduplicates target paths across multiple results', () => {
+    const results = [
+      {
+        relativePath: 'src/A.java',
+        dependencyEdges: [{ targetPath: 'src/Shared.java', relation: 'imports' }],
+      },
+      {
+        relativePath: 'src/B.java',
+        dependencyEdges: [{ targetPath: 'src/Shared.java', relation: 'imports' }],
+      },
+    ];
+
+    const expanded = DependencyGraph.expandFromPayloadEdges(results, 1);
+    const sharedCount = expanded.filter((p: string) => p === 'src/Shared.java').length;
+    expect(sharedCount).toBe(1);
+  });
+
+  test('returns empty array when results have no dependency edges', () => {
+    const results = [{ relativePath: 'src/A.java', dependencyEdges: [] }];
+    const expanded = DependencyGraph.expandFromPayloadEdges(results, 1);
+    expect(expanded).toHaveLength(0);
+  });
+
+  test('returns empty array when hops=0 (expansion disabled)', () => {
+    const results = [
+      {
+        relativePath: 'src/A.java',
+        dependencyEdges: [{ targetPath: 'src/B.java', relation: 'imports' }],
+      },
+    ];
+    const expanded = DependencyGraph.expandFromPayloadEdges(results, 0);
+    expect(expanded).toHaveLength(0);
+  });
+
+  test('excludes the source relativePath from the expansion results', () => {
+    // Edge targeting itself should not appear
+    const results = [
+      {
+        relativePath: 'src/A.java',
+        dependencyEdges: [
+          { targetPath: 'src/A.java', relation: 'imports' }, // self-reference
+          { targetPath: 'src/B.java', relation: 'imports' },
+        ],
+      },
+    ];
+    const expanded = DependencyGraph.expandFromPayloadEdges(results, 1);
+    expect(expanded).not.toContain('src/A.java');
+    expect(expanded).toContain('src/B.java');
+  });
+});

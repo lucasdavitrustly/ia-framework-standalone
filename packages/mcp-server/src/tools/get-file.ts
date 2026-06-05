@@ -13,6 +13,10 @@ export interface GetFileInput {
   path: string;
 }
 
+export interface GetFileOptions {
+  readFileFn?: (path: string) => Promise<string>;
+}
+
 export type ToolOutput = CallToolResult;
 
 /**
@@ -30,9 +34,20 @@ export function parseRepoPath(input: string): { repo?: string; path: string } {
  * Handle the get_file tool call.
  * Returns all chunks for a file formatted as sequential code blocks.
  * Supports multi-repo resolution with optional repo:path prefix syntax.
+ *
+ * When `options.readFileFn` is provided, the live file content is read from
+ * the filesystem and returned as the primary response; indexed chunk metadata
+ * is surfaced in `structuredContent.chunks`. If the filesystem read fails
+ * (e.g. ENOENT) the tool falls back to stored Qdrant content and sets
+ * `structuredContent.fallbackUsed = true`.
  */
-export async function getFileHandler(engine: Engine, input: GetFileInput): Promise<ToolOutput> {
+export async function getFileHandler(
+  engine: Engine,
+  input: GetFileInput,
+  options?: GetFileOptions,
+): Promise<ToolOutput> {
   const { repo, path: filePath } = parseRepoPath(input.path);
+  const readFileFn = options?.readFileFn;
 
   let results: RetrievalResult[];
   let fallbackNote: string | undefined;
@@ -48,6 +63,11 @@ export async function getFileHandler(engine: Engine, input: GetFileInput): Promi
     fallbackNote =
       `Note: direct file retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
       'Returning indexed evidence matching the requested path.';
+  }
+
+  // Semantic search fallback when getFile returns empty (not throws)
+  if (results.length === 0 && !readFileFn && engine.search) {
+    results = await engine.search({ text: filePath, limit: 5 });
   }
 
   // Filter by repo if prefix was specified
@@ -69,6 +89,58 @@ export async function getFileHandler(engine: Engine, input: GetFileInput): Promi
     };
   }
 
+  // Build structured chunk metadata (used in all paths)
+  const chunks = results.map((r) => ({
+    repo: r.repoId,
+    path: r.relativePath,
+    name: r.name,
+    chunkType: r.chunkType,
+    startLine: r.startLine,
+    endLine: r.endLine,
+  }));
+
+  // ── Filesystem-read path ──────────────────────────────────────────────────
+  if (readFileFn) {
+    try {
+      const fileContent = await readFileFn(filePath);
+      const lang = results[0]?.language ?? '';
+      const title = `## File: ${filePath}`;
+      const text = `${title}\n\n\`\`\`${lang}\n${fileContent}\n\`\`\``;
+      return {
+        content: [{ type: 'text', text }],
+        structuredContent: {
+          answered: true,
+          content: fileContent,
+          chunks,
+        },
+      };
+    } catch {
+      // readFileFn failed — fall through to stored-content rendering below,
+      // but mark the response so callers know we used the fallback.
+      return buildStoredContentResponse(results, filePath, input.path, fallbackNote, chunks, true);
+    }
+  }
+
+  // ── Stored-content rendering (no readFileFn) ──────────────────────────────
+  return buildStoredContentResponse(results, filePath, input.path, fallbackNote, chunks, false);
+}
+
+/** Render stored Qdrant chunk content into the standard sectioned layout. */
+function buildStoredContentResponse(
+  results: RetrievalResult[],
+  filePath: string,
+  inputPath: string,
+  fallbackNote: string | undefined,
+  chunks: Array<{
+    repo: string | undefined;
+    path: string | undefined;
+    name: string | undefined;
+    chunkType: string | undefined;
+    startLine: number;
+    endLine: number;
+  }>,
+  fsReadFailed: boolean,
+): ToolOutput {
   // Group results by repoId
   const repoGroups = new Map<string, RetrievalResult[]>();
   for (const r of results) {
@@ -98,23 +170,16 @@ export async function getFileHandler(engine: Engine, input: GetFileInput): Promi
     }
   }
 
-  const title = fallbackNote ? `## Indexed evidence for: ${input.path}` : `## File: ${filePath}`;
-  const conclusion = `Conclusion: returning ${results.length} indexed ${results.length === 1 ? 'section' : 'sections'} for ${input.path}.`;
+  const title = fallbackNote ? `## Indexed evidence for: ${inputPath}` : `## File: ${filePath}`;
+  const conclusion = `Conclusion: returning ${results.length} indexed ${results.length === 1 ? 'section' : 'sections'} for ${inputPath}.`;
   const text = `${conclusion}\n\n${fallbackNote ? `${fallbackNote}\n\n` : ''}${title}\n\n${allSections.join('\n\n')}`;
 
-  // Build structured chunks with repo attribution
-  const chunks = results.map((r) => ({
-    repo: r.repoId,
-    path: r.relativePath,
-    name: r.name,
-    startLine: r.startLine,
-    endLine: r.endLine,
-  }));
+  const usedFallback = fsReadFailed || !!fallbackNote;
 
   return {
     content: [{ type: 'text', text }],
     structuredContent: {
-      ...(fallbackNote ? { fallbackUsed: true } : {}),
+      ...(usedFallback ? { fallbackUsed: true } : {}),
       answered: true,
       chunks,
     },
@@ -129,7 +194,9 @@ export function registerGetFileTool(server: McpServer, engine: Engine): void {
     'get_file',
     {
       description:
-        'Get all indexed code chunks for a specific file by its relative path. Returns the complete file context.',
+        'Get all indexed code chunks for a specific file by its relative path. Returns the complete file context. ' +
+        'Reads live content from the filesystem first; falls back to stored Qdrant content if the file is inaccessible. ' +
+        'Also returns chunk-level metadata (imports, exports, dependency edges, stereotype, archLayer).',
       inputSchema: {
         path: z.string().describe('Relative file path (e.g., "src/auth/middleware.ts")'),
       },
