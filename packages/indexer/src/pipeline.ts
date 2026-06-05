@@ -83,6 +83,12 @@ export interface IndexingConfig {
   skipEnrichment?: boolean | undefined;
   /** LLM enrichment configuration. When omitted, enrichment is skipped. */
   enrichmentConfig?: EnrichmentConfig | undefined;
+  /**
+   * Force re-creation of the Qdrant collection even if it uses the old schema (text/code).
+   * When true, the old collection is deleted and recreated with the new 3-vector schema.
+   * Equivalent to the CLI --force flag.
+   */
+  force?: boolean | undefined;
 }
 
 export interface IndexingProgress {
@@ -301,6 +307,7 @@ export class IndexingPipeline {
     await vectorStore.initialize({
       textDimensions: embeddingProvider.dimensions,
       codeDimensions: embeddingProvider.dimensions,
+      ...(config.force ? { force: true } : {}),
     });
 
     // Initialize dependency graph if configured

@@ -5,6 +5,7 @@ import type { VectorPoint } from './interface.js';
 // Mock method references — defined outside so they can be referenced in tests
 const mockCollectionExists = vi.fn();
 const mockCreateCollection = vi.fn();
+const mockDeleteCollection = vi.fn();
 const mockUpsert = vi.fn();
 const mockSearch = vi.fn();
 const mockGetCollection = vi.fn();
@@ -16,6 +17,7 @@ vi.mock('@qdrant/js-client-rest', () => {
   class MockQdrantClient {
     collectionExists = mockCollectionExists;
     createCollection = mockCreateCollection;
+    deleteCollection = mockDeleteCollection;
     upsert = mockUpsert;
     search = mockSearch;
     getCollection = mockGetCollection;
@@ -357,5 +359,61 @@ describe('QdrantVectorStore', () => {
     const info = await store.getCollectionInfo();
 
     expect(info.hasSparseVector).toBe(true);
+  });
+
+  it('Test 15: initialize() with force=true deletes and recreates collection when old schema (text/code) detected', async () => {
+    mockCollectionExists.mockResolvedValue({ exists: true });
+    mockGetCollection.mockResolvedValue({
+      points_count: 100,
+      status: 'green',
+      config: {
+        params: {
+          vectors: {
+            text: { size: 768, distance: 'Cosine' },
+            code: { size: 768, distance: 'Cosine' },
+          },
+        },
+      },
+    });
+    mockDeleteCollection.mockResolvedValue(true);
+    mockCreateCollection.mockResolvedValue(true);
+
+    // Must NOT throw — force=true should delete and recreate
+    await expect(
+      store.initialize({ textDimensions: 768, codeDimensions: 768, force: true }),
+    ).resolves.not.toThrow();
+
+    expect(mockDeleteCollection).toHaveBeenCalledWith('test-collection');
+    expect(mockCreateCollection).toHaveBeenCalledWith(
+      'test-collection',
+      expect.objectContaining({
+        vectors: {
+          semantic: { size: 768, distance: 'Cosine' },
+          signature: { size: 768, distance: 'Cosine' },
+        },
+      }),
+    );
+  });
+
+  it('Test 16: initialize() without force throws [OLD_SCHEMA] when old schema (text/code) detected', async () => {
+    mockCollectionExists.mockResolvedValue({ exists: true });
+    mockGetCollection.mockResolvedValue({
+      points_count: 100,
+      status: 'green',
+      config: {
+        params: {
+          vectors: {
+            text: { size: 768, distance: 'Cosine' },
+            code: { size: 768, distance: 'Cosine' },
+          },
+        },
+      },
+    });
+
+    await expect(store.initialize({ textDimensions: 768, codeDimensions: 768 })).rejects.toThrow(
+      '[OLD_SCHEMA]',
+    );
+
+    expect(mockDeleteCollection).not.toHaveBeenCalled();
   });
 });

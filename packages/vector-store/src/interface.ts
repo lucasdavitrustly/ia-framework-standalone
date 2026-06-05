@@ -203,8 +203,14 @@ export interface VectorStore {
    * Initialize (or verify) the Qdrant collection.
    * Creates collection with named vectors if it doesn't exist.
    * No-op if collection already exists with correct config.
+   * When `force` is true, deletes and recreates the collection if it uses the
+   * old schema (text/code vectors) instead of throwing.
    */
-  initialize(config: { textDimensions: number; codeDimensions: number }): Promise<void>;
+  initialize(config: {
+    textDimensions: number;
+    codeDimensions: number;
+    force?: boolean;
+  }): Promise<void>;
 
   /**
    * Upsert a batch of points into the collection.

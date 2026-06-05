@@ -482,6 +482,7 @@ Browse available models: https://ollama.com/search
                   excludePatterns: config.indexing?.excludePatterns,
                   maxChunkLines: config.indexing?.maxChunkLines,
                   incremental: !options.force,
+                  force: options.force,
                   dependencyGraph,
                   embeddingConcurrency: config.indexing?.embeddingConcurrency,
                   mavenModuleGraph,

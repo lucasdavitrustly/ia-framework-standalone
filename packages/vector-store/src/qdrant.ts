@@ -137,24 +137,20 @@ function toChunkPayload(value: unknown): ChunkPayload {
       ? record.semanticTags.filter((t: unknown): t is string => typeof t === 'string')
       : undefined,
     relationships: Array.isArray(record.relationships)
-      ? (record.relationships as unknown[])
-          .filter(isRecord)
-          .map((r) => ({
-            target: typeof r.target === 'string' ? r.target : '',
-            type: typeof r.type === 'string' ? r.type : '',
-            label: typeof r.label === 'string' ? r.label : undefined,
-          }))
+      ? (record.relationships as unknown[]).filter(isRecord).map((r) => ({
+          target: typeof r.target === 'string' ? r.target : '',
+          type: typeof r.type === 'string' ? r.type : '',
+          label: typeof r.label === 'string' ? r.label : undefined,
+        }))
       : undefined,
     dependencyEdges: Array.isArray(record.dependencyEdges)
-      ? (record.dependencyEdges as unknown[])
-          .filter(isRecord)
-          .map((e) => ({
-            targetPath: typeof e.targetPath === 'string' ? e.targetPath : '',
-            relation: typeof e.relation === 'string' ? e.relation : '',
-            symbols: Array.isArray(e.symbols)
-              ? (e.symbols as unknown[]).filter((s): s is string => typeof s === 'string')
-              : undefined,
-          }))
+      ? (record.dependencyEdges as unknown[]).filter(isRecord).map((e) => ({
+          targetPath: typeof e.targetPath === 'string' ? e.targetPath : '',
+          relation: typeof e.relation === 'string' ? e.relation : '',
+          symbols: Array.isArray(e.symbols)
+            ? (e.symbols as unknown[]).filter((s): s is string => typeof s === 'string')
+            : undefined,
+        }))
       : undefined,
     enrichedAt: typeof record.enrichedAt === 'string' ? record.enrichedAt : undefined,
     enrichmentModel:
@@ -186,7 +182,11 @@ export class QdrantVectorStore implements VectorStore {
     });
   }
 
-  async initialize(config: { textDimensions: number; codeDimensions: number }): Promise<void> {
+  async initialize(config: {
+    textDimensions: number;
+    codeDimensions: number;
+    force?: boolean;
+  }): Promise<void> {
     const semanticDimensions = config.textDimensions;
     const signatureDimensions = config.codeDimensions;
 
@@ -196,26 +196,31 @@ export class QdrantVectorStore implements VectorStore {
       const vectors = (info.config?.params?.vectors ?? {}) as Record<string, unknown>;
 
       if (hasOldSchema(vectors)) {
-        throw new Error(
-          `[OLD_SCHEMA] Collection "${this.collectionName}" uses old vector schema (text/code). ` +
-            `Run "ia-framework index --force" to recreate with the new 3-vector schema (semantic/signature/sparse). ` +
-            `Warning: existing index data will be deleted.`,
-        );
+        if (config.force) {
+          // --force: silently delete and fall through to recreation
+          await this.client.deleteCollection(this.collectionName);
+        } else {
+          throw new Error(
+            `[OLD_SCHEMA] Collection "${this.collectionName}" uses old vector schema (text/code). ` +
+              `Run "ia-framework index --force" to recreate with the new 3-vector schema (semantic/signature/sparse). ` +
+              `Warning: existing index data will be deleted.`,
+          );
+        }
+      } else {
+        const semanticSize =
+          'semantic' in vectors && isRecord(vectors['semantic'])
+            ? (vectors['semantic'] as { size?: number }).size
+            : undefined;
+        const signatureSize =
+          'signature' in vectors && isRecord(vectors['signature'])
+            ? (vectors['signature'] as { size?: number }).size
+            : undefined;
+        const mismatch =
+          (semanticSize !== undefined && semanticSize !== semanticDimensions) ||
+          (signatureSize !== undefined && signatureSize !== signatureDimensions);
+        if (!mismatch) return;
+        await this.client.deleteCollection(this.collectionName);
       }
-
-      const semanticSize =
-        'semantic' in vectors && isRecord(vectors['semantic'])
-          ? (vectors['semantic'] as { size?: number }).size
-          : undefined;
-      const signatureSize =
-        'signature' in vectors && isRecord(vectors['signature'])
-          ? (vectors['signature'] as { size?: number }).size
-          : undefined;
-      const mismatch =
-        (semanticSize !== undefined && semanticSize !== semanticDimensions) ||
-        (signatureSize !== undefined && signatureSize !== signatureDimensions);
-      if (!mismatch) return;
-      await this.client.deleteCollection(this.collectionName);
     }
 
     await this.client.createCollection(this.collectionName, {
