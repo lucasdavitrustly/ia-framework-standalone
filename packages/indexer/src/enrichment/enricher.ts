@@ -1,6 +1,7 @@
 import { createLogger } from '@ia-framework/core';
 import type { EnrichmentConfig } from '@ia-framework/core';
 import type { CodeChunk } from '@ia-framework/ast-parser';
+import PQueue from 'p-queue';
 import {
   buildEnrichmentPrompt,
   parseEnrichmentResponse,
@@ -144,9 +145,10 @@ export class LlmEnricher {
       onProgress?.({ batchesCompleted, batchesTotal, currentFile: batch[0]?.filePath });
     };
 
-    for (const batch of batchGroups) {
-      await applyBatch(batch);
-    }
+    // Process batches concurrently using p-queue bounded by config.concurrency
+    const concurrency = this.config.concurrency ?? 3;
+    const queue = new PQueue({ concurrency });
+    await Promise.all(batchGroups.map((batch) => queue.add(() => applyBatch(batch))));
 
     return result;
   }

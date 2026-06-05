@@ -15,7 +15,7 @@
  */
 import { join, dirname } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadConfig, createLogger } from '@ia-framework/core';
+import { loadConfig, createLogger, RepoRegistry } from '@ia-framework/core';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -133,6 +133,10 @@ async function main(): Promise<void> {
   // Read expansion hops from config (default: 1)
   const expansionHops = config.retrieval?.expansionHops ?? 1;
 
+  // Build resolved repo list via RepoRegistry (supports both repos[] and targetProjectPath)
+  const registry = RepoRegistry.fromConfig(config, dirname(configPath));
+  const resolvedRepos = registry.getRepos().map((r) => ({ name: r.name!, path: r.path }));
+
   const server = createMcpServer({
     searchEngine,
     metricsStore,
@@ -141,7 +145,8 @@ async function main(): Promise<void> {
     configPath,
     dbConfigPath,
     defaultExpansionHops: expansionHops,
-    projectRoot: config.targetProjectPath,
+    projectRoot: resolvedRepos[0]?.path,
+    repos: resolvedRepos,
   });
 
   const transport = new StdioServerTransport();

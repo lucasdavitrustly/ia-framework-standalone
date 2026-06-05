@@ -28,18 +28,18 @@ export interface RankedList {
 export function rrfMerge(lists: RankedList[], limit: number, k = 60): RetrievalResult[] {
   if (lists.length === 0) return [];
 
-  // Single-list optimization: tag and score directly without Map overhead
+  // Single-list passthrough: no fusion to perform — preserve original cosine scores.
+  // RRF of one list is mathematically meaningless; only tag the source.
   if (lists.length === 1) {
     const list = lists[0];
     if (!list) return [];
     const { source, results } = list;
     return results
       .map(
-        (result: RetrievalResult, rank: number): RetrievalResult => ({
+        (result: RetrievalResult): RetrievalResult => ({
           ...result,
           source,
-          score: 1 / (k + rank + 1),
-          scoreType: 'rrf' as const,
+          // Preserve original score and scoreType — do NOT convert to rank-based RRF
         }),
       )
       .slice(0, limit);

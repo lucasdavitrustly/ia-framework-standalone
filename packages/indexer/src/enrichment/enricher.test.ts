@@ -648,3 +648,149 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     expect(completed).toEqual([1, 2]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('LlmEnricher — concurrent batch processing (T124)', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('T124: processes batches concurrently when concurrency > 1', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    // Create 30 chunks → 3 batches of 10
+    const chunks = Array.from({ length: 30 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+
+    // Track concurrent in-flight requests
+    let concurrent = 0;
+    let maxConcurrent = 0;
+
+    global.fetch = vi.fn().mockImplementation(async () => {
+      concurrent++;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      // Simulate Ollama latency so batches overlap
+      await new Promise((r) => setTimeout(r, 50));
+      concurrent--;
+      return {
+        ok: true,
+        json: async () => ({
+          response: JSON.stringify({
+            chunks: chunks.slice(0, 10).map((c) => ({
+              id: c.id,
+              description: `desc-${c.id}`,
+              businessContext: 'ctx',
+              semanticTags: ['tag'],
+              relationships: [],
+            })),
+          }),
+        }),
+      } as Response;
+    });
+
+    const enricher = new LlmEnricher!({
+      ...baseConfig,
+      concurrency: 3, // process 3 batches in parallel
+      retryAttempts: 0,
+    });
+
+    const result = (await enricher.enrich(chunks)) as TestChunk[];
+
+    // Verify concurrency: with 3 batches and concurrency=3, all should overlap
+    expect(maxConcurrent).toBeGreaterThan(1);
+    expect(maxConcurrent).toBeLessThanOrEqual(3);
+    // Verify all chunks still get enriched
+    expect(result).toHaveLength(30);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('T124: respects concurrency=1 (sequential execution)', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    const chunks = Array.from({ length: 20 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+
+    let concurrent = 0;
+    let maxConcurrent = 0;
+
+    global.fetch = vi.fn().mockImplementation(async () => {
+      concurrent++;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((r) => setTimeout(r, 30));
+      concurrent--;
+      return {
+        ok: true,
+        json: async () => ({
+          response: JSON.stringify({
+            chunks: chunks.slice(0, 10).map((c) => ({
+              id: c.id,
+              description: `desc-${c.id}`,
+              businessContext: 'ctx',
+              semanticTags: [],
+              relationships: [],
+            })),
+          }),
+        }),
+      } as Response;
+    });
+
+    const enricher = new LlmEnricher!({
+      ...baseConfig,
+      concurrency: 1, // sequential
+      retryAttempts: 0,
+    });
+
+    await enricher.enrich(chunks);
+
+    // With concurrency=1, only one request should be in-flight at a time
+    expect(maxConcurrent).toBe(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('T124: progress events report correct batchesCompleted regardless of execution order', async () => {
+    expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
+
+    const chunks = Array.from({ length: 30 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+
+    global.fetch = vi.fn().mockImplementation(async () => {
+      // Random delay to simulate varying Ollama response times
+      await new Promise((r) => setTimeout(r, Math.random() * 30));
+      return {
+        ok: true,
+        json: async () => ({
+          response: JSON.stringify({
+            chunks: chunks.slice(0, 10).map((c) => ({
+              id: c.id,
+              description: `desc-${c.id}`,
+              businessContext: 'ctx',
+              semanticTags: [],
+              relationships: [],
+            })),
+          }),
+        }),
+      } as Response;
+    });
+
+    const progressEvents: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
+    const enricher = new LlmEnricher!({
+      ...baseConfig,
+      concurrency: 3,
+      retryAttempts: 0,
+    });
+
+    await enricher.enrich(chunks, (p) => progressEvents.push({ ...p }));
+
+    // All 3 batches should emit progress
+    expect(progressEvents).toHaveLength(3);
+    // batchesTotal is consistent
+    expect(progressEvents.every((p) => p.batchesTotal === 3)).toBe(true);
+    // batchesCompleted reaches 3 by the last event
+    const completedValues = progressEvents.map((p) => p.batchesCompleted).sort((a, b) => a - b);
+    expect(completedValues).toEqual([1, 2, 3]);
+  });
+});

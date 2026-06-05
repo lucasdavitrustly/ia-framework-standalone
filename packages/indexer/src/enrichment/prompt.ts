@@ -16,6 +16,15 @@ export interface ChunkForPrompt {
   content: string;
   imports?: string[] | undefined;
   annotations?: string[] | undefined;
+  /** T121: Structured annotation metadata for thin-class enrichment */
+  annotationMeta?:
+    | {
+        operationSummaries?: string[] | undefined;
+        endpointPaths?: string[] | undefined;
+        httpMethods?: string[] | undefined;
+        tagName?: string | undefined;
+      }
+    | undefined;
 }
 
 export interface EnrichedChunkResponse {
@@ -111,6 +120,22 @@ export function buildEnrichmentPrompt(chunks: ChunkForPrompt[], filePath: string
         header.push(
           `imports: ${chunk.imports.slice(0, 5).join(', ')}${chunk.imports.length > 5 ? '...' : ''}`,
         );
+      }
+      // T121: Include structured annotation metadata for controller/thin-class chunks
+      if (chunk.annotationMeta) {
+        const meta = chunk.annotationMeta;
+        if (meta.tagName) {
+          header.push(`API tag: ${meta.tagName}`);
+        }
+        if (meta.endpointPaths && meta.endpointPaths.length > 0) {
+          header.push(`API endpoints: ${meta.endpointPaths.join(', ')}`);
+        }
+        if (meta.httpMethods && meta.httpMethods.length > 0) {
+          header.push(`HTTP methods: ${meta.httpMethods.join(', ')}`);
+        }
+        if (meta.operationSummaries && meta.operationSummaries.length > 0) {
+          header.push(`operations: ${meta.operationSummaries.join('; ')}`);
+        }
       }
       return [...header, chunk.content, `=== END CHUNK id="${chunk.id}" ===`].join('\n');
     })

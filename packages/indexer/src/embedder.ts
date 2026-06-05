@@ -155,9 +155,44 @@ export class ThreeVectorEmbedder {
 // ── Input builders ────────────────────────────────────────────────────────────
 
 /**
+ * Build a descriptive string from annotationMeta for semantic enrichment.
+ * Returns empty string if no annotationMeta is present.
+ */
+function buildAnnotationMetaText(chunk: EnrichedCodeChunk): string {
+  const meta = (
+    chunk as EnrichedCodeChunk & {
+      annotationMeta?: {
+        operationSummaries?: string[];
+        endpointPaths?: string[];
+        httpMethods?: string[];
+        tagName?: string;
+      };
+    }
+  ).annotationMeta;
+  if (!meta) return '';
+
+  const parts: string[] = [];
+
+  if (meta.tagName) {
+    parts.push(`API tag: ${meta.tagName}`);
+  }
+  if (meta.endpointPaths && meta.endpointPaths.length > 0) {
+    parts.push(`endpoints: ${meta.endpointPaths.join(' ')}`);
+  }
+  if (meta.httpMethods && meta.httpMethods.length > 0) {
+    parts.push(`HTTP methods: ${meta.httpMethods.join(' ')}`);
+  }
+  if (meta.operationSummaries && meta.operationSummaries.length > 0) {
+    parts.push(`operations: ${meta.operationSummaries.join('; ')}`);
+  }
+
+  return parts.join(' | ');
+}
+
+/**
  * Build the semantic embedding input for a chunk.
- * Primary: description + businessContext + semanticTags
- * Fallback: chunk content (when no LLM enrichment)
+ * Primary: description + businessContext + semanticTags [+ annotationMeta supplement (T120)]
+ * Fallback: annotationMeta synthesis (T119) → raw chunk content
  */
 function buildSemanticInput(chunk: EnrichedCodeChunk): string {
   const parts: string[] = [];
@@ -168,9 +203,20 @@ function buildSemanticInput(chunk: EnrichedCodeChunk): string {
     parts.push(chunk.semanticTags.join(' '));
   }
 
-  if (parts.length > 0) return parts.join(' ');
+  // T120: Supplementary mode — append annotationMeta even when LLM enrichment is present
+  const metaText = buildAnnotationMetaText(chunk);
 
-  // Fallback: language-aware description (includes language and chunkType for search relevance)
+  if (parts.length > 0) {
+    if (metaText) parts.push(metaText);
+    return parts.join(' ');
+  }
+
+  // T119: Heuristic fallback — use annotationMeta to build rich embedding input
+  if (metaText) {
+    return `${chunk.language} ${chunk.chunkType} ${chunk.name ?? ''} ${metaText}`.trim();
+  }
+
+  // Final fallback: language-aware description (includes language and chunkType for search relevance)
   const rawContent = chunk.content ?? '';
   return `${chunk.language} ${chunk.chunkType} ${chunk.name ?? ''} ${rawContent}`.trim();
 }

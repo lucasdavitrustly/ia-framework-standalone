@@ -6,21 +6,23 @@
 
 ## Current Status
 
-| Phase                           | Tasks     | Status                                 |
-| ------------------------------- | --------- | -------------------------------------- |
-| Phase 1 — Setup                 | T001–T005 | ✅ Complete                            |
-| Phase 2 — Foundational          | T006–T012 | ✅ Complete                            |
-| Phase 3 — US1 Enriched Indexing | T013–T033 | ✅ Complete                            |
-| Phase 4 — US2 Dependency Graph  | T034–T040 | ✅ Complete                            |
-| Phase 5 — US3 Chunk Boundaries  | T041–T044 | ✅ Complete                            |
-| Phase 6 — US4 Language Support  | T045–T054 | ✅ Complete                            |
-| Phase 7 — US5 Retrieval         | T055–T069 | ✅ Complete                            |
-| Phase 8 — Polish                | T070–T075 | ✅ Complete                            |
-| Phase 9 — Pipeline Gap-Fill     | T078–T082 | ✅ Complete                            |
-| Phase 10 — Enrichment Progress  | T083–T085 | ✅ Complete                            |
-| Phase 8 — Benchmark / E2E       | T076–T077 | ⏳ Pending (requires live environment) |
+| Phase                                 | Tasks     | Status                                 |
+| ------------------------------------- | --------- | -------------------------------------- |
+| Phase 1 — Setup                       | T001–T005 | ✅ Complete                            |
+| Phase 2 — Foundational                | T006–T012 | ✅ Complete                            |
+| Phase 3 — US1 Enriched Indexing       | T013–T033 | ✅ Complete                            |
+| Phase 4 — US2 Dependency Graph        | T034–T040 | ✅ Complete                            |
+| Phase 5 — US3 Chunk Boundaries        | T041–T044 | ✅ Complete                            |
+| Phase 6 — US4 Language Support        | T045–T054 | ✅ Complete                            |
+| Phase 7 — US5 Retrieval               | T055–T069 | ✅ Complete                            |
+| Phase 8 — Polish                      | T070–T075 | ✅ Complete                            |
+| Phase 9 — Pipeline Gap-Fill           | T078–T082 | ✅ Complete                            |
+| Phase 10 — Enrichment Progress        | T083–T085 | ✅ Complete                            |
+| Phase 14 — Thin-Class Enrichment      | T110–T123 | ✅ Complete                            |
+| Phase 15 — Enrichment Parallelization | T124–T126 | ✅ Complete                            |
+| Phase 8 — Benchmark / E2E             | T076–T077 | ⏳ Pending (requires live environment) |
 
-**Remaining**: T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) require a running Qdrant instance + real project and have not been automated.
+**Remaining**: T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) require a running Qdrant instance + real project and have not been automated. Phase 14 (T110–T123) addresses retrieval precision gaps for thin delegation classes discovered during real-world evaluation. Phase 15 (T124–T126) fixes the enrichment bottleneck: batch processing was sequential despite the concurrency config being available.
 
 ## Summary
 
@@ -142,11 +144,18 @@ The following gaps were discovered during live testing against a real Java proje
 
 - The `enriching` stage was a silent black box during long Ollama runs (3,000+ chunks = 300+ sequential calls) → added `EnrichmentProgress` callback to `LlmEnricher.enrich()`; pipeline pipes it into `IndexingProgress.batchesTotal`/`batchesCompleted`/`currentFile`; CLI renders a live progress bar with elapsed time and ETA
 
+**Phase 14 — Heuristic Semantic Enrichment for Thin Classes** (complete):
+
+- Problem discovered during real-world evaluation: `buildSemanticInput()` fallback embeds raw code for thin delegation classes (controllers, facades). These classes are dominated by imports and boilerplate, producing weak embeddings. Searching "createEntry payment flow controller" returned `PaymentProcessorController` instead of `EntryController` because domain signals (`@Operation(summary=...)`, `@RequestMapping("v1/entries")`) were never surfaced in the embedding input.
+- Solution: Extract structured annotation values (`annotationMeta`) during AST parsing; use them to synthesize a semantically rich embedding input in the fallback path — zero LLM dependency. Also enhances the LLM enrichment prompt with annotation context for controller stereotypes.
+- Scope: Java `@Operation`/`@RequestMapping`/`@XMapping`/`@Tag` + TypeScript `@Controller`/`@Get`/`@Post`/`@Put`/`@Delete`/`@Patch` decorators
+
 ## Complexity Tracking
 
-| Addition                      | Why Needed                                                                                              | Simpler Alternative Rejected Because                                                  |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 3 vectors instead of 2        | Each serves distinct retrieval need (business, symbol, keyword). Removes need for separate hybrid tool. | Single vector can't optimize for all query types — proven by current precision issues |
-| LLM enrichment pipeline       | Enables semantic search on business context (core value prop). Gracefully degrades.                     | AST-only metadata lacks business meaning descriptions                                 |
-| 4 new language parsers        | Proto/YAML/XML/SQL critical for understanding service architecture                                      | Ignoring config/contract files misses architectural relationships                     |
-| `EnrichmentProgress` callback | Makes 300+ sequential Ollama calls visible; critical UX for long-running indexing jobs                  | Static spinner gives no feedback during multi-minute enrichment runs                  |
+| Addition                      | Why Needed                                                                                              | Simpler Alternative Rejected Because                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 3 vectors instead of 2        | Each serves distinct retrieval need (business, symbol, keyword). Removes need for separate hybrid tool. | Single vector can't optimize for all query types — proven by current precision issues   |
+| LLM enrichment pipeline       | Enables semantic search on business context (core value prop). Gracefully degrades.                     | AST-only metadata lacks business meaning descriptions                                   |
+| 4 new language parsers        | Proto/YAML/XML/SQL critical for understanding service architecture                                      | Ignoring config/contract files misses architectural relationships                       |
+| `EnrichmentProgress` callback | Makes 300+ sequential Ollama calls visible; critical UX for long-running indexing jobs                  | Static spinner gives no feedback during multi-minute enrichment runs                    |
+| `annotationMeta` extraction   | Enables precise retrieval of thin delegation classes (controllers, facades) without LLM dependency      | Raw annotation text in sparse vector lacks semantic weight for natural language queries |

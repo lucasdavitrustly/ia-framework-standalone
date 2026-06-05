@@ -49,6 +49,9 @@ export class MultiCollectionSearchEngine {
    * candidates to produce a high-quality top-`limit` merged ranking.
    * scoreThreshold is set to undefined so child engines don't apply cosine
    * filtering before RRF merge (post-RRF scores are rank-based, not cosine).
+   *
+   * When only one engine returns non-empty results, RRF fusion is skipped
+   * and original cosine scores are preserved (RRF of one list is meaningless).
    */
   async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
     const limit = query.limit ?? 10;
@@ -61,6 +64,14 @@ export class MultiCollectionSearchEngine {
       })),
     );
 
+    // Skip RRF when only one engine contributes results — preserve cosine scores
+    const nonEmpty = listsWithSources.filter((l) => l.results.length > 0);
+    if (nonEmpty.length <= 1) {
+      const single = nonEmpty[0];
+      if (!single) return [];
+      return single.results.map((r) => ({ ...r, source: single.source })).slice(0, limit);
+    }
+
     return rrfMerge(listsWithSources, limit);
   }
 
@@ -70,6 +81,9 @@ export class MultiCollectionSearchEngine {
    * Same over-fetch strategy as search(). Each engine handles its own
    * sparse/dense fusion internally — we RRF across collection boundaries.
    * scoreThreshold is cleared so RRF rank-based scores aren't filtered by cosine threshold.
+   *
+   * When only one engine returns non-empty results, RRF fusion is skipped
+   * and original scores are preserved.
    */
   async searchHybrid(query: RetrievalQuery): Promise<RetrievalResult[]> {
     const limit = query.limit ?? 10;
@@ -81,6 +95,14 @@ export class MultiCollectionSearchEngine {
         results: await engine.searchHybrid(overFetchQuery),
       })),
     );
+
+    // Skip RRF when only one engine contributes results — preserve original scores
+    const nonEmpty = listsWithSources.filter((l) => l.results.length > 0);
+    if (nonEmpty.length <= 1) {
+      const single = nonEmpty[0];
+      if (!single) return [];
+      return single.results.map((r) => ({ ...r, source: single.source })).slice(0, limit);
+    }
 
     return rrfMerge(listsWithSources, limit);
   }

@@ -337,4 +337,94 @@ describe('MultiCollectionSearchEngine', () => {
       expect(typeof engine.searchHybrid).toBe('function');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // US8: RRF single-list score preservation
+  // ---------------------------------------------------------------------------
+  describe('US8: single-engine cosine score preservation', () => {
+    it('search() with one engine preserves original cosine scores (no RRF conversion)', async () => {
+      const astResults = [
+        makeResult({ chunkId: 'a', score: 0.85, scoreType: 'cosine' as const }),
+        makeResult({ chunkId: 'b', score: 0.72, scoreType: 'cosine' as const }),
+        makeResult({ chunkId: 'c', score: 0.61, scoreType: 'cosine' as const }),
+      ];
+      const astEngine = createMockEngine(astResults);
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
+      });
+
+      const results = await engine.search({ text: 'payment processing', limit: 10 });
+
+      expect(results).toHaveLength(3);
+      // Original cosine scores preserved — NOT replaced with 1/(60+rank+1) ≈ 0.016
+      expect(results[0]!.score).toBe(0.85);
+      expect(results[1]!.score).toBe(0.72);
+      expect(results[2]!.score).toBe(0.61);
+      // scoreType preserved as cosine
+      expect(results[0]!.scoreType).toBe('cosine');
+      expect(results[1]!.scoreType).toBe('cosine');
+      // Source tag applied
+      expect(results[0]!.source).toBe('ast');
+    });
+
+    it('search() with two engines where only one returns results preserves cosine scores', async () => {
+      const astResults = [makeResult({ chunkId: 'a', score: 0.9, scoreType: 'cosine' as const })];
+      const astEngine = createMockEngine(astResults);
+      const llmEngine = createMockEngine([]); // empty — collection doesn't exist or has no matches
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
+        ],
+      });
+
+      const results = await engine.search({ text: 'test', limit: 10 });
+
+      expect(results).toHaveLength(1);
+      expect(results[0]!.score).toBe(0.9);
+      expect(results[0]!.scoreType).toBe('cosine');
+      expect(results[0]!.source).toBe('ast');
+    });
+
+    it('search() with two engines both returning results uses RRF fusion', async () => {
+      const astResults = [makeResult({ chunkId: 'a', score: 0.9, scoreType: 'cosine' as const })];
+      const llmResults = [makeResult({ chunkId: 'b', score: 0.85, scoreType: 'cosine' as const })];
+      const astEngine = createMockEngine(astResults);
+      const llmEngine = createMockEngine(llmResults);
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
+        ],
+      });
+
+      const results = await engine.search({ text: 'test', limit: 10 });
+
+      // Both engines contributed → RRF fusion applied → scores are rank-based
+      expect(results).toHaveLength(2);
+      expect(results[0]!.scoreType).toBe('rrf');
+      expect(results[0]!.score).toBeLessThan(0.1); // RRF scores are ~0.016
+    });
+
+    it('searchHybrid() with one engine preserves original scores', async () => {
+      const hybridResults = [
+        makeResult({ chunkId: 'x', score: 0.78, scoreType: 'cosine' as const }),
+      ];
+      const astEngine = createMockEngine([], hybridResults);
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
+      });
+
+      const results = await engine.searchHybrid({ text: 'test', limit: 10 });
+
+      expect(results).toHaveLength(1);
+      expect(results[0]!.score).toBe(0.78);
+      expect(results[0]!.scoreType).toBe('cosine');
+      expect(results[0]!.source).toBe('ast');
+    });
+  });
 });

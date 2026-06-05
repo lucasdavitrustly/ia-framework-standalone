@@ -1,4 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
 import { registerGetFileTool } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
@@ -24,6 +26,8 @@ export interface McpServerConfig {
   defaultExpansionHops?: 0 | 1 | 2 | undefined;
   /** Absolute path to the target project root (used by tools for filesystem reads) */
   projectRoot?: string | undefined;
+  /** Resolved repo list for multi-repo filesystem reads (name → absolute path) */
+  repos?: Array<{ name: string; path: string }> | undefined;
 }
 
 /**
@@ -40,15 +44,56 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     version: config.serverVersion ?? '0.0.1',
   });
 
+  // Build repo-path map for multi-repo filesystem reads
+  const primaryRoot = config.projectRoot;
+  const repoPathMap = new Map<string, string>(
+    (config.repos ?? (primaryRoot ? [{ name: '_default', path: primaryRoot }] : [])).map((r) => [
+      r.name,
+      r.path,
+    ]),
+  );
+  const resolveRoot = (repoId?: string): string | undefined =>
+    repoId ? (repoPathMap.get(repoId) ?? primaryRoot) : primaryRoot;
+
+  // Filesystem read closure for search_codebase (line-range slicing)
+  const searchReadFileFn =
+    repoPathMap.size > 0
+      ? async (
+          relativePath: string,
+          startLine: number,
+          endLine: number,
+          repoId?: string,
+        ): Promise<string> => {
+          const root = resolveRoot(repoId);
+          if (!root) throw new Error('No project root configured for filesystem read');
+          const raw = await readFile(join(root, relativePath), 'utf-8');
+          const lines = raw.split('\n');
+          return lines.slice(startLine - 1, endLine).join('\n');
+        }
+      : undefined;
+
+  // Filesystem read closure for get_file (full file content)
+  const getFileReadFileFn =
+    repoPathMap.size > 0
+      ? async (filePath: string, repo?: string): Promise<string> => {
+          const root = resolveRoot(repo);
+          if (!root) throw new Error('No project root configured for filesystem read');
+          return readFile(join(root, filePath), 'utf-8');
+        }
+      : undefined;
+
   registerSearchCodebaseTool(server, config.searchEngine, {
     metricsStore: config.metricsStore,
     tokenCounter: config.tokenCounter,
     sessionId: config.sessionId,
     defaultExpansionHops: config.defaultExpansionHops,
-    confidenceThreshold: 0.65,
-    defaultScoreThreshold: 0.6,
+    confidenceThreshold: 0.45,
+    defaultScoreThreshold: 0.4,
+    ...(searchReadFileFn ? { readFileFn: searchReadFileFn } : {}),
   });
-  registerGetFileTool(server, config.searchEngine);
+  registerGetFileTool(server, config.searchEngine,
+    getFileReadFileFn ? { readFileFn: getFileReadFileFn } : undefined,
+  );
   registerGetDependenciesTool(server, config.searchEngine);
 
   if (config.dbConfigPath) {

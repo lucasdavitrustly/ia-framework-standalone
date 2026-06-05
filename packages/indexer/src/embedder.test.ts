@@ -278,3 +278,121 @@ describe('ThreeVectorEmbedder — 3-vector embedding (T018)', () => {
     }
   });
 });
+
+// ── T113: Heuristic fallback uses annotationMeta when no LLM enrichment ───────
+
+describe('ThreeVectorEmbedder — heuristic fallback with annotationMeta (T113)', () => {
+  it('includes annotationMeta fields in semantic input when no LLM enrichment is available', async () => {
+    expect(
+      ThreeVectorEmbedder,
+      'ThreeVectorEmbedder must be exported from ./embedder.ts',
+    ).toBeDefined();
+
+    const capturedTexts: string[] = [];
+    const provider: MockEmbeddingProvider = {
+      embed: vi.fn().mockImplementation(async (text: string) => {
+        capturedTexts.push(text);
+        return [0.1, 0.2, 0.3];
+      }),
+      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+        capturedTexts.push(...texts);
+        return texts.map(() => [0.1, 0.2, 0.3]);
+      }),
+    };
+
+    // Chunk WITHOUT LLM enrichment (no description/businessContext/semanticTags)
+    // but WITH annotationMeta (from AST parsing)
+    const chunk: EnrichedChunk = {
+      id: 'entry-controller-sig',
+      name: 'EntryController',
+      content: '@RestController\npublic class EntryController { }',
+      language: 'java',
+      chunkType: 'class-signature',
+      imports: ['org.springframework.web.bind.annotation.RestController'],
+      exports: [],
+      annotations: ['@RestController', '@RequestMapping("v1/entries")'],
+      defines: ['EntryController'],
+      description: undefined,
+      businessContext: undefined,
+      semanticTags: undefined,
+      signature: undefined,
+      contextHeader: undefined,
+      contentHash: 'sha256-xyz',
+      // @ts-expect-error annotationMeta not in local type stub yet
+      annotationMeta: {
+        operationSummaries: ['Create an entry', 'Get entry by ID'],
+        endpointPaths: ['v1/entries', '/{id}'],
+        httpMethods: ['GET', 'POST'],
+        tagName: 'Entries',
+      },
+    };
+
+    const embedder = new ThreeVectorEmbedder!(provider);
+    await embedder.embed(chunk);
+
+    // The semantic input (first embed call) should include annotationMeta signals
+    const semanticInput = capturedTexts[0] ?? '';
+    expect(semanticInput).toContain('Create an entry');
+    expect(semanticInput).toContain('Get entry by ID');
+    expect(semanticInput).toContain('v1/entries');
+    expect(semanticInput).toContain('Entries');
+  });
+});
+
+// ── T114: Supplementary mode — partial LLM enrichment + annotationMeta ────────
+
+describe('ThreeVectorEmbedder — supplementary annotationMeta with partial LLM (T114)', () => {
+  it('appends annotationMeta to semantic input even when partial LLM enrichment exists', async () => {
+    expect(
+      ThreeVectorEmbedder,
+      'ThreeVectorEmbedder must be exported from ./embedder.ts',
+    ).toBeDefined();
+
+    const capturedTexts: string[] = [];
+    const provider: MockEmbeddingProvider = {
+      embed: vi.fn().mockImplementation(async (text: string) => {
+        capturedTexts.push(text);
+        return [0.1, 0.2, 0.3];
+      }),
+      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+        capturedTexts.push(...texts);
+        return texts.map(() => [0.1, 0.2, 0.3]);
+      }),
+    };
+
+    // Chunk WITH partial LLM enrichment (description present) AND annotationMeta
+    const chunk: EnrichedChunk = {
+      id: 'entry-controller-sig',
+      name: 'EntryController',
+      content: '@RestController\npublic class EntryController { }',
+      language: 'java',
+      chunkType: 'class-signature',
+      imports: ['org.springframework.web.bind.annotation.RestController'],
+      exports: [],
+      annotations: ['@RestController', '@RequestMapping("v1/entries")'],
+      defines: ['EntryController'],
+      description: 'REST controller for entry management',
+      businessContext: 'Entry domain',
+      semanticTags: ['rest', 'controller'],
+      signature: undefined,
+      contextHeader: undefined,
+      contentHash: 'sha256-xyz',
+      // @ts-expect-error annotationMeta not in local type stub yet
+      annotationMeta: {
+        operationSummaries: ['Create an entry', 'Get entry by ID'],
+        endpointPaths: ['v1/entries', '/{id}'],
+        httpMethods: ['GET', 'POST'],
+        tagName: 'Entries',
+      },
+    };
+
+    const embedder = new ThreeVectorEmbedder!(provider);
+    await embedder.embed(chunk);
+
+    // The semantic input should contain BOTH the LLM description AND the annotationMeta signals
+    const semanticInput = capturedTexts[0] ?? '';
+    expect(semanticInput).toContain('REST controller for entry management');
+    expect(semanticInput).toContain('v1/entries');
+    expect(semanticInput).toContain('Create an entry');
+  });
+});

@@ -616,10 +616,12 @@ The system sends the full file (or class group) to Ollama with chunk boundaries 
 
 ### Concurrency & Performance
 
-- Fixed default concurrency of 2 parallel Ollama requests, configurable in project.json (`enrichment.concurrency`)
+- Fixed default concurrency of 3 parallel Ollama enrichment requests, configurable in project.json (`enrichment.concurrency`)
+- Enrichment batches are processed **concurrently** using a bounded task queue (p-queue) — not sequentially
 - Cache enrichment results keyed by `contentHash` — skip LLM call for unchanged files on re-index
 - Graceful degradation: if Ollama unavailable, continue with AST-only metadata
 - Max 10 methods per enrichment call (batched through all methods in a file/class for quality)
+- **Server prerequisite**: Ollama must have `OLLAMA_NUM_PARALLEL >= enrichment.concurrency` for true parallel processing
 
 ### Configuration (`.ia-framework/project.json`)
 
@@ -656,7 +658,7 @@ The `install.sh` prompts the user to select an enrichment model (separate from t
 - **FR-010**: System MUST support configurable exclusion patterns to prevent indexing generated source files.
 - **FR-011**: System MUST provide incremental re-indexing using git-diff (against last indexed commit) to identify changed files, skipping LLM enrichment for unchanged chunks (cached by contentHash).
 - **FR-012**: System MUST expose dependency graph data through the existing MCP tools (get_dependencies, search_codebase) with graph expansion.
-- **FR-013**: System MUST use a fixed default concurrency of 2 for parallel Ollama enrichment requests, configurable via `enrichment.concurrency` in project.json.
+- **FR-013**: System MUST process enrichment batches concurrently using a bounded task queue with a default concurrency of 3, configurable via `enrichment.concurrency` in project.json.
 - **FR-014**: System MUST classify chunks by stereotype and architectural layer using annotation/package heuristics (no LLM required).
 - **FR-015**: System MUST store module information (group, module, submodule) derived from directory structure and Maven coordinates from pom.xml.
 - **FR-016**: System MUST create class-signature chunks (declaration + fields + method signatures without bodies) as lightweight "index card" entries for architectural queries.
@@ -872,6 +874,73 @@ A developer searches the indexed codebase via the MCP tool and receives results.
 2. **Given** a query where the primary cosine search returns nothing and the hybrid RRF fallback fires, **When** the MCP tool formats results, **Then** each result header shows `rrf: X.XXXX` (4 decimal places, RRF scale ~0.01–0.05).
 3. **Given** a `RetrievalResult` produced by `search()`, **When** its `scoreType` field is read, **Then** it equals `'cosine'`.
 4. **Given** a `RetrievalResult` produced by `searchHybrid()`, **When** its `scoreType` field is read, **Then** it equals `'rrf'`.
+
+---
+
+### User Story 8 - RRF Single-List Score Preservation (Priority: P1)
+
+When the MCP server has only one active Qdrant collection (common single-repo setup), the `MultiCollectionSearchEngine` still wraps the single `SearchEngine` and routes all queries through `rrfMerge()`. The "single-list optimization" in `rrfMerge` destructively replaces cosine similarity scores (0–1) with rank-based RRF scores (`1/(60+rank+1)` ≈ 0.016), making score thresholds, confidence gates, and RAG-sufficient signaling meaningless.
+
+**Why this priority**: This is a correctness bug that affects every single-collection deployment. The score type transparency work (US7) is rendered useless when the underlying scores are always RRF regardless of whether fusion actually occurred. Users see `rrf: 0.016` and cannot distinguish high-relevance from low-relevance results.
+
+**Root cause**: `rrfMerge()` applies rank-based scoring unconditionally, even when there's only one ranked list (no fusion to perform). Additionally, `MultiCollectionSearchEngine.search()` calls `rrfMerge()` unconditionally even when only one engine returns non-empty results.
+
+**Independent Test**: Call `MultiCollectionSearchEngine.search()` with a single engine that returns cosine-scored results. Verify the output preserves `scoreType: 'cosine'` and original scores.
+
+**Acceptance Scenarios**:
+
+1. **Given** `rrfMerge` is called with a single list, **When** results are returned, **Then** original scores and `scoreType` are preserved unchanged — only the `source` tag is applied.
+2. **Given** a `MultiCollectionSearchEngine` with two engines but only one returns non-empty results, **When** `search()` is called, **Then** results preserve the original cosine scores and `scoreType: 'cosine'` (RRF fusion is skipped).
+3. **Given** a `MultiCollectionSearchEngine` with two engines that both return results, **When** `search()` is called, **Then** results are fused via RRF as before with `scoreType: 'rrf'`.
+4. **Given** the MCP server starts with only one collection discovered, **When** any search is performed, **Then** the user sees `score: X.XX` (cosine) in the output, not `rrf: X.XXXX`.
+
+**Bugs fixed:**
+
+| Bug                                            | File                                                             | Symptom                                                  |
+| ---------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------- |
+| `rrfMerge` single-list destroys cosine scores  | `packages/retrieval/src/rrf.ts:32-46`                            | All scores become ~0.016 regardless of actual similarity |
+| `MultiCollectionSearchEngine` always calls RRF | `packages/retrieval/src/multi-collection-search-engine.ts:53-64` | Even one-engine results get RRF-scored                   |
+
+---
+
+### User Story 9 - Wire Filesystem Read to MCP Tools (Multi-Repo Support) (Priority: P1)
+
+The MCP server's `get_file` and `search_codebase` tools define `readFileFn` closures for reading live file content from disk, but the wiring between the config loader (`bin.ts`) and the tool registrations (`server.ts`) was never completed. As a result, both tools always fall back to stale Qdrant payload content (or empty content for lean-payload chunks), defeating the entire lean-payload architecture specified in FR-008.
+
+**Why this priority**: This is a critical wiring bug. Without filesystem reads, the `search_codebase` top-5 results always show empty or stale content, and `get_file` cannot return live file content. This forces AI agents into a 15+ tool-call pattern (search → read file manually) instead of the intended 5–8 call pattern.
+
+**Root cause — 3 gaps in the call chain:**
+
+1. **`bin.ts` line 144**: `projectRoot: config.targetProjectPath` is always `undefined` because the project uses the `repos[]` format in `project.json`. The schema enforces that exactly one of `targetProjectPath` or `repos` is set.
+
+2. **`server.ts`**: Even if `projectRoot` were set, it is received by `createMcpServer` but never forwarded as `readFileFn` closures to `registerGetFileTool` or `registerSearchCodebaseTool`.
+
+3. **Tool signatures**: `GetFileOptions.readFileFn` only takes `(path: string)` — the `repo` parsed by `parseRepoPath` is never forwarded. `ObservabilityConfig.readFileFn` only takes `(relativePath, startLine, endLine)` — the `repoId` from each result is never forwarded. Without `repoId`, a multi-repo closure can't pick the correct root path.
+
+**Independent Test**: Configure a multi-repo `project.json`, call `get_file` with `core:src/some-file.ts`, verify live filesystem content is returned. Call `search_codebase`, verify top-5 results contain live code from disk (not stored Qdrant content).
+
+**Acceptance Scenarios**:
+
+1. **Given** a `project.json` with `repos: [{ path: "/path/to/repo", name: "core" }]`, **When** the MCP server starts, **Then** `createMcpServer` receives a `repos` array with resolved absolute paths derived via `RepoRegistry.fromConfig()`.
+
+2. **Given** a running MCP server with repos configured, **When** `get_file` is called with path `core:src/auth.ts`, **Then** `readFileFn` is called with `('src/auth.ts', 'core')` and returns live file content from `<repo-path>/src/auth.ts`.
+
+3. **Given** a running MCP server with repos configured, **When** `search_codebase` returns a result with `repoId: 'core'` and `relativePath: 'src/service.ts'`, **Then** `readFileFn` is called with `('src/service.ts', 10, 20, 'core')` and the result's `content` field is replaced with live code from disk.
+
+4. **Given** a single-repo setup with only `targetProjectPath` in config, **When** the MCP server starts, **Then** backward-compatible fallback sets `projectRoot` as the single root and both tools receive `readFileFn` closures that resolve paths against it.
+
+5. **Given** a multi-repo setup where the filesystem read fails (ENOENT), **When** a tool tries to read live content, **Then** it silently falls back to stored Qdrant content (existing graceful degradation preserved).
+
+**Files changed:**
+
+| File                                                    | Change                                                                                                                                              |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/mcp-server/src/bin.ts`                        | Import `RepoRegistry`, build `resolvedRepos`, pass `projectRoot` + `repos` to `createMcpServer`                                                     |
+| `packages/mcp-server/src/server.ts`                     | Add `repos` to config interface; build `repoPathMap` + `resolveRoot()`; create `readFileFn` closures; pass to tool registrations                    |
+| `packages/mcp-server/src/tools/get-file.ts`             | Extend `readFileFn` signature to `(path, repo?) => Promise<string>`; forward `repo` from `parseRepoPath`; accept `options` in `registerGetFileTool` |
+| `packages/mcp-server/src/tools/search-codebase.ts`      | Extend `readFileFn` signature to `(rel, start, end, repoId?) => Promise<string>`; forward `results[i]!.repoId` as 4th arg                           |
+| `packages/mcp-server/src/tools/get-file.test.ts`        | Fix assertion for new signature; add multi-repo forwarding test                                                                                     |
+| `packages/mcp-server/src/tools/search-codebase.test.ts` | Fix assertion for new signature; add multi-repo forwarding test                                                                                     |
 
 ---
 

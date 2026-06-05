@@ -262,6 +262,8 @@ async function embedBatchAndStore(
           ...(chunk.classSignature != null ? { classSignature: chunk.classSignature } : {}),
           ...(chunk.dependencyEdges != null ? { dependencyEdges: chunk.dependencyEdges } : {}),
           ...(chunk.moduleInfo != null ? { moduleInfo: chunk.moduleInfo } : {}),
+          // T122: Phase 14 — annotationMeta for thin-class semantic enrichment
+          ...(chunk.annotationMeta != null ? { annotationMeta: chunk.annotationMeta } : {}),
           // T081: LLM enrichment fields (present only when LlmEnricher ran)
           ...(chunk.description != null ? { description: chunk.description } : {}),
           ...(chunk.businessContext != null ? { businessContext: chunk.businessContext } : {}),

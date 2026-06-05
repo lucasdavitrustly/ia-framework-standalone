@@ -103,6 +103,25 @@ export interface CodeChunk {
         symbols?: string[] | undefined;
       }>
     | undefined;
+
+  // === Phase 14: Heuristic semantic enrichment for thin classes ===
+  /**
+   * Structured annotation/decorator metadata extracted from AST.
+   * Used by buildSemanticInput() to synthesize rich embeddings for thin delegation classes
+   * (controllers, facades) without requiring LLM enrichment.
+   */
+  annotationMeta?:
+    | {
+        /** @Operation(summary=...) or @ApiOperation values */
+        operationSummaries?: string[] | undefined;
+        /** @RequestMapping / @GetMapping / @PostMapping path values */
+        endpointPaths?: string[] | undefined;
+        /** HTTP methods derived from @XMapping annotations (GET, POST, PUT, DELETE, PATCH) */
+        httpMethods?: string[] | undefined;
+        /** @Tag(name=...) value */
+        tagName?: string | undefined;
+      }
+    | undefined;
 }
 
 /**

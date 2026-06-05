@@ -401,3 +401,126 @@ This is the minimum path to prove the full value chain: index with enrichment �
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - The old `strategies/` files are deleted in Phase 2 — ensure no lingering imports
+
+---
+
+## Phase 13: Wire Filesystem Read to MCP Tools (US9)
+
+**Goal**: Fix the broken wiring between config loader and MCP tool registrations so that `get_file` and `search_codebase` read live file content from disk using the multi-repo path resolution, enabling the intended 5–8 tool-call pattern.
+
+**Root cause**: `bin.ts` passes `projectRoot: config.targetProjectPath` (always `undefined` with `repos[]` config), `server.ts` never creates `readFileFn` closures, and tool signatures lack the `repoId` parameter needed for multi-repo path resolution.
+
+### Tests for Phase 13
+
+- [x] T102 [P] [US9] Fix broken assertion in `get-file.test.ts:123`: update `toHaveBeenCalledWith('src/auth.ts')` → `toHaveBeenCalledWith('src/auth.ts', undefined)` to match new 2-param `readFileFn` signature
+
+- [x] T103 [P] [US9] Fix broken assertion in `search-codebase.test.ts:717`: update `toHaveBeenCalledWith('src/auth.ts', 10, 20)` → `toHaveBeenCalledWith('src/auth.ts', 10, 20, undefined)` to match new 4-param `readFileFn` signature
+
+- [x] T104 [P] [US9] New test in `get-file.test.ts`: given path `core:src/auth.ts` with `readFileFn`, verify `readFileFn` is called with `('src/auth.ts', 'core')` — confirming repo prefix is forwarded
+
+- [x] T105 [P] [US9] New test in `search-codebase.test.ts`: given a result with `repoId: 'core'`, verify `readFileFn` is called with `('src/auth.ts', 10, 20, 'core')` — confirming repoId is forwarded
+
+### Implementation for Phase 13
+
+- [x] T106 [US9] Update `bin.ts`: import `RepoRegistry` from `@ia-framework/core`, build `resolvedRepos` via `RepoRegistry.fromConfig(config, dirname(configPath))`, pass both `projectRoot: resolvedRepos[0]?.path` and `repos: resolvedRepos` to `createMcpServer`
+
+- [x] T107 [US9] Update `server.ts`: add `repos?: Array<{ name: string; path: string }>` to `McpServerConfig`; import `readFile` from `node:fs/promises` and `join` from `node:path`; build `repoPathMap` from `config.repos`; implement `resolveRoot(repoId?)` helper; create `searchReadFileFn` (line-range slicing) and `getFileReadFileFn` (full-file read) closures; pass to tool registrations via conditional spread
+
+- [x] T108 [US9] Update `get-file.ts`: extend `GetFileOptions.readFileFn` type to `(path: string, repo?: string) => Promise<string>`; forward `repo` from `parseRepoPath` to `readFileFn(filePath, repo)` call; update `registerGetFileTool` to accept and pass `options?: GetFileOptions`
+
+- [x] T109 [US9] Update `search-codebase.ts`: extend `ObservabilityConfig.readFileFn` type to include `repoId?: string` as 4th param; forward `results[i]!.repoId` as 4th arg in the filesystem read loop
+
+**Checkpoint**: Both `get_file` and `search_codebase` read live file content from disk. Multi-repo path resolution works via `repoId`. Single-repo backward compatibility preserved. All 203 tests pass.
+
+---
+
+## Phase 14: Heuristic Semantic Enrichment for Thin Classes (US10)
+
+**Goal**: Improve retrieval precision for "thin" delegation classes (controllers, facades, delegates) by extracting structured annotation values during AST parsing and using them to build semantically rich embedding inputs — even when LLM enrichment is absent or insufficient.
+
+**Root cause**: `buildSemanticInput()` fallback (`packages/indexer/src/embedder.ts:174`) produces weak embeddings for classes dominated by imports and boilerplate. Domain signals like endpoint paths (`@RequestMapping("v1/entries")`), operation summaries (`@Operation(summary = "Create an entry")`), and command references are present in annotation text but never parsed into structured form or surfaced in the embedding input.
+
+**Evidence**: Searching for "createEntry payment flow controller" with `stereotype: controller` returned `PaymentProcessorController` (score 0.69) instead of `EntryController` because:
+
+- The word "payment" never appears in EntryController
+- The semantic embedding of raw controller code is too thin to match natural language queries
+- Even the exact query `"EntryController"` only scored 0.61 with the controller filter
+
+**Expected impact**: For EntryController, the new `buildSemanticInput()` fallback produces:
+
+```
+REST controller EntryController at v1/entries.
+Operations: Get an entry by ID, Create an entry, Refund an entry, Retry an entry, Resolve a held entry, Cancel an entry, Collect an entry.
+Methods: getEntry, createEntry, refundEntry, getEntryDetail, retryEntry, resumeEntry, cancelEntry, collectEntry.
+```
+
+Instead of: `java class EntryController <96 lines of raw imports + boilerplate code>`
+
+### Tests for Phase 14
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T110 [P] [US10] Test for Java parser annotation value extraction: given a class with `@Operation(summary = "Create an entry")`, returns `annotationMeta.operationSummaries = ["Create an entry"]` — in `packages/ast-parser/src/parsers/java.test.ts`
+
+- [x] T111 [P] [US10] Test for Java parser endpoint path extraction: given a class with `@RequestMapping("v1/entries")` and methods with `@GetMapping("/{id}")`, `@PostMapping`, returns `annotationMeta.endpointPaths` and `annotationMeta.httpMethods` populated — in `packages/ast-parser/src/parsers/java.test.ts`
+
+- [x] T112 [P] [US10] Test for TypeScript parser decorator value extraction: given a class with `@Controller('entries')` and methods with `@Get(':id')`, `@Post()`, returns `annotationMeta` populated — in `packages/ast-parser/src/parsers/typescript.test.ts`
+
+- [x] T113 [P] [US10] Test for `buildSemanticInput()` heuristic fallback: given a chunk with `annotationMeta` (operationSummaries + endpointPaths) and no LLM enrichment, returns text containing operation summaries, endpoint path, and method names — NOT raw code — in `packages/indexer/src/embedder.test.ts`
+
+- [x] T114 [P] [US10] Test for `buildSemanticInput()` supplementary mode: given a chunk with LLM enrichment (description only, no businessContext/tags) AND `annotationMeta`, returns LLM description supplemented with annotation metadata — in `packages/indexer/src/embedder.test.ts`
+
+- [x] T115 [P] [US10] Test for enrichment prompt annotation inclusion: given a chunk with `stereotype = 'controller'` and `annotationMeta`, the prompt includes annotation values in the chunk header for richer LLM output — in `packages/indexer/src/enrichment/prompt.test.ts`
+
+### Implementation for Phase 14
+
+- [x] T116 [US10] Add `annotationMeta` field to `CodeChunk` interface in `packages/ast-parser/src/types.ts`:
+
+  ```typescript
+  annotationMeta?: {
+    operationSummaries?: string[];  // @Operation(summary=...) values
+    endpointPaths?: string[];       // @RequestMapping / @XMapping path values
+    httpMethods?: string[];         // GET, POST, PUT, DELETE, PATCH from @XMapping
+    tagName?: string;               // @Tag(name=...) value
+  } | undefined;
+  ```
+
+- [x] T117 [US10] Enhance Java parser (`packages/ast-parser/src/parsers/java.ts`) to parse annotation attribute values: extract `summary` from `@Operation(summary=...)`, path from `@RequestMapping("...")` / `@GetMapping("...")` / `@PostMapping(...)` / `@PutMapping(...)` / `@DeleteMapping(...)` / `@PatchMapping(...)`, `name` from `@Tag(name=...)`. Populate `annotationMeta` on both the class chunk and the class-signature chunk.
+
+- [x] T118 [US10] Enhance TypeScript parser (`packages/ast-parser/src/parsers/typescript.ts`) to parse decorator argument values: extract path from `@Controller('...')` / `@Get('...')` / `@Post('...')` / `@Put('...')` / `@Delete('...')` / `@Patch('...')`. Populate `annotationMeta` on class and method chunks.
+
+- [x] T119 [US10] Enhance `buildSemanticInput()` fallback in `packages/indexer/src/embedder.ts` (line 174): when `chunk.annotationMeta` is present AND no LLM enrichment exists, synthesize a structured description from: stereotype label, class name, endpoint paths, operation summaries, and exported method names. Do NOT embed raw code in this path.
+
+- [x] T120 [US10] Enhance `buildSemanticInput()` supplementary mode in `packages/indexer/src/embedder.ts`: when LLM enrichment is partially present (e.g., only `description` without `businessContext`/`semanticTags`), append annotation metadata as supplementary signal to the LLM-generated text.
+
+- [x] T121 [US10] Update enrichment prompt in `packages/indexer/src/enrichment/prompt.ts` (`buildEnrichmentPrompt`): when a chunk has `stereotype === 'controller'` or `stereotype === 'gateway'` and `annotationMeta` is populated, add an `endpoint_context:` line to the chunk header showing operation summaries and paths. Instruct the LLM to incorporate these in its generated description and semanticTags.
+
+- [x] T122 [US10] Wire `annotationMeta` through `embedBatchAndStore()` in `packages/indexer/src/pipeline.ts`: add `annotationMeta` to `ChunkPayload` (conditional spread, same pattern as other optional fields). Ensure it is stored in Qdrant for retrieval transparency.
+
+- [x] T123 [US10] Run full test suite (`pnpm test`) and fix any failures. Run `pnpm build` and fix any type errors.
+
+**Checkpoint**: Indexing thin controllers produces semantically rich embeddings from annotation metadata alone (no LLM required). Searching "create entry controller" returns `EntryController` in top-3 results. LLM enrichment prompt produces better descriptions for controller stereotypes.
+
+---
+
+## Phase 15: Enrichment Parallelization (Performance)
+
+**Goal**: Fix the enrichment bottleneck where Ollama batch calls are processed sequentially despite the `concurrency` config being available. Use `p-queue` to process N enrichment batches concurrently, achieving ~3x speedup (with default concurrency=3) during the enrichment phase.
+
+**Root cause**: `LlmEnricher.enrich()` in `packages/indexer/src/enrichment/enricher.ts:147-149` uses a sequential `for...of` loop to process batch groups. The `concurrency` config (default 3) is stored but never used to parallelize execution. For a project with 3,000+ chunks (300+ sequential Ollama calls), this is the primary indexing bottleneck.
+
+**Server prerequisite**: Ollama must be started with `OLLAMA_NUM_PARALLEL >= enrichment.concurrency` (e.g., `OLLAMA_NUM_PARALLEL=8 ollama serve`) for true parallel processing. Otherwise requests queue server-side.
+
+### Tests for Phase 15
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T124 [P] [Perf] Test that `enrich()` processes batches concurrently: given 6 chunks (3 batches of 2) and `concurrency=3`, verify that multiple Ollama calls overlap in time (max concurrent > 1) — in `packages/indexer/src/enrichment/enricher.test.ts`
+
+### Implementation for Phase 15
+
+- [x] T125 [Perf] Parallelize enrichment batches in `packages/indexer/src/enrichment/enricher.ts:147`: import `PQueue` from `p-queue`; replace the sequential `for (const batch of batchGroups) { await applyBatch(batch); }` with a p-queue bounded by `this.config.concurrency`; use `Promise.all(batchGroups.map(batch => queue.add(() => applyBatch(batch))))` to await all batches.
+
+- [x] T126 [Perf] Run enricher test suite (`pnpm vitest packages/indexer/src/enrichment/enricher.test.ts`) and fix any failures.
+
+**Checkpoint**: Enrichment phase processes N batches concurrently (N = `enrichment.concurrency`, default 3). For 300 batches, expected wall-time reduction is ~3x. All existing enricher tests pass.

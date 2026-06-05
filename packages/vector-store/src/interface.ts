@@ -66,6 +66,15 @@ export interface ChunkPayload {
   stereotype?: string | undefined;
   archLayer?: string | undefined;
   complexity?: 'low' | 'medium' | 'high' | undefined;
+  /** T122: Structured annotation/decorator metadata for thin-class enrichment */
+  annotationMeta?:
+    | {
+        operationSummaries?: string[] | undefined;
+        endpointPaths?: string[] | undefined;
+        httpMethods?: string[] | undefined;
+        tagName?: string | undefined;
+      }
+    | undefined;
 
   // === LLM-Enriched (Ollama) ===
   description?: string | undefined;

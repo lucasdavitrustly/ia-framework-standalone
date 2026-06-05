@@ -105,7 +105,12 @@ export interface ObservabilityConfig {
    * Used for top-5 results to guard against indexed content drift.
    * Falls back to stored Qdrant payload content on error or when not provided.
    */
-  readFileFn?: (relativePath: string, startLine: number, endLine: number) => Promise<string>;
+  readFileFn?: (
+    relativePath: string,
+    startLine: number,
+    endLine: number,
+    repoId?: string,
+  ) => Promise<string>;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -941,6 +946,7 @@ export async function searchCodebaseHandler(
             results[i]!.relativePath,
             results[i]!.startLine,
             results[i]!.endLine,
+            results[i]!.repoId,
           );
           // T069: drift detection — compare SHA256 of live content vs stored contentHash
           let stale: boolean | undefined;

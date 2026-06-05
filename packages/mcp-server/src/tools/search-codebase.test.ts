@@ -714,7 +714,7 @@ describe('T058: filesystem read for top-5 results', () => {
       { readFileFn },
     );
 
-    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', 10, 20);
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', 10, 20, undefined);
     const text = (output.content[0] as { type: 'text'; text: string }).text;
     expect(text).toContain('live code from file');
     expect(text).not.toContain('stored-payload-content');
@@ -752,6 +752,32 @@ describe('T058: filesystem read for top-5 results', () => {
 
     const text = (output.content[0] as { type: 'text'; text: string }).text;
     expect(text).toContain('stored content unchanged');
+  });
+
+  it('forwards repoId from result to readFileFn as fourth argument', async () => {
+    const result = makeResult({
+      chunkId: 'r1',
+      relativePath: 'src/auth.ts',
+      startLine: 10,
+      endLine: 20,
+      content: 'stored-payload-content',
+      repoId: 'core',
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('live code from core repo');
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'payment gateway retry logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', 10, 20, 'core');
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('live code from core repo');
   });
 });
 

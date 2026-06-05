@@ -14,7 +14,7 @@ export interface GetFileInput {
 }
 
 export interface GetFileOptions {
-  readFileFn?: (path: string) => Promise<string>;
+  readFileFn?: (path: string, repo?: string) => Promise<string>;
 }
 
 export type ToolOutput = CallToolResult;
@@ -102,7 +102,7 @@ export async function getFileHandler(
   // ── Filesystem-read path ──────────────────────────────────────────────────
   if (readFileFn) {
     try {
-      const fileContent = await readFileFn(filePath);
+      const fileContent = await readFileFn(filePath, repo);
       const lang = results[0]?.language ?? '';
       const title = `## File: ${filePath}`;
       const text = `${title}\n\n\`\`\`${lang}\n${fileContent}\n\`\`\``;
@@ -189,7 +189,11 @@ function buildStoredContentResponse(
 /**
  * Register the get_file tool on an MCP server.
  */
-export function registerGetFileTool(server: McpServer, engine: Engine): void {
+export function registerGetFileTool(
+  server: McpServer,
+  engine: Engine,
+  options?: GetFileOptions,
+): void {
   server.registerTool(
     'get_file',
     {
@@ -202,7 +206,7 @@ export function registerGetFileTool(server: McpServer, engine: Engine): void {
       },
     },
     async (input) => {
-      return getFileHandler(engine, input);
+      return getFileHandler(engine, input, options);
     },
   );
 }

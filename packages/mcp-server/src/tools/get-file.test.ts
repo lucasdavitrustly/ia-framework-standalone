@@ -120,7 +120,7 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const result = await getFileHandler(engine, { path: 'src/auth.ts' }, { readFileFn });
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain('full file content from disk');
-    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts');
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', undefined);
   });
 
   test('structuredContent includes indexed chunk metadata when readFileFn provided', async () => {
@@ -159,5 +159,16 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const text = (result.content[0] as { text: string }).text;
     expect(engine.search).toHaveBeenCalled();
     expect(text).toContain('auth');
+  });
+
+  test('forwards repo from repo:path prefix to readFileFn as second argument', async () => {
+    const chunk = makeChunk({ repoId: 'core' });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockResolvedValue('live file from core repo');
+
+    const result = await getFileHandler(engine, { path: 'core:src/auth.ts' }, { readFileFn });
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', 'core');
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('live file from core repo');
   });
 });

@@ -225,3 +225,137 @@ ${methods}
     }
   });
 });
+
+// ── T110: Java parser annotation value extraction (@Operation summary) ────────
+
+describe('parseJava - annotationMeta extraction (T110)', () => {
+  it('extracts @Operation(summary="...") into annotationMeta.operationSummaries', () => {
+    const source = `
+package com.example;
+
+import io.swagger.v3.oas.annotations.Operation;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
+
+@RestController
+public class EntryController {
+
+    @Operation(summary = "Create an entry")
+    @PostMapping
+    public void createEntry() {}
+
+    @Operation(summary = "Get an entry by ID")
+    public void getEntry() {}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/EntryController.java', 'src/EntryController.java');
+    const classChunk = chunks.find((c) => c.chunkType === 'class' && c.name === 'EntryController');
+    const sigChunk = chunks.find(
+      (c) => c.chunkType === 'class-signature' && c.name === 'EntryController',
+    );
+
+    // Class-level chunk should have aggregated annotationMeta
+    expect(sigChunk).toBeDefined();
+    expect(sigChunk!.annotationMeta).toBeDefined();
+    expect(sigChunk!.annotationMeta!.operationSummaries).toContain('Create an entry');
+    expect(sigChunk!.annotationMeta!.operationSummaries).toContain('Get an entry by ID');
+  });
+
+  it('extracts @Tag(name="...") into annotationMeta.tagName', () => {
+    const source = `
+package com.example;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.RestController;
+
+@Tag(name = "Entries")
+@RestController
+public class EntryController {
+    public void createEntry() {}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/EntryController.java', 'src/EntryController.java');
+    const sigChunk = chunks.find(
+      (c) => c.chunkType === 'class-signature' && c.name === 'EntryController',
+    );
+
+    expect(sigChunk).toBeDefined();
+    expect(sigChunk!.annotationMeta).toBeDefined();
+    expect(sigChunk!.annotationMeta!.tagName).toBe('Entries');
+  });
+});
+
+// ── T111: Java parser endpoint path extraction (@RequestMapping, @XMapping) ───
+
+describe('parseJava - annotationMeta endpoint paths (T111)', () => {
+  it('extracts @RequestMapping path into annotationMeta.endpointPaths', () => {
+    const source = `
+package com.example;
+
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("v1/entries")
+public class EntryController {
+    public void createEntry() {}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/EntryController.java', 'src/EntryController.java');
+    const sigChunk = chunks.find(
+      (c) => c.chunkType === 'class-signature' && c.name === 'EntryController',
+    );
+
+    expect(sigChunk).toBeDefined();
+    expect(sigChunk!.annotationMeta).toBeDefined();
+    expect(sigChunk!.annotationMeta!.endpointPaths).toContain('v1/entries');
+  });
+
+  it('extracts @GetMapping, @PostMapping, @PutMapping, @DeleteMapping into httpMethods and endpointPaths', () => {
+    const source = `
+package com.example;
+
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("v1/entries")
+public class EntryController {
+
+    @GetMapping("/{id}")
+    public void getEntry() {}
+
+    @PostMapping
+    public void createEntry() {}
+
+    @PutMapping("/{id}/cancel")
+    public void cancelEntry() {}
+
+    @DeleteMapping("/{id}")
+    public void deleteEntry() {}
+
+    @PatchMapping("/{id}")
+    public void patchEntry() {}
+}
+    `.trim();
+
+    const chunks = parseJava(source, '/src/EntryController.java', 'src/EntryController.java');
+    const sigChunk = chunks.find(
+      (c) => c.chunkType === 'class-signature' && c.name === 'EntryController',
+    );
+
+    expect(sigChunk).toBeDefined();
+    expect(sigChunk!.annotationMeta).toBeDefined();
+    expect(sigChunk!.annotationMeta!.endpointPaths).toContain('v1/entries');
+    expect(sigChunk!.annotationMeta!.endpointPaths).toContain('/{id}');
+    expect(sigChunk!.annotationMeta!.endpointPaths).toContain('/{id}/cancel');
+
+    expect(sigChunk!.annotationMeta!.httpMethods).toContain('GET');
+    expect(sigChunk!.annotationMeta!.httpMethods).toContain('POST');
+    expect(sigChunk!.annotationMeta!.httpMethods).toContain('PUT');
+    expect(sigChunk!.annotationMeta!.httpMethods).toContain('DELETE');
+    expect(sigChunk!.annotationMeta!.httpMethods).toContain('PATCH');
+  });
+});

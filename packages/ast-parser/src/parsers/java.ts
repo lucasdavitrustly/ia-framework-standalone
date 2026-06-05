@@ -151,6 +151,149 @@ function extractAnnotations(node: Parser.SyntaxNode): string[] {
     .map((c) => c.text);
 }
 
+// ── T117: Annotation value extraction for annotationMeta ────────────────────
+
+/** HTTP method mapping: annotation name → HTTP method */
+const HTTP_MAPPING_ANNOTATIONS: Record<string, string> = {
+  GetMapping: 'GET',
+  PostMapping: 'POST',
+  PutMapping: 'PUT',
+  DeleteMapping: 'DELETE',
+  PatchMapping: 'PATCH',
+};
+
+/**
+ * Extract the string value from an annotation's arguments.
+ * Handles: @Foo("value"), @Foo(key = "value"), @Foo(value = "value")
+ * Returns the first string literal value found, or the value of a specific key.
+ */
+function extractAnnotationStringValue(
+  annotationNode: Parser.SyntaxNode,
+  key?: string,
+): string | undefined {
+  const args =
+    annotationNode.childForFieldName('arguments') ??
+    annotationNode.children.find((c) => c.type === 'annotation_argument_list');
+  if (!args) return undefined;
+
+  for (const child of args.children) {
+    if (child.type === 'element_value_pair') {
+      const keyNode = child.childForFieldName('key') ?? child.children[0];
+      const valueNode =
+        child.childForFieldName('value') ?? child.children.find((c) => c.type === 'string_literal');
+      if (keyNode && valueNode) {
+        const keyText = keyNode.text;
+        if (!key || keyText === key || keyText === 'value') {
+          // Strip surrounding quotes from string literal
+          const raw = valueNode.text;
+          if (raw.startsWith('"') && raw.endsWith('"')) {
+            return raw.slice(1, -1);
+          }
+        }
+      }
+    } else if (child.type === 'string_literal') {
+      // Direct value: @Foo("value")
+      const raw = child.text;
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        return raw.slice(1, -1);
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Get the annotation name from a marker_annotation or annotation node.
+ * E.g., "@Operation(...)" → "Operation", "@RestController" → "RestController"
+ */
+function getAnnotationName(annotationNode: Parser.SyntaxNode): string {
+  const nameNode =
+    annotationNode.childForFieldName('name') ??
+    annotationNode.children.find((c) => c.type === 'identifier');
+  return nameNode?.text ?? annotationNode.text.replace(/^@/, '').split('(')[0] ?? '';
+}
+
+/**
+ * Extract annotationMeta from a class declaration and its methods.
+ * Aggregates:
+ * - @Operation(summary=...) from methods → operationSummaries
+ * - @Tag(name=...) from class → tagName
+ * - @RequestMapping("...") from class → endpointPaths
+ * - @GetMapping/@PostMapping/... from methods → httpMethods + endpointPaths
+ */
+function extractAnnotationMeta(
+  classNode: Parser.SyntaxNode,
+): CodeChunk['annotationMeta'] | undefined {
+  const operationSummaries: string[] = [];
+  const endpointPaths: string[] = [];
+  const httpMethods: string[] = [];
+  let tagName: string | undefined;
+
+  // 1. Class-level annotations
+  const classModifiers = getModifiers(classNode);
+  if (classModifiers) {
+    for (const ann of classModifiers.children) {
+      if (ann.type !== 'annotation' && ann.type !== 'marker_annotation') continue;
+      const name = getAnnotationName(ann);
+
+      if (name === 'RequestMapping') {
+        const path = extractAnnotationStringValue(ann, 'value');
+        if (path) endpointPaths.push(path);
+      } else if (name === 'Tag') {
+        const nameVal = extractAnnotationStringValue(ann, 'name');
+        if (nameVal) tagName = nameVal;
+      }
+    }
+  }
+
+  // 2. Method-level annotations (from class body)
+  const classBody = classNode.children.find((c) => c.type === 'class_body');
+  if (classBody) {
+    for (const member of classBody.children) {
+      if (member.type !== 'method_declaration' && member.type !== 'constructor_declaration') {
+        continue;
+      }
+      const memberModifiers = getModifiers(member);
+      if (!memberModifiers) continue;
+
+      for (const ann of memberModifiers.children) {
+        if (ann.type !== 'annotation' && ann.type !== 'marker_annotation') continue;
+        const name = getAnnotationName(ann);
+
+        if (name === 'Operation') {
+          const summary = extractAnnotationStringValue(ann, 'summary');
+          if (summary) operationSummaries.push(summary);
+        } else if (name in HTTP_MAPPING_ANNOTATIONS) {
+          const method = HTTP_MAPPING_ANNOTATIONS[name]!;
+          if (!httpMethods.includes(method)) httpMethods.push(method);
+          const path = extractAnnotationStringValue(ann, 'value');
+          if (path && !endpointPaths.includes(path)) endpointPaths.push(path);
+        } else if (name === 'RequestMapping') {
+          const path = extractAnnotationStringValue(ann, 'value');
+          if (path && !endpointPaths.includes(path)) endpointPaths.push(path);
+        }
+      }
+    }
+  }
+
+  // Only return annotationMeta if there's meaningful content
+  if (
+    operationSummaries.length === 0 &&
+    endpointPaths.length === 0 &&
+    httpMethods.length === 0 &&
+    !tagName
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(operationSummaries.length > 0 ? { operationSummaries } : {}),
+    ...(endpointPaths.length > 0 ? { endpointPaths } : {}),
+    ...(httpMethods.length > 0 ? { httpMethods } : {}),
+    ...(tagName ? { tagName } : {}),
+  };
+}
+
 function extractVisibility(
   node: Parser.SyntaxNode,
 ): 'public' | 'protected' | 'private' | 'package' {
@@ -493,6 +636,8 @@ function collectDeclarations(
     ) {
       const className = getNodeName(targetNode);
       const sigContent = buildClassSignatureContent(targetNode, sourceLines);
+      // T117: extract structured annotation values for thin-class enrichment
+      const annotationMeta = extractAnnotationMeta(targetNode);
       chunks.push({
         id: makeClassSignatureChunkId(filePath, startLine, endLine),
         filePath,
@@ -508,6 +653,7 @@ function collectDeclarations(
         parentName: enclosingName,
         annotations: extractAnnotations(targetNode),
         visibility: extractVisibility(targetNode),
+        ...(annotationMeta ? { annotationMeta } : {}),
         ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
       });
     }
