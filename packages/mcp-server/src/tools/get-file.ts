@@ -11,10 +11,18 @@ type Engine = {
 
 export interface GetFileInput {
   path: string;
+  startLine?: number | undefined;
+  endLine?: number | undefined;
+  name?: string | undefined;
 }
 
 export interface GetFileOptions {
-  readFileFn?: (path: string, repo?: string) => Promise<string>;
+  readFileFn?: (
+    path: string,
+    repo?: string,
+    startLine?: number,
+    endLine?: number,
+  ) => Promise<string>;
 }
 
 export type ToolOutput = CallToolResult;
@@ -102,6 +110,86 @@ export async function getFileHandler(
   // ── Filesystem-read path ──────────────────────────────────────────────────
   if (readFileFn) {
     try {
+      // ── Name filter path: filter chunks by name, read only matching ranges ──
+      if (input.name) {
+        const nameFilter = input.name.toLowerCase();
+        const matchingChunks = results.filter(
+          (r) => r.name && r.name.toLowerCase().includes(nameFilter),
+        );
+
+        if (matchingChunks.length > 0) {
+          // Read only the matching chunk ranges from disk
+          const sections: string[] = [];
+          const lang = matchingChunks[0]?.language ?? '';
+
+          for (const chunk of matchingChunks.sort((a, b) => a.startLine - b.startLine)) {
+            const chunkContent = await readFileFn(filePath, repo, chunk.startLine, chunk.endLine);
+            const header = chunk.name
+              ? `### ${chunk.chunkType}: ${chunk.name} (lines ${chunk.startLine}-${chunk.endLine})`
+              : `### Lines ${chunk.startLine}-${chunk.endLine}`;
+            sections.push(`${header}\n\`\`\`${lang}\n${chunkContent}\n\`\`\``);
+          }
+
+          const filteredChunks = matchingChunks.map((r) => ({
+            repo: r.repoId,
+            path: r.relativePath,
+            name: r.name,
+            chunkType: r.chunkType,
+            startLine: r.startLine,
+            endLine: r.endLine,
+          }));
+
+          const title = `## File: ${filePath} (filtered by name: "${input.name}")`;
+          const text = `${title}\n\n${sections.join('\n\n')}`;
+          return {
+            content: [{ type: 'text', text }],
+            structuredContent: {
+              answered: true,
+              content: sections.map((s) => s.split('\n').slice(1).join('\n')).join('\n'),
+              chunks: filteredChunks,
+            },
+          };
+        }
+
+        // No chunks matched the name filter — fall back to full file with a note
+        const fileContent = await readFileFn(filePath, repo);
+        const lang = results[0]?.language ?? '';
+        const note = `Note: No chunks matching name "${input.name}" found. Returning full file.`;
+        const title = `## File: ${filePath}`;
+        const text = `${note}\n\n${title}\n\n\`\`\`${lang}\n${fileContent}\n\`\`\``;
+        return {
+          content: [{ type: 'text', text }],
+          structuredContent: {
+            answered: true,
+            content: fileContent,
+            chunks,
+          },
+        };
+      }
+
+      // ── Line-range filter path: slice file content to specified range ──
+      if (input.startLine !== undefined && input.endLine !== undefined) {
+        const fileContent = await readFileFn(filePath, repo);
+        const lines = fileContent.split('\n');
+        // Convert to 0-indexed, inclusive of endLine
+        const start = Math.max(0, input.startLine - 1);
+        const end = Math.min(lines.length, input.endLine);
+        const slicedContent = lines.slice(start, end).join('\n');
+
+        const lang = results[0]?.language ?? '';
+        const title = `## File: ${filePath} (lines ${input.startLine}-${input.endLine})`;
+        const text = `${title}\n\n\`\`\`${lang}\n${slicedContent}\n\`\`\``;
+        return {
+          content: [{ type: 'text', text }],
+          structuredContent: {
+            answered: true,
+            content: slicedContent,
+            chunks,
+          },
+        };
+      }
+
+      // ── Default path: return full file content (existing behavior) ──
       const fileContent = await readFileFn(filePath, repo);
       const lang = results[0]?.language ?? '';
       const title = `## File: ${filePath}`;
@@ -203,6 +291,24 @@ export function registerGetFileTool(
         'Also returns chunk-level metadata (imports, exports, dependency edges, stereotype, archLayer).',
       inputSchema: {
         path: z.string().describe('Relative file path (e.g., "src/auth/middleware.ts")'),
+        startLine: z
+          .number()
+          .optional()
+          .describe(
+            'Start line (1-indexed). When provided with endLine, returns only that range from the file.',
+          ),
+        endLine: z
+          .number()
+          .optional()
+          .describe(
+            'End line (1-indexed). When provided with startLine, returns only that range from the file.',
+          ),
+        name: z
+          .string()
+          .optional()
+          .describe(
+            'Filter to chunks matching this function/class name (case-insensitive). Returns only matching sections.',
+          ),
       },
     },
     async (input) => {

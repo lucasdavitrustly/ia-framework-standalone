@@ -59,6 +59,13 @@ type Engine = {
   >;
   /** Scroll by name in a specific repo (for cross-repo symbol lookup) */
   scrollByNameInRepo?(name: string, repoId: string): Promise<RetrievalResult[]>;
+  /** T137: Search with interface implementation expansion */
+  searchWithInterfaceExpansion?(query: {
+    text: string;
+    limit?: number;
+    scoreThreshold?: number | undefined;
+    filter?: Record<string, unknown> | undefined;
+  }): Promise<RetrievalResult[]>;
 };
 
 export interface SearchCodebaseInput {
@@ -736,6 +743,25 @@ export async function searchCodebaseHandler(
     if (clampedHops > 0) {
       const hierarchyResults = await expandHierarchy(engine, results, clampedHops);
       results = [...results, ...hierarchyResults];
+    }
+    // T137: Interface implementation expansion: find implementations for interface results
+    if (clampedHops > 0 && engine.searchWithInterfaceExpansion) {
+      const seenIds = new Set(results.map((r) => r.chunkId));
+      const interfaceResults = results.filter((r) => r.chunkType === 'interface');
+      if (interfaceResults.length > 0) {
+        const expandedWithImpls = await engine.searchWithInterfaceExpansion({
+          text: input.query,
+          limit: input.limit ?? 10,
+          scoreThreshold: input.score_threshold,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        });
+        for (const impl of expandedWithImpls) {
+          if (!seenIds.has(impl.chunkId)) {
+            seenIds.add(impl.chunkId);
+            results.push(impl);
+          }
+        }
+      }
     }
     // Adjacent chunk expansion: auto-expand context for top results that have chunk ordering metadata
     if (engine.getAdjacentChunks && clampedHops > 0) {

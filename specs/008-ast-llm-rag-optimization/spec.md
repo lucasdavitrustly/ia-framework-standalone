@@ -92,6 +92,24 @@ After re-indexing with the improved pipeline, search queries return more relevan
 
 ---
 
+### User Story 6 - Retrieval Precision: Test Filtering and Interface Expansion (Priority: P1)
+
+The retrieval pipeline automatically excludes test files from search results by default, and surfaces interface implementations when an interface is found in top results. This eliminates noise from test classes and reduces the number of follow-up searches needed to trace implementation flows.
+
+**Why this priority**: Real-world evaluation shows ~40% of search tool calls are wasted due to (1) test classes occupying result slots meant for production code, and (2) interfaces appearing without their implementations, forcing multiple follow-up searches.
+
+**Independent Test**: Can be tested by searching for "EntryService createEntry" and verifying that (a) no test classes appear in results by default, (b) `EntryServiceImpl` appears alongside the `EntryService` interface, and (c) searching "tests for EntryService" does return test classes.
+
+**Acceptance Scenarios**:
+
+1. **Given** a search query "how is Entry created", **When** searched with default filters, **Then** results do NOT include test classes (`EntryServiceImplTest`, `EntryHelper`, `FakeEntryRepository`) — only production code.
+2. **Given** a search query containing "test" or "spec" keywords (e.g., "tests for EntryService", "how is X tested"), **When** searched, **Then** test files ARE included in results with optional boost.
+3. **Given** a search result containing an interface (`EntryService` with `stereotype: 'interface'`), **When** the result is returned, **Then** the retrieval pipeline automatically expands via dependency edges to include direct implementations (`EntryServiceImpl`) in the result set.
+4. **Given** a file under `src/test/` with naming patterns like `Fake*`, `Mock*`, or `*Helper`, **When** indexed, **Then** it is classified with `stereotype: 'test'` regardless of whether it has `@Test` annotations.
+5. **Given** the default test exclusion filter is active, **When** a user explicitly passes `stereotype: 'test'` as a filter parameter, **Then** the exclusion is overridden and only test files are returned.
+
+---
+
 ### Edge Cases
 
 - What happens when a file is too large for the LLM context window during enrichment? (Group by class using AST metadata — send class signature + imports + method bodies per group)
@@ -507,8 +525,10 @@ codebase context during AI-assisted development:
   Parameters: `query` (required), `limit` (default 10), `score_threshold` (default 0.5),
   `expand_hops` (0=no expansion, 1=direct imports, 2=transitive, default 2),
   `repo`, `stereotype`, `archLayer`, `module`, `language` (all optional filters)
-- `get_file` — Retrieve full file content by relative path. Falls back to
-  semantic search if path not found. Use when you need full context of a file.
+- `get_file` — Retrieve file content by relative path. Supports optional `name` filter
+  (returns only matching function/class chunks) and `startLine`/`endLine` range filter
+  for targeted retrieval. Falls back to semantic search if path not found.
+  Use search_codebase results to inform targeted get_file calls.
 - `get_dependencies` — Get imports, exports, and dependency edges for a file,
   or transitive module-level dependencies.
   Parameters: `path` (file-level) OR `module` (module-level), `depth` (default 1)
@@ -526,6 +546,7 @@ codebase context during AI-assisted development:
 
 - Use `limit: 3-5` for quick lookups, `limit: 10` for deep exploration
 - Raise `score_threshold` to 0.7 for precise matches
+- Use `get_file` with `name` or `startLine`/`endLine` instead of fetching entire files
 - Use metadata filters to narrow results instead of increasing limit
 - Skip RAG for tasks that don't need codebase context (doc updates, config changes)
 ```
@@ -791,16 +812,22 @@ Query
 
 **Parameters:**
 
-| Param  | Type   | Default  | Description                                             |
-| ------ | ------ | -------- | ------------------------------------------------------- |
-| `path` | string | required | Relative file path (e.g., "src/auth/middleware.ts")     |
-| `repo` | string | —        | Filter to specific repo (for multi-repo disambiguation) |
+| Param       | Type   | Default  | Description                                                                                       |
+| ----------- | ------ | -------- | ------------------------------------------------------------------------------------------------- |
+| `path`      | string | required | Relative file path (e.g., "src/auth/middleware.ts")                                               |
+| `repo`      | string | —        | Filter to specific repo (for multi-repo disambiguation)                                           |
+| `startLine` | number | —        | Start line (1-indexed). When provided with endLine, returns only that range from the file.        |
+| `endLine`   | number | —        | End line (1-indexed). When provided with startLine, returns only that range from the file.        |
+| `name`      | string | —        | Filter to chunks matching this function/class name. Returns only matching sections from the file. |
 
 **Behavior:**
 
 1. Primary: read file from filesystem by relative path
-2. Fallback: if path not found, perform semantic search to find similar/matching files
-3. Returns: full file content + indexed chunk metadata if available
+2. When `name` is provided: filter indexed chunks by name match, return only those sections
+3. When `startLine`/`endLine` provided: slice file content to the specified range
+4. When both `name` and line range provided: `name` takes precedence
+5. Fallback: if path not found, perform semantic search to find similar/matching files
+6. Returns: full or filtered file content + indexed chunk metadata if available
 
 ---
 
@@ -941,6 +968,34 @@ The MCP server's `get_file` and `search_codebase` tools define `readFileFn` clos
 | `packages/mcp-server/src/tools/search-codebase.ts`      | Extend `readFileFn` signature to `(rel, start, end, repoId?) => Promise<string>`; forward `results[i]!.repoId` as 4th arg                           |
 | `packages/mcp-server/src/tools/get-file.test.ts`        | Fix assertion for new signature; add multi-repo forwarding test                                                                                     |
 | `packages/mcp-server/src/tools/search-codebase.test.ts` | Fix assertion for new signature; add multi-repo forwarding test                                                                                     |
+
+---
+
+### User Story 10 - Token-Efficient `get_file` with Line-Range and Name Filtering (Priority: P2)
+
+The `get_file` MCP tool supports optional `startLine`/`endLine` and `name` parameters that allow callers to retrieve only specific portions of a file instead of the entire contents. This reduces token usage by ~70-80% in typical workflows where the LLM already knows (from `search_codebase` results) which function or line range it needs.
+
+**Why this priority**: Real-world evaluation shows that after `search_codebase` returns results with exact line ranges, LLMs call `get_file` for additional context — but receive the entire file. For a 350-line file where only 65 lines are relevant, this wastes ~285 lines (~1100 tokens) of context window per call. Over a typical exploration session (3-5 `get_file` calls), this accumulates to 3000-5000 wasted tokens.
+
+**Root cause**: `get_file` currently accepts only a `path` parameter and always returns the full file content from the filesystem read. The indexed chunk metadata (name, startLine, endLine) is available but not leverageable by the caller to narrow the response.
+
+**Independent Test**: Call `get_file` with `path: "src/entry/Entry.java"` and `name: "create"`, verify only the `create` method chunk(s) are returned. Call with `startLine: 166, endLine: 231`, verify only those lines are returned.
+
+**Acceptance Scenarios**:
+
+1. **Given** a call to `get_file` with `path` and `startLine`/`endLine` parameters, **When** the file is read from disk, **Then** only the specified line range is returned in the response content (1-indexed, inclusive).
+2. **Given** a call to `get_file` with `path` and `name` parameter (e.g., `"create"`), **When** chunks are retrieved from the index, **Then** only chunks whose `name` field matches (case-insensitive contains) are included in the response, and only those line ranges are read from disk.
+3. **Given** a call to `get_file` with `name` that matches multiple chunks (e.g., two overloaded `create` methods), **When** results are returned, **Then** all matching chunks are included, each with their own line range.
+4. **Given** a call to `get_file` with `name` that matches no chunks, **When** the response is generated, **Then** the tool returns the full file content (existing behavior) with a note indicating no chunk matched the filter.
+5. **Given** a call to `get_file` with only `path` (no `startLine`/`endLine` or `name`), **When** the response is generated, **Then** existing behavior is preserved — full file content is returned.
+6. **Given** a call to `get_file` with both `name` and `startLine`/`endLine`, **When** the response is generated, **Then** `name` takes precedence (semantic filter is more useful than arbitrary line ranges).
+
+**Files changed:**
+
+| File                                             | Change                                                                                                                                  |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/mcp-server/src/tools/get-file.ts`      | Add `startLine`, `endLine`, `name` to `GetFileInput` and tool schema; implement line-range slicing and name-based chunk filtering logic |
+| `packages/mcp-server/src/tools/get-file.test.ts` | Add tests for line-range filtering, name filtering, combined params, no-match fallback                                                  |
 
 ---
 

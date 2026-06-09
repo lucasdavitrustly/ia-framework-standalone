@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyQuery, QueryType } from './query-classifier.js';
+import { classifyQuery, detectTestIntent, QueryType } from './query-classifier.js';
 
 /**
  * T055: Tests for query classifier.
@@ -82,6 +82,69 @@ describe('classifyQuery', () => {
 
     it('handles single lowercase word as semantic', () => {
       expect(classifyQuery('payment')).toBe('semantic' satisfies QueryType);
+    });
+  });
+});
+
+// T128: Test intent detection
+describe('detectTestIntent', () => {
+  describe('queries with test intent', () => {
+    it('detects "tests for EntryService" as test intent', () => {
+      expect(detectTestIntent('tests for EntryService')).toBe(true);
+    });
+
+    it('detects "unit test for payment processing" as test intent', () => {
+      expect(detectTestIntent('unit test for payment processing')).toBe(true);
+    });
+
+    it('detects "how is EntryService tested" as test intent', () => {
+      expect(detectTestIntent('how is EntryService tested')).toBe(true);
+    });
+
+    it('detects "test cases for retry logic" as test intent', () => {
+      expect(detectTestIntent('test cases for retry logic')).toBe(true);
+    });
+
+    it('detects "spec for PaymentController" as test intent', () => {
+      expect(detectTestIntent('spec for PaymentController')).toBe(true);
+    });
+
+    it('detects "test coverage for module" as test intent', () => {
+      expect(detectTestIntent('test coverage for module')).toBe(true);
+    });
+
+    it('detects "find test helpers for entry" as test intent', () => {
+      expect(detectTestIntent('find test helpers for entry')).toBe(true);
+    });
+
+    it('detects "mock implementation of gateway" as test intent', () => {
+      expect(detectTestIntent('mock implementation of gateway')).toBe(true);
+    });
+  });
+
+  describe('queries without test intent', () => {
+    it('does NOT detect "how is Entry created" as test intent', () => {
+      expect(detectTestIntent('how is Entry created')).toBe(false);
+    });
+
+    it('does NOT detect "payment retry logic" as test intent', () => {
+      expect(detectTestIntent('payment retry logic')).toBe(false);
+    });
+
+    it('does NOT detect "EntryService.createEntry" as test intent', () => {
+      expect(detectTestIntent('EntryService.createEntry')).toBe(false);
+    });
+
+    it('does NOT detect "where is the latest version" as test intent', () => {
+      expect(detectTestIntent('where is the latest version')).toBe(false);
+    });
+
+    it('does NOT detect "attestation service" as test intent (contains "test" substring)', () => {
+      expect(detectTestIntent('attestation service')).toBe(false);
+    });
+
+    it('does NOT detect "contest results handler" as test intent (contains "test" substring)', () => {
+      expect(detectTestIntent('contest results handler')).toBe(false);
     });
   });
 });

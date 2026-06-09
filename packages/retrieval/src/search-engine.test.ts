@@ -1105,3 +1105,210 @@ describe('Phase 12 (US7): scoreType tagging', () => {
     expect(results[0]?.scoreType).toBe('rrf');
   });
 });
+
+// T129-T130: Test exclusion filter
+describe('Phase 16 (US6): test file exclusion', () => {
+  test('T129: search() applies must_not stereotype=test filter by default for non-test queries', async () => {
+    const config = makeConfig();
+    const engine = new SearchEngine(config);
+
+    await engine.search({ text: 'how is Entry created', scoreThreshold: 0 });
+
+    const calls = getMockSearch(config).mock.calls as Array<
+      [number[], { filter?: Record<string, unknown> }]
+    >;
+    // At least one call should have the must_not filter
+    const filterUsed = calls[0]?.[1]?.filter as Record<string, unknown> | undefined;
+    expect(filterUsed).toBeDefined();
+    expect(filterUsed!.must_not).toEqual([{ key: 'stereotype', match: { value: 'test' } }]);
+  });
+
+  test('T130: search() does NOT apply test exclusion filter when query has test intent', async () => {
+    const config = makeConfig();
+    const engine = new SearchEngine(config);
+
+    await engine.search({ text: 'tests for EntryService', scoreThreshold: 0 });
+
+    const calls = getMockSearch(config).mock.calls as Array<
+      [number[], { filter?: Record<string, unknown> }]
+    >;
+    const filterUsed = calls[0]?.[1]?.filter as Record<string, unknown> | undefined;
+    // Should NOT have must_not for test stereotype
+    if (filterUsed) {
+      expect(filterUsed.must_not).toBeUndefined();
+    }
+  });
+
+  test('T130: search() does NOT apply test exclusion when user explicitly passes stereotype filter', async () => {
+    const config = makeConfig();
+    const engine = new SearchEngine(config);
+
+    // User explicitly requests stereotype=test (inclusion filter)
+    await engine.search({
+      text: 'entry helper',
+      scoreThreshold: 0,
+      filter: { must: [{ key: 'stereotype', match: { value: 'test' } }] },
+    });
+
+    const calls = getMockSearch(config).mock.calls as Array<
+      [number[], { filter?: Record<string, unknown> }]
+    >;
+    const filterUsed = calls[0]?.[1]?.filter as Record<string, unknown> | undefined;
+    // Should preserve user's filter and NOT add must_not
+    expect(filterUsed).toBeDefined();
+    expect(filterUsed!.must_not).toBeUndefined();
+    expect(filterUsed!.must).toEqual([{ key: 'stereotype', match: { value: 'test' } }]);
+  });
+});
+
+// T131-T132: Interface expansion
+describe('Phase 16 (US6): interface implementation expansion', () => {
+  test('T131: expandInterfaceResults() finds implementations for interface results via dependency edges', async () => {
+    const mockSearch = vi.fn();
+    const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+
+    // First call: base search returns an interface
+    mockSearch.mockResolvedValueOnce([
+      {
+        id: 'qdrant-1',
+        score: 0.85,
+        vectorName: 'semantic',
+        payload: {
+          chunkId: 'iface-chunk',
+          relativePath: 'src/main/java/com/example/EntryService.java',
+          language: 'java',
+          chunkType: 'interface',
+          name: 'EntryService',
+          content: 'public interface EntryService {}',
+          startLine: 1,
+          endLine: 10,
+          imports: [],
+          exports: ['EntryService'],
+          indexedAt: '2026-06-01T00:00:00Z',
+        },
+      },
+    ]);
+
+    // Second call: interface expansion finds implementation
+    mockSearch.mockResolvedValueOnce([
+      {
+        id: 'qdrant-2',
+        score: 0.0,
+        vectorName: 'semantic',
+        payload: {
+          chunkId: 'impl-chunk',
+          relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
+          language: 'java',
+          chunkType: 'class',
+          name: 'EntryServiceImpl',
+          content: 'public class EntryServiceImpl implements EntryService {}',
+          startLine: 1,
+          endLine: 50,
+          imports: ['com.example.EntryService'],
+          exports: ['EntryServiceImpl'],
+          indexedAt: '2026-06-01T00:00:00Z',
+          dependencyEdges: [
+            { targetPath: 'src/main/java/com/example/EntryService.java', relation: 'implements' },
+          ],
+        },
+      },
+    ]);
+
+    const config: SearchEngineConfig = {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch },
+    };
+    const engine = new SearchEngine(config);
+
+    const results = await engine.searchWithInterfaceExpansion({
+      text: 'EntryService createEntry',
+      scoreThreshold: 0,
+    });
+
+    // Should contain both the interface and its implementation
+    expect(results.some((r) => r.name === 'EntryService')).toBe(true);
+    expect(results.some((r) => r.name === 'EntryServiceImpl')).toBe(true);
+  });
+
+  test('T132: expandInterfaceResults() does NOT duplicate when implementation already in results', async () => {
+    const mockSearch = vi.fn();
+    const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+
+    // Base search returns both interface AND implementation already
+    mockSearch.mockResolvedValueOnce([
+      {
+        id: 'qdrant-1',
+        score: 0.85,
+        vectorName: 'semantic',
+        payload: {
+          chunkId: 'iface-chunk',
+          relativePath: 'src/main/java/com/example/EntryService.java',
+          language: 'java',
+          chunkType: 'interface',
+          name: 'EntryService',
+          content: 'public interface EntryService {}',
+          startLine: 1,
+          endLine: 10,
+          imports: [],
+          exports: ['EntryService'],
+          indexedAt: '2026-06-01T00:00:00Z',
+        },
+      },
+      {
+        id: 'qdrant-2',
+        score: 0.75,
+        vectorName: 'semantic',
+        payload: {
+          chunkId: 'impl-chunk',
+          relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
+          language: 'java',
+          chunkType: 'class',
+          name: 'EntryServiceImpl',
+          content: 'public class EntryServiceImpl implements EntryService {}',
+          startLine: 1,
+          endLine: 50,
+          imports: ['com.example.EntryService'],
+          exports: ['EntryServiceImpl'],
+          indexedAt: '2026-06-01T00:00:00Z',
+        },
+      },
+    ]);
+
+    // Expansion search returns same implementation (already in base results)
+    mockSearch.mockResolvedValueOnce([
+      {
+        id: 'qdrant-2',
+        score: 0.0,
+        vectorName: 'semantic',
+        payload: {
+          chunkId: 'impl-chunk',
+          relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
+          language: 'java',
+          chunkType: 'class',
+          name: 'EntryServiceImpl',
+          content: 'public class EntryServiceImpl implements EntryService {}',
+          startLine: 1,
+          endLine: 50,
+          imports: ['com.example.EntryService'],
+          exports: ['EntryServiceImpl'],
+          indexedAt: '2026-06-01T00:00:00Z',
+        },
+      },
+    ]);
+
+    const config: SearchEngineConfig = {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      vectorStore: { search: mockSearch },
+    };
+    const engine = new SearchEngine(config);
+
+    const results = await engine.searchWithInterfaceExpansion({
+      text: 'EntryService',
+      scoreThreshold: 0,
+    });
+
+    // Should NOT have duplicates
+    const implResults = results.filter((r) => r.name === 'EntryServiceImpl');
+    expect(implResults).toHaveLength(1);
+  });
+});

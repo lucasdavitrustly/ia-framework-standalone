@@ -14,6 +14,41 @@
 export type QueryType = 'semantic' | 'symbol' | 'keyword' | 'mixed';
 
 /**
+ * T128: Detect if a query has test intent — i.e., the user is explicitly
+ * asking about tests, test coverage, mocks, or test helpers.
+ *
+ * When test intent is detected, the search pipeline should NOT exclude
+ * test files from results (and may optionally boost them).
+ *
+ * Uses word-boundary matching to avoid false positives on substrings
+ * like "attestation", "contest", "latest".
+ */
+export function detectTestIntent(query: string): boolean {
+  const normalized = query.toLowerCase();
+
+  // Word-boundary test-intent patterns
+  const TEST_INTENT_PATTERNS = [
+    /\btest\b/,
+    /\btests\b/,
+    /\btested\b/,
+    /\btesting\b/,
+    /\bspec\b/,
+    /\bspecs\b/,
+    /\bcoverage\b/,
+    /\bunit test\b/,
+    /\btest case/,
+    /\btest helper/,
+    /\bmock\b/,
+    /\bmocks\b/,
+    /\bstub\b/,
+    /\bfake\b/,
+    /\bfixture/,
+  ];
+
+  return TEST_INTENT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/**
  * Classify a search query string into a QueryType.
  *
  * @param query - The raw search query string

@@ -72,13 +72,23 @@ export function createMcpServer(config: McpServerConfig): McpServer {
         }
       : undefined;
 
-  // Filesystem read closure for get_file (full file content)
+  // Filesystem read closure for get_file (full file or line-range content)
   const getFileReadFileFn =
     repoPathMap.size > 0
-      ? async (filePath: string, repo?: string): Promise<string> => {
+      ? async (
+          filePath: string,
+          repo?: string,
+          startLine?: number,
+          endLine?: number,
+        ): Promise<string> => {
           const root = resolveRoot(repo);
           if (!root) throw new Error('No project root configured for filesystem read');
-          return readFile(join(root, filePath), 'utf-8');
+          const raw = await readFile(join(root, filePath), 'utf-8');
+          if (startLine !== undefined && endLine !== undefined) {
+            const lines = raw.split('\n');
+            return lines.slice(startLine - 1, endLine).join('\n');
+          }
+          return raw;
         }
       : undefined;
 
@@ -91,7 +101,9 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     defaultScoreThreshold: 0.4,
     ...(searchReadFileFn ? { readFileFn: searchReadFileFn } : {}),
   });
-  registerGetFileTool(server, config.searchEngine,
+  registerGetFileTool(
+    server,
+    config.searchEngine,
     getFileReadFileFn ? { readFileFn: getFileReadFileFn } : undefined,
   );
   registerGetDependenciesTool(server, config.searchEngine);

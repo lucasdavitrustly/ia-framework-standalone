@@ -174,6 +174,37 @@ const NAME_RULES: Array<{
 
 // ── Core classify function ────────────────────────────────────────────────────
 
+/** Test source path patterns — files under these directories are test source sets. */
+const TEST_PATH_PATTERNS = ['/test/', '/tests/', '/__tests__/'];
+
+/** Naming patterns that indicate test-support code when found in test source paths. */
+const TEST_HELPER_PREFIXES = ['Fake', 'Mock', 'Stub', 'Dummy'];
+const TEST_HELPER_SUFFIXES = ['Helper', 'Fixture', 'Builder', 'Factory', 'Stub', 'Dummy', 'Mock'];
+
+/**
+ * Determine if a chunk is in a test source set based on its file path.
+ */
+function isInTestSourcePath(chunk: CodeChunk): boolean {
+  const path = chunk.relativePath ?? chunk.filePath ?? '';
+  return (
+    TEST_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
+    path.startsWith('test/') ||
+    path.startsWith('tests/') ||
+    path.startsWith('__tests__/')
+  );
+}
+
+/**
+ * Determine if a chunk name matches test-support naming patterns.
+ * Only applies when the file is in a test source path.
+ */
+function isTestHelperByName(name: string): boolean {
+  if (!name) return false;
+  if (TEST_HELPER_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (TEST_HELPER_SUFFIXES.some((suffix) => name.endsWith(suffix))) return true;
+  return false;
+}
+
 /**
  * Classify a code chunk based on annotations (primary) and name suffix (fallback).
  * Returns stereotype='unknown' when no positive evidence is found.
@@ -197,13 +228,18 @@ export function classify(chunk: CodeChunk): ClassificationResult {
     }
   }
 
-  // 2. @Component fallback: classify as service (generic component)
+  // 2. Path-based test detection: files in test source sets with test-helper naming
+  if (isInTestSourcePath(chunk) && isTestHelperByName(name)) {
+    return { stereotype: 'test' };
+  }
+
+  // 3. @Component fallback: classify as service (generic component)
   const hasComponent = annotations.some((a) => a.replace(/\(.*$/, '').trim() === '@Component');
   if (hasComponent) {
     return { stereotype: 'service', archLayer: 'service' };
   }
 
-  // 3. Name-suffix fallback (only when chunk is a class-level construct)
+  // 4. Name-suffix fallback (only when chunk is a class-level construct)
   if (name) {
     for (const rule of NAME_RULES) {
       for (const suffix of rule.suffixes) {

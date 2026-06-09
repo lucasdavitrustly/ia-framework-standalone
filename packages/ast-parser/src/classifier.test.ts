@@ -121,4 +121,117 @@ describe('classify', () => {
     expect(result.stereotype).toBe('client');
     expect(result.archLayer).toBe('infrastructure');
   });
+
+  // T127: Path-based test classification for helpers/fakes/mocks
+  describe('path-based test classification', () => {
+    it('classifies Fake* class in /test/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'FakeEntryRepository',
+        filePath: '/repo/src/test/java/com/example/FakeEntryRepository.java',
+        relativePath: 'src/test/java/com/example/FakeEntryRepository.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('classifies Mock* class in /test/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'MockPaymentService',
+        filePath: '/repo/src/test/java/com/example/MockPaymentService.java',
+        relativePath: 'src/test/java/com/example/MockPaymentService.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('classifies *Helper class in /test/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'EntryHelper',
+        filePath: '/repo/src/test/java/com/example/EntryHelper.java',
+        relativePath: 'src/test/java/com/example/EntryHelper.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('classifies *Fixture class in /test/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'PaymentFixture',
+        filePath: '/repo/src/test/java/com/example/PaymentFixture.java',
+        relativePath: 'src/test/java/com/example/PaymentFixture.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('classifies *Stub class in /test/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'PaymentGatewayStub',
+        filePath: '/repo/src/test/java/com/example/PaymentGatewayStub.java',
+        relativePath: 'src/test/java/com/example/PaymentGatewayStub.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('classifies *Builder class in /test/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'EntryBuilder',
+        filePath: '/repo/src/test/java/com/example/shared/EntryBuilder.java',
+        relativePath: 'src/test/java/com/example/shared/EntryBuilder.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('classifies file in /tests/ path as stereotype=test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'FakeRepository',
+        filePath: '/repo/tests/helpers/FakeRepository.ts',
+        relativePath: 'tests/helpers/FakeRepository.ts',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).toBe('test');
+    });
+
+    it('does NOT classify Fake* class in production path as test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'FakeDetector',
+        filePath: '/repo/src/main/java/com/example/FakeDetector.java',
+        relativePath: 'src/main/java/com/example/FakeDetector.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).not.toBe('test');
+    });
+
+    it('does NOT classify *Helper class in production path as test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'StringHelper',
+        filePath: '/repo/src/main/java/com/example/StringHelper.java',
+        relativePath: 'src/main/java/com/example/StringHelper.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).not.toBe('test');
+    });
+
+    it('does NOT classify *Builder in production path as test', () => {
+      const chunk = makeChunk({
+        annotations: [],
+        name: 'EntryBuilder',
+        filePath: '/repo/src/main/java/com/example/EntryBuilder.java',
+        relativePath: 'src/main/java/com/example/EntryBuilder.java',
+      });
+      const result = classify(chunk);
+      expect(result.stereotype).not.toBe('test');
+    });
+  });
 });

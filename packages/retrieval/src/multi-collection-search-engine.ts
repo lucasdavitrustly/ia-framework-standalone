@@ -186,4 +186,20 @@ export class MultiCollectionSearchEngine {
     // Sort by startLine for natural file reading order
     return combined.sort((a, b) => a.startLine - b.startLine);
   }
+
+  /**
+   * Search with interface implementation expansion.
+   *
+   * Delegates to the AST engine since interfaces and `implements` dependency edges
+   * are only stored in AST collections (LLM chunks don't have chunkType or edges).
+   * Falls back to plain multi-collection search() if no AST engine is available.
+   */
+  async searchWithInterfaceExpansion(query: RetrievalQuery): Promise<RetrievalResult[]> {
+    const astEngine = this.engines.find((e) => e.name === 'ast');
+    if (!astEngine) {
+      return this.search(query);
+    }
+    const results = await astEngine.engine.searchWithInterfaceExpansion(query);
+    return results.map((r) => ({ ...r, source: 'ast' }));
+  }
 }

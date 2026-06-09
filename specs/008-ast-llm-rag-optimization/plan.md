@@ -21,8 +21,10 @@
 | Phase 14 — Thin-Class Enrichment      | T110–T123 | ✅ Complete                            |
 | Phase 15 — Enrichment Parallelization | T124–T126 | ✅ Complete                            |
 | Phase 8 — Benchmark / E2E             | T076–T077 | ⏳ Pending (requires live environment) |
+| Phase 16 — Retrieval Precision        | T127–T138 | ✅ Complete                            |
+| Phase 17 — Token-Efficient get_file   | T139–T147 | ✅ Complete                            |
 
-**Remaining**: T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) require a running Qdrant instance + real project and have not been automated. Phase 14 (T110–T123) addresses retrieval precision gaps for thin delegation classes discovered during real-world evaluation. Phase 15 (T124–T126) fixes the enrichment bottleneck: batch processing was sequential despite the concurrency config being available.
+**Remaining**: T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) require a running Qdrant instance + real project and have not been automated. Phase 14 (T110–T123) addresses retrieval precision gaps for thin delegation classes discovered during real-world evaluation. Phase 15 (T124–T126) fixes the enrichment bottleneck: batch processing was sequential despite the concurrency config being available. Phase 16 (T127–T138) implements retrieval precision improvements: test class filtering by default and interface implementation expansion. Phase 17 (T139–T147) adds line-range and name-based filtering to `get_file` to reduce token waste by ~70-80% in typical LLM exploration sessions.
 
 ## Summary
 
@@ -150,12 +152,70 @@ The following gaps were discovered during live testing against a real Java proje
 - Solution: Extract structured annotation values (`annotationMeta`) during AST parsing; use them to synthesize a semantically rich embedding input in the fallback path — zero LLM dependency. Also enhances the LLM enrichment prompt with annotation context for controller stereotypes.
 - Scope: Java `@Operation`/`@RequestMapping`/`@XMapping`/`@Tag` + TypeScript `@Controller`/`@Get`/`@Post`/`@Put`/`@Delete`/`@Patch` decorators
 
+**Phase 16 — Retrieval Precision** (pending):
+
+- **Interface implementation surfacing**: Searching for `EntryService` (an interface) now
+  surfaces `EntryServiceImpl` (its implementation) automatically. The retrieval pipeline expands
+  results to include implementations of queried interfaces via 1-hop `implements`/`extends`
+  traversal in `search-engine.ts` and `search-codebase.ts`.
+
+- **Test class filtering by default**: Test files (classified as `stereotype: 'test'`) are now
+  excluded from search results by default, preventing test helpers (e.g., `EntryHelper`), fakes
+  (e.g., `FakeEntryRepository`), and other test-support infrastructure from diluting precision.
+  Classification covers path-based detection (`/test/`, `/tests/`) combined with naming patterns
+  (`Fake*`, `Mock*`, `*Helper`, `*Fixture`, `*Builder`, `*Stub`). A `must_not` filter is applied
+  automatically. When the query classifier detects test intent (keywords like "test", "spec",
+  "coverage", "how is X tested", "unit test for"), the exclusion filter is removed.
+
+- **Estimated impact**: ~40% reduction in tool calls for architectural queries. Test filtering
+  frees up 3-5 result slots per search that were previously occupied by test noise. Interface
+  expansion eliminates 2-3 follow-up searches needed to find implementations.
+
+**Phase 16 — Retrieval Precision** (complete):
+
+- **Test class filtering**: `applyTestExclusionFilter()` in `search-engine.ts` injects
+  `must_not: [{ key: 'stereotype', match: { value: 'test' } }]` by default. `detectTestIntent()`
+  in `query-classifier.ts` detects test-related keywords ("test", "spec", "coverage", "mock",
+  "how is X tested") and bypasses the exclusion. Classifier in `ast-parser/src/classifier.ts`
+  assigns `stereotype: 'test'` to files in `/test/`/`/tests/` paths with naming patterns
+  (`Fake*`, `Mock*`, `*Helper`, `*Fixture`, `*Builder`, `*Stub`).
+
+- **Interface implementation expansion**: `scrollForImplementations()` and
+  `searchWithInterfaceExpansion()` wired into MCP `search-codebase` tool. When a result has
+  `stereotype: 'interface'` or `chunkType: 'interface'`, hierarchy expansion walks DOWN via
+  dependency edges to find implementations (limited to first 5 names). Deduplicates by chunkId.
+
+- Scope: T127–T138 (tests + implementation + build verification)
+
+**Phase 17 — Token-Efficient `get_file`** (complete):
+
+- **Problem discovered during real-world evaluation**: After `search_codebase` returns results with
+  exact line ranges (e.g., `Entry.java:166-231 (create)`), LLMs call `get_file` to get more context
+  but receive the entire file (~350 lines) when only ~65 lines are needed. Over a typical exploration
+  session (3-5 `get_file` calls), this wastes 3000-5000 tokens of context window. The `get_file`
+  tool has no mechanism for callers to narrow the response.
+
+- **Solution**: Add optional `startLine`/`endLine` and `name` parameters to `get_file`. When
+  `startLine`/`endLine` are provided, only that range is read from disk. When `name` is provided,
+  indexed chunk metadata is used to identify matching chunks and only those sections are returned.
+  `name` takes precedence when both are provided (semantic filter is more useful than arbitrary
+  line ranges). Existing behavior preserved when no filter params are given.
+
+- **Estimated impact**: ~70-80% token reduction per `get_file` call when filters are used.
+  For the Entry.java example: 65 lines returned vs 350 lines (5.4x reduction). Over a session,
+  saves 3000-5000 tokens — roughly equivalent to eliminating 1-2 tool calls.
+
+- Scope: T139–T146 (tests + implementation + build verification)
+
 ## Complexity Tracking
 
-| Addition                      | Why Needed                                                                                              | Simpler Alternative Rejected Because                                                    |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| 3 vectors instead of 2        | Each serves distinct retrieval need (business, symbol, keyword). Removes need for separate hybrid tool. | Single vector can't optimize for all query types — proven by current precision issues   |
-| LLM enrichment pipeline       | Enables semantic search on business context (core value prop). Gracefully degrades.                     | AST-only metadata lacks business meaning descriptions                                   |
-| 4 new language parsers        | Proto/YAML/XML/SQL critical for understanding service architecture                                      | Ignoring config/contract files misses architectural relationships                       |
-| `EnrichmentProgress` callback | Makes 300+ sequential Ollama calls visible; critical UX for long-running indexing jobs                  | Static spinner gives no feedback during multi-minute enrichment runs                    |
-| `annotationMeta` extraction   | Enables precise retrieval of thin delegation classes (controllers, facades) without LLM dependency      | Raw annotation text in sparse vector lacks semantic weight for natural language queries |
+| Addition                      | Why Needed                                                                                              | Simpler Alternative Rejected Because                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 3 vectors instead of 2        | Each serves distinct retrieval need (business, symbol, keyword). Removes need for separate hybrid tool. | Single vector can't optimize for all query types — proven by current precision issues         |
+| LLM enrichment pipeline       | Enables semantic search on business context (core value prop). Gracefully degrades.                     | AST-only metadata lacks business meaning descriptions                                         |
+| 4 new language parsers        | Proto/YAML/XML/SQL critical for understanding service architecture                                      | Ignoring config/contract files misses architectural relationships                             |
+| `EnrichmentProgress` callback | Makes 300+ sequential Ollama calls visible; critical UX for long-running indexing jobs                  | Static spinner gives no feedback during multi-minute enrichment runs                          |
+| `annotationMeta` extraction   | Enables precise retrieval of thin delegation classes (controllers, facades) without LLM dependency      | Raw annotation text in sparse vector lacks semantic weight for natural language queries       |
+| Test class default exclusion  | Eliminates 3-5 test results per query that dilute precision for production code searches                | Manual `stereotype` filter requires caller awareness; default should optimize for common case |
+| Interface impl expansion      | Surfaces implementations when searching for interfaces — eliminates 2-3 follow-up searches              | Requiring users to search by impl class name defeats the purpose of semantic search           |
+| `get_file` line-range + name  | Reduces token waste by 70-80% per call — LLMs already know what they need from search results           | Returning full files always wastes context window on irrelevant code                          |

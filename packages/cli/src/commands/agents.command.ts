@@ -21,9 +21,13 @@ codebase context during AI-assisted development:
   \`language\` — optional filters for precise retrieval.
 - \`get_file\` — Retrieve a file's content and indexed chunk metadata by path.
   Reads live content from the filesystem first; falls back to stored Qdrant
-  content if the file is not accessible. Also returns chunk-level metadata
-  (imports, exports, dependency edges).
-  Parameters: \`path\` (required).
+  content if the file is not accessible. Supports optional \`name\` filter
+  (returns only matching function/class chunks) and \`startLine\`/\`endLine\`
+  range filter for targeted retrieval — use search_codebase results to
+  inform targeted get_file calls (e.g., after finding \`Entry.java:166-231 (create)\`,
+  call \`get_file\` with \`name: "create"\` or \`startLine: 166, endLine: 231\`).
+  Parameters: \`path\` (required), \`name\` (optional, case-insensitive chunk filter),
+  \`startLine\`/\`endLine\` (optional, 1-indexed line range).
 - \`get_dependencies\` — Get dependency graph for a file or module.
   Supports \`path\` (file-level) OR \`module\` (module-level with BFS traversal).
   Returns \`imports\`, \`exports\`, and full \`dependencyEdges\` for graph navigation.
@@ -49,6 +53,7 @@ codebase context during AI-assisted development:
 
 - Use \`limit: 3-5\` for quick lookups, \`limit: 10\` for deep exploration
 - Raise \`score_threshold\` to 0.7 for precise matches
+- Use \`get_file\` with \`name\` or \`startLine\`/\`endLine\` instead of fetching entire files
 - Skip RAG for tasks that don't need codebase context (doc updates, config changes)
 - Top-5 results include live code; results 6-10 are metadata-only to save tokens`;
 

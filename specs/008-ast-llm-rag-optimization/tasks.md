@@ -524,3 +524,83 @@ Instead of: `java class EntryController <96 lines of raw imports + boilerplate c
 - [x] T126 [Perf] Run enricher test suite (`pnpm vitest packages/indexer/src/enrichment/enricher.test.ts`) and fix any failures.
 
 **Checkpoint**: Enrichment phase processes N batches concurrently (N = `enrichment.concurrency`, default 3). For 300 batches, expected wall-time reduction is ~3x. All existing enricher tests pass.
+
+---
+
+## Phase 16: Retrieval Precision — Test Filtering & Interface Expansion
+
+**Goal**: Improve retrieval precision by (1) excluding test classes from search results by default and (2) automatically surfacing interface implementations via dependency edge expansion. Estimated ~40% reduction in tool calls for architectural queries.
+
+**Root cause**: Test files classified as `stereotype: 'test'` occupy 3-5 result slots per search, diluting production code results. Interface searches (e.g., `EntryService`) return only the interface without its implementation (`EntryServiceImpl`), forcing multiple follow-up searches.
+
+### Tests for Phase 16 (Test Filtering)
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T127 [US6] Test that `classify()` assigns `stereotype: 'test'` to files with path containing `/test/` or `/tests/` AND naming patterns `Fake*`, `Mock*`, `*Helper`, `*Fixture`, `*Builder` (when in test source sets) — in `packages/ast-parser/src/classifier.test.ts`
+
+- [x] T128 [US6] Test that `classifyQueryIntent()` in `packages/retrieval/src/query-classifier.ts` detects test intent: queries containing "test", "spec", "coverage", "how is X tested", "unit test for", "test cases for" return `{ testIntent: true }`. Non-test queries return `{ testIntent: false }`.
+
+- [x] T129 [US6] Test that `search()` in `packages/retrieval/src/search-engine.ts` applies `must_not: [{ key: 'stereotype', match: { value: 'test' } }]` filter by default when `testIntent` is false. Verify via mock Qdrant client that the filter is passed.
+
+- [x] T130 [US6] Test that `search()` does NOT apply the test exclusion filter when query has `testIntent: true` or when user explicitly passes `stereotype: 'test'` as a filter parameter.
+
+### Tests for Phase 16 (Interface Expansion)
+
+- [x] T131 [US6] Test that `expandInterfaceResults()` in `packages/retrieval/src/search-engine.ts` detects interface results (via `stereotype: 'interface'` or dependency edges with `implements` type) and fetches implementations via 1-hop dependency traversal. Verify that implementations are appended to results.
+
+- [x] T132 [US6] Test that interface expansion does NOT trigger when the result already contains the implementation, avoiding duplicates.
+
+### Implementation for Phase 16
+
+- [x] T133 [US6] Expand test classification in `packages/ast-parser/src/classifier.ts`: add path-based detection (`/test/`, `/tests/`) combined with naming patterns (`Fake*`, `Mock*`, `*Helper`, `*Fixture`, `*Builder`, `*Stub`, `*Dummy`) to assign `stereotype: 'test'`. Ensure regular production classes with these patterns outside test source sets are NOT affected.
+
+- [x] T134 [US6] Add `testIntent` detection to `packages/retrieval/src/query-classifier.ts`: scan query for test-related keywords/phrases ("test", "spec", "coverage", "how is X tested", "unit test for", "test cases", "mock", "verify"). Export as part of `QueryIntelligence` result.
+
+- [x] T135 [US6] Modify `search()` in `packages/retrieval/src/search-engine.ts`: when `testIntent` is false AND no explicit `stereotype` filter is provided by the caller, inject `must_not: [{ key: 'stereotype', match: { value: 'test' } }]` into the Qdrant filter. When `testIntent` is true, skip the exclusion.
+
+- [x] T136 [US6] Implement `expandInterfaceResults()` in `packages/retrieval/src/search-engine.ts`: after initial search results are collected, for each result with `stereotype: 'interface'` (or with outbound `implements`/`extends` dependency edges), query Qdrant for points where `dependencyEdges` contain a matching `implements` relationship targeting that interface. Append unique implementations to the result set (deduplicate by `chunkId`).
+
+- [x] T137 [US6] Wire interface expansion into the MCP `search-codebase` tool in `packages/mcp-server/src/tools/search-codebase.ts`: pass a new `expandInterfaces: true` default option to the search engine. Allow MCP callers to disable via parameter if needed.
+
+- [x] T138 [US6] Run full test suite (`pnpm test`) and fix any failures. Run `pnpm build` and fix any type errors.
+
+**Checkpoint**: Searching "EntryService createEntry" returns only production code (no test classes) and includes `EntryServiceImpl` via interface expansion. Searching "tests for EntryService" returns test classes. ~40% fewer tool calls needed for architectural queries.
+
+---
+
+## Phase 17: Token-Efficient `get_file` — Line-Range and Name Filtering
+
+**Goal**: Add optional `startLine`/`endLine` and `name` parameters to the `get_file` MCP tool, enabling callers to retrieve only specific portions of a file. Reduces token usage by ~70-80% in typical LLM exploration workflows where the agent already knows (from `search_codebase` results) which function or line range it needs.
+
+**Root cause**: After `search_codebase` returns results with exact line ranges (e.g., `Entry.java:166-231 (create)`), LLMs call `get_file` for full context but receive the entire file (~350 lines) when only ~65 lines are relevant. The `get_file` tool accepts only a `path` parameter with no filtering mechanism.
+
+### Tests for Phase 17
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T139 [P] [US10] Test that `getFileHandler` with `startLine` and `endLine` returns only the specified line range from the file — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+- [x] T140 [P] [US10] Test that `getFileHandler` with `name` parameter filters chunks by name (case-insensitive contains match) and returns only the matching chunk content — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+- [x] T141 [P] [US10] Test that `getFileHandler` with `name` matching multiple chunks (e.g., overloaded methods) returns all matching sections, each with their own headers and line ranges — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+- [x] T142 [P] [US10] Test that `getFileHandler` with `name` that matches no chunks falls back to returning the full file content with an informational note — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+- [x] T143 [P] [US10] Test that `getFileHandler` with both `name` and `startLine`/`endLine` uses `name` as the primary filter (name takes precedence) — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+### Implementation for Phase 17
+
+- [x] T144 [US10] Extend `GetFileInput` interface and tool schema in `packages/mcp-server/src/tools/get-file.ts`: add optional `startLine` (z.number()), `endLine` (z.number()), and `name` (z.string()) parameters with appropriate descriptions.
+
+- [x] T145 [US10] Implement filtering logic in `getFileHandler` in `packages/mcp-server/src/tools/get-file.ts`:
+  - **Name filter path**: When `name` is provided, filter the `results` array to chunks where `r.name` matches (case-insensitive substring). Use matched chunks' `startLine`/`endLine` to read only those ranges from disk. If no chunks match, fall back to full file with an informational note.
+  - **Line-range path**: When `startLine`/`endLine` are provided (without `name`), read the full file and slice to the specified range (1-indexed, inclusive). Return with appropriate header showing the range.
+  - **Precedence**: When both `name` and line range are provided, `name` takes precedence.
+  - **No filter**: When neither is provided, preserve existing behavior (full file content).
+
+- [x] T146 [US10] Run full test suite (`pnpm test`) and fix any failures. Run `pnpm build` and fix any type errors.
+
+- [x] T147 [US10] Update `RAG_CONTENT` in `packages/cli/src/commands/agents.command.ts` to document the new `get_file` parameters (`name`, `startLine`, `endLine`) and recommended usage pattern (use `search_codebase` results to inform targeted `get_file` calls). Run tests and build.
+
+**Checkpoint**: Calling `get_file` with `path: "src/entry/Entry.java", name: "create"` returns only the `create` method(s) (~65 lines) instead of the full file (~350 lines). Token usage per targeted `get_file` call reduced by ~70-80%. Existing behavior preserved when no filter params are given. Agent injection text documents new parameters so LLMs know to use them.

@@ -10,7 +10,7 @@ import { mmrRerank, classifyQueryLambda, jaccardSimilarity } from './mmr.js';
 import { getRelatedTerms } from './search-synonyms.js';
 import { applyElbowTruncation } from './elbow-detection.js';
 import { DependencyGraph } from './dependency-graph.js';
-import { classifyQuery, getVectorsForQueryType } from './query-classifier.js';
+import { classifyQuery, getVectorsForQueryType, detectTestIntent } from './query-classifier.js';
 
 type VectorSearchResult = {
   id: string;
@@ -173,6 +173,62 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
 }
 
 /**
+ * T135: Apply test exclusion filter by default.
+ *
+ * Injects `must_not: [{ key: 'stereotype', match: { value: 'test' } }]` into
+ * the query filter unless:
+ * 1. The query has test intent (user is explicitly asking about tests)
+ * 2. The user already provided a stereotype filter (explicit inclusion/exclusion)
+ *
+ * This prevents test classes, helpers, fakes, and fixtures from appearing in
+ * production code searches — freeing result slots for relevant implementation code.
+ */
+function applyTestExclusionFilter(query: RetrievalQuery): Record<string, unknown> | undefined {
+  const hasTestIntent = detectTestIntent(query.text);
+
+  // Check if user explicitly provided a stereotype filter
+  const userFilter = query.filter as Record<string, unknown> | undefined;
+  const hasStereotypeFilter = userFilter ? hasFilterKey(userFilter, 'stereotype') : false;
+
+  // Don't apply exclusion when test intent or explicit stereotype filter
+  if (hasTestIntent || hasStereotypeFilter) {
+    return userFilter;
+  }
+
+  // Inject must_not for test stereotype
+  const mustNot = [{ key: 'stereotype', match: { value: 'test' } }];
+
+  if (!userFilter) {
+    return { must_not: mustNot };
+  }
+
+  // Merge with existing filter (preserve existing must/should/must_not)
+  return {
+    ...userFilter,
+    must_not: [...((userFilter.must_not as Array<unknown>) ?? []), ...mustNot],
+  };
+}
+
+/**
+ * Check if a Qdrant filter object references a specific key anywhere
+ * (in must, should, or must_not clauses).
+ */
+function hasFilterKey(filter: Record<string, unknown>, key: string): boolean {
+  const checkClauses = (clauses: unknown): boolean => {
+    if (!Array.isArray(clauses)) return false;
+    return clauses.some(
+      (clause: unknown) =>
+        typeof clause === 'object' &&
+        clause !== null &&
+        'key' in clause &&
+        (clause as { key: string }).key === key,
+    );
+  };
+
+  return checkClauses(filter.must) || checkClauses(filter.should) || checkClauses(filter.must_not);
+}
+
+/**
  * Semantic search engine that queries both 'text' and 'code' Qdrant vectors,
  * deduplicates results by chunkId (max-score merge), and returns ranked RetrievalResult[].
  */
@@ -227,6 +283,10 @@ export class SearchEngine {
     const queryType = classifyQuery(query.text);
     const vectorsToSearch = getVectorsForQueryType(queryType);
 
+    // T135: Apply test exclusion filter by default unless test intent detected
+    // or user explicitly provided a stereotype filter
+    const effectiveFilter = applyTestExclusionFilter(query);
+
     // Embed the query once (same dense vector for semantic and signature searches)
     const queryVector = await embeddingProvider.embed(query.text, 'query');
 
@@ -241,7 +301,7 @@ export class SearchEngine {
             vectorName,
             limit: searchLimit,
             scoreThreshold,
-            filter: query.filter,
+            filter: effectiveFilter,
           })
           .then((results) => ({ vectorName, results })),
       );
@@ -255,7 +315,7 @@ export class SearchEngine {
           .searchKeyword({
             sparseVector,
             limit: searchLimit,
-            filter: query.filter,
+            filter: effectiveFilter,
           })
           .then((results) => ({ vectorName: 'sparse', results })),
       );
@@ -803,6 +863,77 @@ export class SearchEngine {
     }
 
     return rerankResults(thresholded, query);
+  }
+
+  /**
+   * T136: Search with automatic interface implementation expansion.
+   *
+   * 1. Runs base search() to get top results.
+   * 2. Identifies interface results (chunkType === 'interface').
+   * 3. For each interface, searches for implementations via dependency edges
+   *    (chunks that have `dependencyEdges[].relation === 'implements'` targeting
+   *    the interface's relativePath).
+   * 4. Appends unique implementations to the result set (deduplicates by chunkId).
+   *
+   * This eliminates the need for follow-up searches when an interface is found
+   * but its implementation is not in the top results.
+   */
+  async searchWithInterfaceExpansion(query: RetrievalQuery): Promise<RetrievalResult[]> {
+    const baseResults = await this.search(query);
+
+    // Identify interface results
+    const interfaceResults = baseResults.filter((r) => r.chunkType === 'interface');
+
+    if (interfaceResults.length === 0) {
+      return baseResults;
+    }
+
+    const baseChunkIds = new Set(baseResults.map((r) => r.chunkId));
+    const expandedResults: RetrievalResult[] = [];
+
+    for (const ifaceResult of interfaceResults) {
+      const implChunks = await this.findImplementations(ifaceResult.relativePath);
+      for (const chunk of implChunks) {
+        if (!baseChunkIds.has(chunk.chunkId)) {
+          baseChunkIds.add(chunk.chunkId);
+          expandedResults.push({ ...chunk, score: 0, expansionSource: 'interface-impl' });
+        }
+      }
+    }
+
+    return expandedResults.length > 0 ? [...baseResults, ...expandedResults] : baseResults;
+  }
+
+  /**
+   * Find chunks that implement a given interface by searching for dependency edges
+   * with `relation: 'implements'` targeting the interface's relativePath.
+   */
+  private async findImplementations(interfaceRelativePath: string): Promise<RetrievalResult[]> {
+    const { embeddingProvider, vectorStore } = this.config;
+
+    // Use Qdrant nested filter to find chunks with implements edge targeting this interface
+    const filter = {
+      must: [
+        {
+          key: 'dependencyEdges[].targetPath',
+          match: { value: interfaceRelativePath },
+        },
+        {
+          key: 'dependencyEdges[].relation',
+          match: { value: 'implements' },
+        },
+      ],
+    };
+
+    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
+
+    const results = await vectorStore.search(zeroVector, {
+      vectorName: 'semantic',
+      limit: 10, // reasonable limit for implementations
+      filter,
+    });
+
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 }
 
