@@ -6,25 +6,25 @@
 
 ## Current Status
 
-| Phase                                 | Tasks     | Status                                 |
-| ------------------------------------- | --------- | -------------------------------------- |
-| Phase 1 — Setup                       | T001–T005 | ✅ Complete                            |
-| Phase 2 — Foundational                | T006–T012 | ✅ Complete                            |
-| Phase 3 — US1 Enriched Indexing       | T013–T033 | ✅ Complete                            |
-| Phase 4 — US2 Dependency Graph        | T034–T040 | ✅ Complete                            |
-| Phase 5 — US3 Chunk Boundaries        | T041–T044 | ✅ Complete                            |
-| Phase 6 — US4 Language Support        | T045–T054 | ✅ Complete                            |
-| Phase 7 — US5 Retrieval               | T055–T069 | ✅ Complete                            |
-| Phase 8 — Polish                      | T070–T075 | ✅ Complete                            |
-| Phase 9 — Pipeline Gap-Fill           | T078–T082 | ✅ Complete                            |
-| Phase 10 — Enrichment Progress        | T083–T085 | ✅ Complete                            |
-| Phase 14 — Thin-Class Enrichment      | T110–T123 | ✅ Complete                            |
-| Phase 15 — Enrichment Parallelization | T124–T126 | ✅ Complete                            |
-| Phase 8 — Benchmark / E2E             | T076–T077 | ⏳ Pending (requires live environment) |
-| Phase 16 — Retrieval Precision        | T127–T138 | ✅ Complete                            |
-| Phase 17 — Token-Efficient get_file   | T139–T147 | ✅ Complete                            |
+| Phase                                 | Tasks     | Status      |
+| ------------------------------------- | --------- | ----------- |
+| Phase 1 — Setup                       | T001–T005 | ✅ Complete |
+| Phase 2 — Foundational                | T006–T012 | ✅ Complete |
+| Phase 3 — US1 Enriched Indexing       | T013–T033 | ✅ Complete |
+| Phase 4 — US2 Dependency Graph        | T034–T040 | ✅ Complete |
+| Phase 5 — US3 Chunk Boundaries        | T041–T044 | ✅ Complete |
+| Phase 6 — US4 Language Support        | T045–T054 | ✅ Complete |
+| Phase 7 — US5 Retrieval               | T055–T069 | ✅ Complete |
+| Phase 8 — Polish                      | T070–T075 | ✅ Complete |
+| Phase 9 — Pipeline Gap-Fill           | T078–T082 | ✅ Complete |
+| Phase 10 — Enrichment Progress        | T083–T085 | ✅ Complete |
+| Phase 14 — Thin-Class Enrichment      | T110–T123 | ✅ Complete |
+| Phase 15 — Enrichment Parallelization | T124–T126 | ✅ Complete |
+| Phase 8 — Benchmark / E2E             | T076–T077 | ✅ Complete |
+| Phase 16 — Retrieval Precision        | T127–T138 | ✅ Complete |
+| Phase 17 — Token-Efficient get_file   | T139–T147 | ✅ Complete |
 
-**Remaining**: T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) require a running Qdrant instance + real project and have not been automated. Phase 14 (T110–T123) addresses retrieval precision gaps for thin delegation classes discovered during real-world evaluation. Phase 15 (T124–T126) fixes the enrichment bottleneck: batch processing was sequential despite the concurrency config being available. Phase 16 (T127–T138) implements retrieval precision improvements: test class filtering by default and interface implementation expansion. Phase 17 (T139–T147) adds line-range and name-based filtering to `get_file` to reduce token waste by ~70-80% in typical LLM exploration sessions.
+**All phases complete.** T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) were validated with a live environment. Phase 14 (T110–T123) addresses retrieval precision gaps for thin delegation classes discovered during real-world evaluation. Phase 15 (T124–T126) fixes the enrichment bottleneck: batch processing was sequential despite the concurrency config being available. Phase 16 (T127–T138) implements retrieval precision improvements: test class filtering by default and interface implementation expansion. Phase 17 (T139–T147) adds line-range and name-based filtering to `get_file` to reduce token waste by ~70-80% in typical LLM exploration sessions.
 
 ## Summary
 
