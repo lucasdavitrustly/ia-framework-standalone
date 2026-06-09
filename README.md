@@ -221,8 +221,7 @@ mkdir -p .ia-framework
   "embedding": {
     "provider": "ollama",
     "model": "nomic-embed-text",
-    "baseUrl": "http://localhost:11434",
-    "dimensions": 768
+    "baseUrl": "http://localhost:11434"
   },
   "vectorStore": {
     "host": "localhost",
@@ -247,41 +246,19 @@ mkdir -p .ia-framework
       "**/dist/**",
       "**/build/**",
       "**/.git/**",
-      "**/coverage/**",
-      "**/__pycache__/**"
+      "**/coverage/**"
     ],
     "respectGitignore": true,
-    "llm": {
-      "model": "llama3.2:latest",
-      "ollamaUrl": "http://localhost:11434"
+    "enrichment": {
+      "model": "qwen3:8b",
+      "concurrency": 3,
+      "skipOnFailure": true
     }
   }
 }
 ```
 
-<details>
-<summary>Using OpenAI embeddings instead</summary>
-
-```json
-{
-  "targetProjectPath": "/absolute/path/to/your/project",
-  "embedding": {
-    "provider": "openai",
-    "model": "text-embedding-3-small",
-    "apiKey": "sk-...",
-    "dimensions": 1536
-  },
-  "vectorStore": {
-    "host": "localhost",
-    "port": 6333,
-    "collectionName": "codebase"
-  }
-}
-```
-
-Or set the API key via environment variable: `export OPENAI_API_KEY=sk-...`
-
-</details>
+> See [Configuration](#configuration) for multi-repo setup, OpenAI embeddings, retrieval tuning, and the full reference.
 
 ### Step 6: Index Your Codebase
 
@@ -702,46 +679,252 @@ Each server you add gives the AI assistant more context to work with. ia-framewo
 
 ## Configuration
 
-The main config file is `.ia-framework/project.json`:
+The main config file is `.ia-framework/project.json`. Two formats are supported: **single-repo** (legacy) and **multi-repo**.
 
 > **Note:** The `.opencode/` directory contains per-user OpenCode configuration (slash commands, skills, agents). It is not tracked in git — each developer's local copy is independent.
 
+### Single-Repo (Minimal)
+
+The simplest configuration — one project, local Ollama embeddings, no enrichment:
+
 ```json
 {
-  "targetProjectPath": "/path/to/project",
+  "targetProjectPath": "/absolute/path/to/your/project",
   "embedding": {
-    "provider": "ollama", // "ollama" or "openai"
-    "model": "nomic-embed-text", // Model name
-    "baseUrl": "http://localhost:11434",
-    "dimensions": 768
+    "provider": "ollama",
+    "model": "nomic-embed-text",
+    "baseUrl": "http://localhost:11434"
   },
   "vectorStore": {
     "host": "localhost",
     "port": 6333,
-    "collectionName": "codebase"
+    "collectionName": "my-project"
+  }
+}
+```
+
+> **Note:** `dimensions` is auto-detected from the model — you never need to specify it manually.
+
+### Single-Repo with LLM Enrichment
+
+Adds Ollama-powered metadata enrichment for richer semantic search. The enrichment model generates business-context descriptions and relationship tags per chunk:
+
+```json
+{
+  "targetProjectPath": "/absolute/path/to/your/project",
+  "embedding": {
+    "provider": "ollama",
+    "model": "nomic-embed-text",
+    "baseUrl": "http://localhost:11434"
+  },
+  "vectorStore": {
+    "host": "localhost",
+    "port": 6333,
+    "collectionName": "my-project"
   },
   "indexing": {
     "includePatterns": ["**/*.ts", "**/*.java", "**/*.proto", "**/*.yaml", "**/*.xml", "**/*.sql"],
-    "excludePatterns": ["**/node_modules/**"],
+    "excludePatterns": ["**/node_modules/**", "**/dist/**", "**/build/**"],
     "respectGitignore": true,
     "maxChunkLines": 200,
     "enrichment": {
-      "model": "llama3.2:latest",
-      "ollamaUrl": "http://localhost:11434",
-      "concurrency": 4,
+      "provider": "ollama",
+      "model": "qwen3:8b",
+      "baseUrl": "http://localhost:11434",
+      "numCtx": 32768,
+      "concurrency": 3,
       "retryAttempts": 2,
       "skipOnFailure": true
     }
   },
   "retrieval": {
-    "mode": "mcp-only", // "mcp-only", "auto-context" (v2), "combined" (v2)
-    "expansionHops": 2, // 0 = off, 1 = direct imports, 2 = transitive (default)
-    "earlyExitConfidence": 0.8, // Keyword early exit threshold (0-1)
-    "keywordPrefetchMultiplier": 3, // BM25 branch prefetch multiplier (1-10)
-    "semanticPrefetchMultiplier": 3, // Dense branch prefetch multiplier (1-10)
-    "rrfK": 60, // RRF constant (1-200, lower = amplify rank differences)
-    "rrfScoreThreshold": 0.015 // Minimum RRF score to include result (0-1)
+    "expansionHops": 2,
+    "earlyExitConfidence": 0.8
   }
+}
+```
+
+**Enrichment config fields:**
+
+| Field           | Default                    | Description                                                        |
+| --------------- | -------------------------- | ------------------------------------------------------------------ |
+| `provider`      | `"ollama"`                 | Only `"ollama"` supported currently                                |
+| `model`         | `"qwen3:8b"`               | Any Ollama completion model (not embedding — this generates text)  |
+| `baseUrl`       | `"http://localhost:11434"` | Ollama API URL                                                     |
+| `numCtx`        | `32768`                    | Context window size in tokens                                      |
+| `concurrency`   | `3`                        | Max concurrent Ollama requests                                     |
+| `retryAttempts` | `2`                        | Retry count on Ollama failure (0-10)                               |
+| `skipOnFailure` | `true`                     | If true, indexing continues without enrichment when Ollama is down |
+
+> **Tip:** Use `--skip-enrichment` on the CLI to bypass enrichment for faster re-indexing without changing the config.
+
+### Multi-Repo
+
+Index multiple repositories into a single Qdrant collection. Each repo gets a logical name for filtering in search:
+
+```json
+{
+  "repos": [
+    {
+      "path": "../backend-api",
+      "name": "backend-api"
+    },
+    {
+      "path": "../frontend-app",
+      "name": "frontend-app"
+    },
+    {
+      "path": "../shared-libs",
+      "name": "shared-libs",
+      "provides": ["@company/auth", "@company/utils"]
+    }
+  ],
+  "embedding": {
+    "provider": "ollama",
+    "model": "nomic-embed-text",
+    "baseUrl": "http://localhost:11434"
+  },
+  "vectorStore": {
+    "host": "localhost",
+    "port": 6333,
+    "collectionName": "my-platform"
+  },
+  "indexing": {
+    "includePatterns": ["**/*.ts", "**/*.java"],
+    "excludePatterns": ["**/node_modules/**", "**/dist/**"],
+    "enrichment": {
+      "model": "qwen3:8b",
+      "concurrency": 4
+    }
+  }
+}
+```
+
+**Multi-repo fields:**
+
+| Field              | Required | Description                                                                                                                |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `repos[].path`     | Yes      | Path to the repository (resolved relative to config file directory)                                                        |
+| `repos[].name`     | No       | Logical name (auto-derived from `basename(path)` in kebab-case if omitted). Must be lowercase kebab-case.                  |
+| `repos[].provides` | No       | Package names this repo provides (for cross-repo symbol resolution). Auto-detected from `package.json` or pnpm workspaces. |
+| `repos[].profile`  | No       | Per-repo profile override. Auto-detected if not specified.                                                                 |
+
+> **Note:** `targetProjectPath` and `repos` are mutually exclusive — use one or the other, not both.
+
+After indexing, use the `repo` filter in searches to scope results:
+
+```
+search_codebase(query="payment processing", repo="backend-api")
+get_file(path="backend-api:src/payments/service.ts")
+```
+
+### OpenAI Embeddings
+
+Use cloud embeddings instead of local Ollama:
+
+```json
+{
+  "targetProjectPath": "/path/to/project",
+  "embedding": {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "apiKey": "sk-..."
+  },
+  "vectorStore": {
+    "host": "localhost",
+    "port": 6333,
+    "collectionName": "my-project"
+  }
+}
+```
+
+Or set the API key via environment variable: `export OPENAI_API_KEY=sk-...`
+
+### Full Configuration Reference
+
+All fields with their defaults:
+
+```jsonc
+{
+  // --- Project target (pick one) ---
+  "targetProjectPath": "/path/to/project", // Single-repo
+  // OR
+  "repos": [{ "path": "...", "name": "..." }], // Multi-repo
+
+  // --- Embedding (required) ---
+  "embedding": {
+    "provider": "ollama", // "ollama" or "openai"
+    "model": "nomic-embed-text", // Model name (dimensions auto-detected)
+    "baseUrl": "http://localhost:11434", // Provider API URL
+    "apiKey": "", // Required for OpenAI only
+    "dimensions": 768, // Optional — auto-detected from model
+  },
+
+  // --- Vector store (required) ---
+  "vectorStore": {
+    "host": "localhost",
+    "port": 6333,
+    "collectionName": "codebase",
+    "apiKey": "", // Optional — for Qdrant Cloud
+  },
+
+  // --- Indexing (optional) ---
+  "indexing": {
+    "includePatterns": ["**/*.ts", "**/*.java"],
+    "excludePatterns": ["**/node_modules/**"],
+    "maxChunkLines": 200, // Max lines per chunk before splitting
+    "respectGitignore": true,
+    "embeddingConcurrency": 3, // Parallel embedding calls (Ollama: 3, OpenAI: 10)
+    "enrichment": {
+      // Optional LLM enrichment
+      "provider": "ollama",
+      "model": "qwen3:8b",
+      "baseUrl": "http://localhost:11434",
+      "numCtx": 32768,
+      "concurrency": 3,
+      "retryAttempts": 2,
+      "skipOnFailure": true,
+    },
+  },
+
+  // --- Retrieval tuning (optional) ---
+  "retrieval": {
+    "mode": "mcp-only", // "mcp-only" | "auto-context" | "combined"
+    "expansionHops": 2, // 0=off, 1=direct imports, 2=transitive
+    "earlyExitConfidence": 0.8, // Keyword early exit threshold (0-1)
+    "keywordPrefetchMultiplier": 3, // BM25 prefetch multiplier (1-10)
+    "semanticPrefetchMultiplier": 3, // Dense prefetch multiplier (1-10)
+    "rrfK": 60, // RRF constant (1-200)
+    "rrfScoreThreshold": 0.015, // Min RRF score to include (0-1)
+    "scoreThreshold": 0.5, // Default min relevance score
+    "maxTokensPerCall": 40000, // Soft token budget per search call
+    "reranking": {
+      "enabled": true,
+      "topK": 10,
+      "prefetchMultiplier": 3,
+    },
+    "multiHop": {
+      "enabled": true,
+      "maxSymbols": 5,
+      "expandMethodCalls": true,
+      "expandHierarchy": true,
+    },
+    "classificationRules": {
+      "symbolPatterns": ["[A-Z][a-z]+[A-Z]"], // camelCase detection
+      "lookupVerbs": ["find", "get", "show"],
+      "maxKeywordWords": 4,
+    },
+  },
+
+  // --- Auto-detected project profile (optional, populated by `ia-framework init`) ---
+  "profile": {
+    "languages": ["typescript", "java"],
+    "frameworks": ["express", "spring-boot"],
+    "packageManager": "pnpm",
+    "testRunner": "vitest",
+    "buildCommand": "pnpm build",
+    "devCommand": "pnpm dev",
+  },
 }
 ```
 
