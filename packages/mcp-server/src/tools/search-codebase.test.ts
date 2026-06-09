@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { searchCodebaseHandler, formatResult } from './search-codebase.js';
+import { searchCodebaseHandler, formatResult, resetSearchSessionCache } from './search-codebase.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import * as classificationModule from '../classification/index.js';
 
@@ -981,5 +981,107 @@ describe('Phase 12 (US7): formatResult score type labels', () => {
     const output = formatResult(r, 1);
     expect(output).toContain('rrf: 0.0213');
     expect(output).not.toContain('score: 0.02');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 18 (T152–T153): search_codebase session dedup
+// ---------------------------------------------------------------------------
+
+describe('T152: search_codebase session dedup returns short message on duplicate call', () => {
+  beforeEach(() => resetSearchSessionCache());
+
+  it('returns short "Same results" message on second identical call with same query+filters', async () => {
+    const result = makeResult({ score: 0.9 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+
+    const sessionCache = { enabled: true } as const;
+
+    // First call — full response
+    const first = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const firstText = (first.content[0] as { type: 'text'; text: string }).text;
+    expect(firstText).toContain('myFunction');
+
+    // Second identical call — should return short dedup message
+    const second = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const secondText = (second.content[0] as { type: 'text'; text: string }).text;
+    expect(secondText.length).toBeLessThan(firstText.length);
+    expect(secondText.toLowerCase()).toContain('same results');
+  });
+});
+
+describe('T153: search_codebase session dedup separate entries for different params', () => {
+  beforeEach(() => resetSearchSessionCache());
+
+  it('different queries produce separate cache entries (no false dedup)', async () => {
+    const result1 = makeResult({ name: 'paymentFn', score: 0.9 });
+    const result2 = makeResult({ name: 'authFn', score: 0.85 });
+    const engine = {
+      searchWithExpansion: vi
+        .fn()
+        .mockResolvedValueOnce([result1])
+        .mockResolvedValueOnce([result2]),
+      search: vi.fn().mockResolvedValue([]),
+    };
+
+    const sessionCache = { enabled: true } as const;
+
+    const first = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const second = await searchCodebaseHandler(
+      engine,
+      { query: 'auth service', expand_hops: 0 },
+      { sessionCache },
+    );
+
+    const firstText = (first.content[0] as { type: 'text'; text: string }).text;
+    const secondText = (second.content[0] as { type: 'text'; text: string }).text;
+    // Both should be full responses (different cache keys)
+    expect(firstText).toContain('paymentFn');
+    expect(secondText).toContain('authFn');
+  });
+
+  it('same query with different filter produces separate cache entries', async () => {
+    const result1 = makeResult({ name: 'ServiceFn', score: 0.9 });
+    const result2 = makeResult({ name: 'ControllerFn', score: 0.85 });
+    const engine = {
+      searchWithExpansion: vi
+        .fn()
+        .mockResolvedValueOnce([result1])
+        .mockResolvedValueOnce([result2]),
+      search: vi.fn().mockResolvedValue([]),
+    };
+
+    const sessionCache = { enabled: true } as const;
+
+    const first = await searchCodebaseHandler(
+      engine,
+      { query: 'entry logic', stereotype: 'service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const second = await searchCodebaseHandler(
+      engine,
+      { query: 'entry logic', stereotype: 'controller', expand_hops: 0 },
+      { sessionCache },
+    );
+
+    const firstText = (first.content[0] as { type: 'text'; text: string }).text;
+    const secondText = (second.content[0] as { type: 'text'; text: string }).text;
+    expect(firstText).toContain('ServiceFn');
+    expect(secondText).toContain('ControllerFn');
   });
 });

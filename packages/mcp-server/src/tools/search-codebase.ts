@@ -118,6 +118,46 @@ export interface ObservabilityConfig {
     endLine: number,
     repoId?: string,
   ) => Promise<string>;
+  /** Enable session-level dedup cache (T156). Default: not enabled. */
+  sessionCache?: { enabled: boolean } | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Session-level dedup cache (T156)
+// ---------------------------------------------------------------------------
+
+interface SearchCacheEntry {
+  responseText: string;
+  resultCount: number;
+  lastAccess: number;
+}
+
+const SEARCH_CACHE_MAX = 100;
+const searchCache = new Map<string, SearchCacheEntry>();
+let searchCacheAccessCounter = 0;
+
+function buildSearchCacheKey(input: SearchCodebaseInput): string {
+  // JSON-stable hash of the full input (sorted keys for determinism)
+  const normalized = JSON.stringify(input, Object.keys(input).sort());
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 32);
+}
+
+function evictSearchLRU(): void {
+  let oldestKey: string | undefined;
+  let oldestAccess = Infinity;
+  for (const [key, entry] of searchCache) {
+    if (entry.lastAccess < oldestAccess) {
+      oldestAccess = entry.lastAccess;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey) searchCache.delete(oldestKey);
+}
+
+/** Exported for testing: reset the session cache. */
+export function resetSearchSessionCache(): void {
+  searchCache.clear();
+  searchCacheAccessCounter = 0;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -466,6 +506,21 @@ export async function searchCodebaseHandler(
   input: SearchCodebaseInput,
   observability?: ObservabilityConfig,
 ): Promise<ToolOutput> {
+  // ── Session dedup check (T156) ──────────────────────────────────────────────
+  if (observability?.sessionCache?.enabled) {
+    const cacheKey = buildSearchCacheKey(input);
+    const cached = searchCache.get(cacheKey);
+    if (cached) {
+      cached.lastAccess = ++searchCacheAccessCounter;
+      const shortMsg = `Same results as previous identical query (${cached.resultCount} results). Refine your query or use filters to get different results.`;
+      return toTextResult(shortMsg, {
+        answered: true,
+        cached: true,
+        resultCount: cached.resultCount,
+      });
+    }
+  }
+
   const startTime = Date.now();
 
   // Build combined Qdrant filter from all filter params (repo, stereotype, archLayer, module, language)
@@ -1039,7 +1094,7 @@ export async function searchCodebaseHandler(
     ragSufficientNote = `[Retrieved ${results.length} high-confidence results (best: ${formatScore(results[0])}). Consider using this context before exploring files further.]`;
   }
 
-  return buildSearchResponse(
+  const response = buildSearchResponse(
     input,
     results,
     ragSufficientNote ?? fallbackNote,
@@ -1048,6 +1103,20 @@ export async function searchCodebaseHandler(
     capMeta,
     thresholdFiltered,
   );
+
+  // ── Store in session cache (T156) ──
+  if (observability?.sessionCache?.enabled && results.length > 0) {
+    const cacheKey = buildSearchCacheKey(input);
+    if (searchCache.size >= SEARCH_CACHE_MAX) evictSearchLRU();
+    const responseText = (response.content[0] as { text?: string })?.text ?? '';
+    searchCache.set(cacheKey, {
+      responseText,
+      resultCount: results.length,
+      lastAccess: ++searchCacheAccessCounter,
+    });
+  }
+
+  return response;
 }
 
 /**

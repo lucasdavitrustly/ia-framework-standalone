@@ -604,3 +604,65 @@ Instead of: `java class EntryController <96 lines of raw imports + boilerplate c
 - [x] T147 [US10] Update `RAG_CONTENT` in `packages/cli/src/commands/agents.command.ts` to document the new `get_file` parameters (`name`, `startLine`, `endLine`) and recommended usage pattern (use `search_codebase` results to inform targeted `get_file` calls). Run tests and build.
 
 **Checkpoint**: Calling `get_file` with `path: "src/entry/Entry.java", name: "create"` returns only the `create` method(s) (~65 lines) instead of the full file (~350 lines). Token usage per targeted `get_file` call reduced by ~70-80%. Existing behavior preserved when no filter params are given. Agent injection text documents new parameters so LLMs know to use them.
+
+---
+
+## Phase 18: Session-Level MCP Cache — Embedding Cache + Dedup
+
+**Goal**: Add session-level caching to the MCP server that saves both tokens (70-90% per repeated call) and latency (200-500ms per cached embedding) by deduplicating responses and caching embedding vectors. All caches are in-memory with LRU-100 eviction, dying naturally with the MCP server process.
+
+**Root cause**: The MCP server is stateless between calls. Every tool invocation re-executes the full pipeline (embedding API → Qdrant → filesystem → formatting) regardless of whether identical results were recently computed. LLM sessions involve ~30% redundant calls.
+
+### Tests for Phase 18
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
+
+- [x] T148 [P] [US11] Test that `CachingEmbeddingProvider.embed()` returns the same vector on cache hit without calling the underlying provider a second time — in `packages/embedding/src/caching-provider.test.ts`
+
+- [x] T149 [P] [US11] Test that `CachingEmbeddingProvider` evicts the least-recently-used entry when cache reaches 100 entries — in `packages/embedding/src/caching-provider.test.ts`
+
+- [x] T150 [P] [US11] Test that `getFileHandler` session dedup returns a short "Content unchanged" message (~15 tokens) on second identical call when file mtime has not changed — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+- [x] T151 [P] [US11] Test that `getFileHandler` session dedup invalidates cached entry when file mtime changes (re-reads and returns fresh content) — in `packages/mcp-server/src/tools/get-file.test.ts`
+
+- [x] T152 [P] [US11] Test that `searchCodebaseHandler` session dedup returns a short "Same results" message on second identical call with same query+filters — in `packages/mcp-server/src/tools/search-codebase.test.ts`
+
+- [x] T153 [P] [US11] Test that session dedup produces separate cache entries for different parameters (different query → different entry, different path → different entry) — in `packages/mcp-server/src/tools/search-codebase.test.ts` and `get-file.test.ts`
+
+### Implementation for Phase 18
+
+- [x] T154 [US11] Implement `CachingEmbeddingProvider` in `packages/embedding/src/caching-provider.ts`: implements `EmbeddingProvider` interface, wraps an underlying provider, LRU-100 cache keyed by `(text, taskType)`, delegates `embedBatch` and `estimateTokens` to underlying provider.
+
+- [x] T155 [US11] Implement `get_file` session dedup in `packages/mcp-server/src/tools/get-file.ts`:
+  - LRU-100 cache keyed by `${repo}:${path}:${startLine}:${endLine}:${name}`
+  - On cache hit: check file mtime via `stat()` — if unchanged, return short message: "Content unchanged since previous request (N lines, path). Use startLine/endLine or name to narrow."
+  - On mtime change or cache miss: execute normally, store response + mtime in cache.
+
+- [x] T156 [US11] Implement `search_codebase` session dedup in `packages/mcp-server/src/tools/search-codebase.ts`:
+  - LRU-100 cache keyed by JSON-stable hash of full `SearchCodebaseInput`
+  - On cache hit: return short message: "Same results as previous identical query (N results). Refine your query or use filters to get different results."
+  - On cache miss: execute normally, store response in cache.
+
+- [x] T157 [US11] Wire `CachingEmbeddingProvider` in `packages/mcp-server/src/server.ts`: wrap the search engine's embedding provider with `CachingEmbeddingProvider` at server creation time.
+
+- [x] T158 [US11] Run full test suite (`pnpm test`) and fix any failures. Run `pnpm build` and fix any type errors.
+
+**Checkpoint**: Second identical `get_file` call returns ~15 tokens instead of ~1100 tokens. Second identical `search_codebase` call returns ~20 tokens instead of ~500 tokens. Embedding provider is called once per unique query text regardless of how many times the same search is issued. All existing behavior preserved for non-duplicate calls.
+
+---
+
+## Phase 19: README Update — Reflect Spec 008 Changes
+
+**Goal**: Rewrite the root `README.md` to accurately document the current project state after all spec 008 phases. The README currently describes the pre-008 architecture and misleads developers about capabilities, tool names, and configuration.
+
+**Root cause**: README was never updated as spec 008 phases were implemented incrementally.
+
+### Tasks for Phase 19
+
+- [x] T159 [US12] Rewrite README architecture section: replace "dual-vector embeddings" with triple-vector (semantic, signature, sparse); document lean Qdrant payloads (no raw code stored); document unified AST+LLM pipeline (remove `--strategy` flag references); add stereotype/archLayer classification description.
+
+- [x] T160 [US12] Rewrite README MCP tools section: document 3 core tools (`search_codebase`, `get_file`, `get_dependencies`) with all current parameters including metadata filters (`stereotype`, `archLayer`, `module`, `language`), `get_file` filters (`name`, `startLine`, `endLine`), and `get_dependencies` BFS depth. Remove all references to deprecated tools (`search_codebase_hybrid`, `get_module_dependencies`, `benchmark_preflight`). Add usage examples and token-conscious patterns.
+
+- [x] T161 [US12] Update remaining README sections: supported languages (add Proto, YAML, XML, SQL); CLI reference (remove deprecated flags, update `index` command docs); configuration examples (update `project.json` schema); remove/update any screenshots or diagrams that show old architecture.
+
+**Checkpoint**: README accurately describes triple-vector architecture, 3 MCP tools with all params, 10 supported languages, and unified pipeline. No deprecated tool names or flags appear. New developer can follow README to set up and use the project correctly.

@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
 import { registerGetFileTool } from './tools/get-file.js';
@@ -100,12 +100,24 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     confidenceThreshold: 0.45,
     defaultScoreThreshold: 0.4,
     ...(searchReadFileFn ? { readFileFn: searchReadFileFn } : {}),
+    sessionCache: { enabled: true },
   });
-  registerGetFileTool(
-    server,
-    config.searchEngine,
-    getFileReadFileFn ? { readFileFn: getFileReadFileFn } : undefined,
-  );
+
+  // Build statFn closure for get_file session dedup (mtime-based cache invalidation)
+  const getFileStatFn =
+    repoPathMap.size > 0
+      ? async (filePath: string, repo?: string): Promise<{ mtimeMs: number }> => {
+          const root = resolveRoot(repo);
+          if (!root) throw new Error('No project root configured for stat');
+          const s = await stat(join(root, filePath));
+          return { mtimeMs: s.mtimeMs };
+        }
+      : undefined;
+
+  registerGetFileTool(server, config.searchEngine, {
+    ...(getFileReadFileFn ? { readFileFn: getFileReadFileFn } : {}),
+    ...(getFileStatFn ? { statFn: getFileStatFn, sessionCache: true } : {}),
+  });
   registerGetDependenciesTool(server, config.searchEngine);
 
   if (config.dbConfigPath) {

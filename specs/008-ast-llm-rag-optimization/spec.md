@@ -999,6 +999,71 @@ The `get_file` MCP tool supports optional `startLine`/`endLine` and `name` param
 
 ---
 
+### User Story 11 - Session-Level MCP Cache (Priority: P2)
+
+The MCP server implements session-level caching that saves both tokens (70-90% per repeated call) and latency (200-500ms per search) by deduplicating responses and caching embeddings.
+
+**Why this priority**: Real-world LLM sessions involve repeated tool calls — the LLM often re-reads the same file it fetched 2 turns earlier, or issues near-duplicate search queries. Without caching, every call re-executes the full pipeline (external embedding API → Qdrant vector search → filesystem read → response formatting). Over a 20-call session with ~30% redundancy, this wastes 6 tool calls worth of tokens and 1-3 seconds of cumulative latency.
+
+**Root cause**: The MCP server is stateless between calls — no memory of previous requests or responses. Each tool handler executes independently from scratch regardless of whether identical results were recently computed.
+
+**Solution**: Three caching layers, all in-memory with LRU eviction (100 entries), dying naturally with the MCP server process:
+
+1. **CachingEmbeddingProvider** — Wraps any `EmbeddingProvider` with an LRU cache keyed by `(text, taskType)`. Since embeddings are deterministic (same input → same vector), cached entries never need invalidation. Eliminates the most expensive external call (~200-500ms per embedding API request).
+
+2. **`get_file` session dedup** — Tracks previously-returned `get_file` responses keyed by `(repo, path, startLine, endLine, name)`. On cache hit, checks file `mtime` — if unchanged, returns a short message ("Content unchanged since previous request") instead of the full file content. Invalidates on mtime change.
+
+3. **`search_codebase` session dedup** — Tracks previously-returned search responses keyed by a hash of the full input object. On cache hit, returns a short message ("Same results as previous identical query") instead of re-executing the pipeline. Session-scoped (no invalidation needed — index doesn't change mid-session).
+
+**Independent Test**: Call `get_file` for the same file twice without editing it — second call returns short "unchanged" message. Call `search_codebase` with identical params twice — second call returns short "same results" message. Measure that embedding provider is called only once for repeated identical queries.
+
+**Acceptance Scenarios:**
+
+1. **Given** `CachingEmbeddingProvider` wrapping an underlying provider, **When** `embed("hello", "query")` is called twice, **Then** the underlying provider's `embed` is called only once and both calls return the same vector.
+2. **Given** a cache at LRU capacity (100 entries), **When** a 101st unique embedding is requested, **Then** the least-recently-used entry is evicted and the new embedding is cached.
+3. **Given** `get_file` called with `path: "src/Entry.java"` and it returns 350 lines, **When** the same call is made again (file not modified), **Then** the response is a short "Content unchanged" message (~15 tokens) instead of the full 350 lines (~1100 tokens).
+4. **Given** `get_file` cached for a file, **When** the file's mtime changes (user edited it), **Then** the cache entry is invalidated and the fresh content is returned.
+5. **Given** `search_codebase` called with `query: "authentication"`, **When** the identical query+filters are called again, **Then** a short "Same results" message is returned instead of re-executing the search pipeline.
+6. **Given** `search_codebase` called with `query: "authentication"` then `query: "authorization"`, **When** results are compared, **Then** each query has its own cache entry (different keys produce different results).
+
+**Files changed:**
+
+| File                                                    | Change                                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `packages/embedding/src/caching-provider.ts`            | New `CachingEmbeddingProvider` class implementing `EmbeddingProvider` with LRU-100 cache |
+| `packages/embedding/src/caching-provider.test.ts`       | Tests for cache hit/miss, LRU eviction, deterministic behavior                           |
+| `packages/embedding/src/index.ts`                       | Export `CachingEmbeddingProvider`                                                        |
+| `packages/mcp-server/src/tools/get-file.ts`             | Add session dedup decorator with mtime invalidation                                      |
+| `packages/mcp-server/src/tools/get-file.test.ts`        | Tests for dedup hit, mtime invalidation, short response format                           |
+| `packages/mcp-server/src/tools/search-codebase.ts`      | Add session dedup decorator with input hash key                                          |
+| `packages/mcp-server/src/tools/search-codebase.test.ts` | Tests for dedup hit, different params produce different entries                          |
+| `packages/mcp-server/src/server.ts`                     | Wire `CachingEmbeddingProvider` around the embedding provider in the search engine       |
+
+---
+
+### User Story 12 - README Update for Spec 008 (Priority: P3)
+
+The root `README.md` is updated to accurately document the current state of the project after all spec 008 phases are complete.
+
+**Why this priority**: The README still describes the pre-spec-008 architecture (dual-vector, 8 MCP tools, 6 languages, `--strategy` flag). Developers setting up or evaluating the project get incorrect information about capabilities, tool names, and configuration options.
+
+**Root cause**: README was never updated as spec 008 phases were implemented incrementally.
+
+**Acceptance Scenarios:**
+
+1. **Given** the README architecture section, **When** a developer reads it, **Then** it describes triple-vector (semantic, signature, sparse), lean Qdrant payloads, and the unified AST+LLM pipeline.
+2. **Given** the README MCP tools section, **When** a developer reads it, **Then** it documents 3 core tools (`search_codebase`, `get_file`, `get_dependencies`) with all current parameters including metadata filters and `get_file` line-range/name params.
+3. **Given** the README supported languages section, **When** a developer reads it, **Then** it lists all 10 supported languages/formats (TypeScript, JavaScript, TSX, JSX, Python, Java, Protocol Buffers, YAML, XML, SQL).
+4. **Given** the README, **When** a developer searches for `search_codebase_hybrid` or `get_module_dependencies`, **Then** those deprecated tool names do not appear.
+
+**Files changed:**
+
+| File        | Change                                                                                |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `README.md` | Rewrite architecture, MCP tools, languages, CLI reference, and configuration sections |
+
+---
+
 ## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes

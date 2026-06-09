@@ -23,8 +23,10 @@
 | Phase 8 — Benchmark / E2E             | T076–T077 | ✅ Complete |
 | Phase 16 — Retrieval Precision        | T127–T138 | ✅ Complete |
 | Phase 17 — Token-Efficient get_file   | T139–T147 | ✅ Complete |
+| Phase 18 — Session-Level MCP Cache    | T148–T158 | ✅ Complete |
+| Phase 19 — README Update              | T159–T161 | ✅ Complete |
 
-**All phases complete.** T076 (benchmark precision@5/recall@10) and T077 (quickstart E2E) were validated with a live environment. Phase 14 (T110–T123) addresses retrieval precision gaps for thin delegation classes discovered during real-world evaluation. Phase 15 (T124–T126) fixes the enrichment bottleneck: batch processing was sequential despite the concurrency config being available. Phase 16 (T127–T138) implements retrieval precision improvements: test class filtering by default and interface implementation expansion. Phase 17 (T139–T147) adds line-range and name-based filtering to `get_file` to reduce token waste by ~70-80% in typical LLM exploration sessions.
+**All implementation phases complete.** Phase 18 (T148–T158) adds session-level caching to reduce redundant MCP tool calls — embedding cache, get_file dedup, and search_codebase dedup. Phase 19 (T159–T161) rewrites the root README to reflect the current spec 008 architecture.
 
 ## Summary
 
@@ -207,6 +209,40 @@ The following gaps were discovered during live testing against a real Java proje
 
 - Scope: T139–T146 (tests + implementation + build verification)
 
+**Phase 18 — Session-Level MCP Cache** (pending):
+
+- **Problem discovered during real-world evaluation**: LLMs frequently re-request the same file
+  or re-execute the same search query within a single session. Each call re-runs the full pipeline
+  (embedding API → Qdrant → filesystem → formatting), wasting ~200-500ms latency and ~1100 tokens
+  per redundant `get_file` call. Over a 20-call session with ~30% redundancy, this accumulates to
+  6000+ wasted tokens and 1-3 seconds of avoidable latency.
+
+- **Solution**: Three in-memory cache layers with LRU-100 eviction:
+  1. `CachingEmbeddingProvider` — wraps any `EmbeddingProvider`, caches `embed()` results by
+     `(text, taskType)`. Never invalidates (deterministic). New shared utility in `packages/embedding`.
+  2. `get_file` session dedup — tracks previous responses by `(repo, path, startLine, endLine, name)`.
+     Returns short "Content unchanged" message on hit (mtime-validated). Invalidates on file change.
+  3. `search_codebase` session dedup — tracks previous responses by hash of full input. Returns short
+     "Same results" message on hit. Session-scoped (no invalidation — index doesn't change mid-session).
+
+- **Estimated impact**: ~70-90% token reduction per repeated call; ~200-500ms latency saved per
+  cached embedding; ~100-300ms saved per cached search. Over a typical session, saves 3000-6000
+  tokens and 1-3 seconds of total latency.
+
+- Scope: T148–T158 (tests + implementation + wiring + build verification)
+
+**Phase 19 — README Update** (pending):
+
+- **Problem**: The root README.md documents the pre-spec-008 architecture (dual-vector, 8 MCP tools,
+  6 languages, `--strategy ast|llm`). All 17+ implementation phases are complete but the README
+  gives developers incorrect information about capabilities and configuration.
+
+- **Solution**: Rewrite the README sections that are affected: architecture (triple-vector, lean
+  payloads, unified pipeline), MCP tools (3 consolidated tools with all params), supported languages
+  (10 formats), CLI reference (remove deprecated flags), and configuration examples.
+
+- Scope: T159–T161 (documentation rewrite, no code changes)
+
 ## Complexity Tracking
 
 | Addition                      | Why Needed                                                                                              | Simpler Alternative Rejected Because                                                          |
@@ -219,3 +255,5 @@ The following gaps were discovered during live testing against a real Java proje
 | Test class default exclusion  | Eliminates 3-5 test results per query that dilute precision for production code searches                | Manual `stereotype` filter requires caller awareness; default should optimize for common case |
 | Interface impl expansion      | Surfaces implementations when searching for interfaces — eliminates 2-3 follow-up searches              | Requiring users to search by impl class name defeats the purpose of semantic search           |
 | `get_file` line-range + name  | Reduces token waste by 70-80% per call — LLMs already know what they need from search results           | Returning full files always wastes context window on irrelevant code                          |
+| Session-level MCP cache       | Saves both tokens (70-90%) and latency (200-500ms) per repeated call — LLMs re-request frequently       | Without dedup, every repeated call re-executes the full pipeline wastefully                   |
+| `CachingEmbeddingProvider`    | Eliminates the most expensive external call per search; deterministic results require no invalidation   | Re-embedding the same query text on every search is pure waste                                |

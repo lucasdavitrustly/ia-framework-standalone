@@ -1,6 +1,6 @@
 # ia-framework
 
-A local RAG (Retrieval-Augmented Generation) framework that gives AI coding assistants deep understanding of your codebase. It indexes your project with AST-aware chunking, stores dual-vector embeddings in Qdrant, and serves context to [OpenCode](https://opencode.ai) through MCP tools — all running locally on your machine.
+A local RAG (Retrieval-Augmented Generation) framework that gives AI coding assistants deep understanding of your codebase. It indexes your project with AST-aware chunking and optional LLM enrichment, stores triple-vector embeddings in Qdrant (no raw code stored), and serves context to [OpenCode](https://opencode.ai) through 3 consolidated MCP tools — all running locally on your machine.
 
 **Core idea:** Better context in, better code out.
 
@@ -10,9 +10,9 @@ A local RAG (Retrieval-Augmented Generation) framework that gives AI coding assi
 Your Project                  ia-framework                    OpenCode
 ┌──────────────┐    index    ┌───────────────┐    MCP     ┌──────────────┐
 │ TypeScript    │ ─────────► │ AST Parser    │ ────────── │ search_      │
-│ Python       │            │ Embeddings    │  tools     │   codebase   │
-│ Go / Rust    │            │ Qdrant        │            │ get_file     │
-│ Java / ...   │            │ Dep Graph     │            │ get_deps     │
+│ Java / Proto │            │ LLM Enrich   │  3 tools   │   codebase   │
+│ YAML / XML   │            │ Triple-Vector │            │ get_file     │
+│ SQL / ...    │            │ Qdrant (lean) │            │ get_deps     │
 └──────────────┘            └───────────────┘            └──────────────┘
                                    │
                             ┌──────┴───────┐
@@ -21,25 +21,28 @@ Your Project                  ia-framework                    OpenCode
                             └──────────────┘
 ```
 
-1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks (AST strategy), or uses an LLM to generate rich prose summaries (LLM strategy). Generates dual embeddings (text + code vectors) stored in Qdrant with BM25 sparse vectors for hybrid search
-2. **Serves context via MCP** — OpenCode calls `search_codebase`, `search_codebase_hybrid`, `get_file`, `get_dependencies`, `get_module_dependencies`, and `benchmark_preflight` tools during conversations to pull in relevant code
-3. **Supports multi-collection search** — query AST and LLM collections simultaneously with Reciprocal Rank Fusion (RRF) merging and source tagging
-4. **Expands results along the dependency graph** — search results include 1-2 hops of imported files so the AI sees the full picture
-5. **Tracks everything** — token usage, retrieval quality, indexing status, all visible in a browser dashboard
-6. **Benchmarks RAG quality** — measure Hit@K and MRR to prove the system actually helps and tune configurations
+1. **Indexes your codebase** — parses files with tree-sitter into function/class/interface-level chunks, classifies each by stereotype (service, controller, repository, entity, etc.) and architectural layer, optionally enriches with LLM-generated metadata via Ollama, then embeds into 3 named vectors (semantic, signature, sparse) stored in Qdrant with lean payloads (no raw code — content is read from the filesystem at retrieval time)
+2. **Serves context via MCP** — OpenCode calls `search_codebase`, `get_file`, and `get_dependencies` tools during conversations to pull in relevant code with metadata filters for precise retrieval
+3. **Auto-classifies queries** — routes keyword/symbol queries directly to BM25 sparse search, semantic queries to dense vectors, and hybrid queries to RRF fusion — all through a single `search_codebase` tool
+4. **Expands results along the dependency graph** — search results include 0-2 hops of imported files so the AI sees the full picture; interface searches automatically surface implementations
+5. **Session-level caching** — embedding cache, get_file dedup, and search dedup reduce redundant work by 70-90% per repeated call within a session
+6. **Tracks everything** — token usage, retrieval quality, indexing status, all visible in a browser dashboard
+7. **Benchmarks RAG quality** — measure Hit@K and MRR to prove the system actually helps and tune configurations
 
 ## Architecture
 
 ```
 ia-framework/
 ├── packages/
-│   ├── core/               # Shared types, config loader, Zod schemas, logger
-│   ├── ast-parser/         # tree-sitter WASM parser (TS, Python, more)
-│   ├── embedding/          # Provider interface + Ollama/OpenAI adapters
-│   ├── vector-store/       # Qdrant client (dual named vectors)
-│   ├── indexer/            # File walker, incremental indexing, dependency edges
-│   ├── retrieval/          # Search engine, dependency graph, hop expansion
-│   ├── mcp-server/         # MCP tools served via stdio transport
+│   ├── core/               # Shared types (Stereotype, ArchLayer, ModuleInfo), config, Zod schemas
+│   ├── ast-parser/         # tree-sitter WASM parser (TS, Java, Proto, YAML, XML, SQL)
+│   │                       #   + stereotype/archLayer classifier + module resolver
+│   ├── embedding/          # Provider interface + Ollama/OpenAI adapters + CachingProvider
+│   ├── vector-store/       # Qdrant client (3 named vectors: semantic, signature, sparse)
+│   ├── indexer/            # Unified pipeline: parse → classify → enrich → embed → store
+│   │                       #   + LLM enrichment (Ollama, concurrent, cached)
+│   ├── retrieval/          # Search engine, query classifier, dependency graph, hop expansion
+│   ├── mcp-server/         # 3 MCP tools + session dedup caches (served via stdio)
 │   ├── observability/      # Token counter, metrics SQLite store
 │   ├── benchmark/          # Hit@K, MRR, benchmark store, run comparison
 │   ├── project-detector/   # Auto-detect language, framework, package manager
@@ -53,6 +56,29 @@ ia-framework/
 ├── docker-compose.yml      # Qdrant + Dashboard containers
 └── docker-compose.override.yml.example  # Dev overrides template (copied by install.sh)
 ```
+
+### Indexing Pipeline (Unified)
+
+Every file goes through one pipeline — no strategy flag needed:
+
+1. **Parse** — tree-sitter AST extracts function/class/interface chunks with boundaries
+2. **Classify** — heuristic detection assigns `stereotype` (service, controller, repository, entity, dto, test, ...) and `archLayer` (presentation, service, domain, persistence, infrastructure)
+3. **Enrich** (optional) — Ollama LLM generates business-context descriptions, relationship tags, and API signatures per chunk. Gracefully degrades if Ollama is unavailable. Use `--skip-enrichment` to bypass.
+4. **Embed** — 3 vectors per chunk:
+   - `semantic` (dense, 768d+) — embeds LLM-enriched description or structured prose fallback
+   - `signature` (dense, 768d+) — embeds the chunk's API signature/header
+   - `sparse` (BM25/IDF) — full-text keyword index for exact term matching
+5. **Store** — lean Qdrant payloads with metadata only (no raw code). Content is read from the filesystem at retrieval time.
+
+### Retrieval Pipeline
+
+Queries are auto-classified and routed:
+
+- **Keyword queries** (camelCase, dot.notation, `"quoted"`) → BM25 sparse search
+- **Semantic queries** → dense vector search on `semantic` + `signature` vectors
+- **Hybrid** → both branches fused with Reciprocal Rank Fusion (RRF)
+
+Results are expanded along the dependency graph (0-2 hops). Interface results automatically surface their implementations. Test files are excluded by default (re-included when query has test intent).
 
 **Stack:** TypeScript, pnpm workspaces, Turborepo, Vitest, Qdrant, tree-sitter (WASM), Hono, React 19, Zod, better-sqlite3.
 
@@ -103,45 +129,21 @@ After it completes:
 
 > Indexing is intentionally not run during install — your codebase may be large and you may want to configure include/exclude patterns first. Start it when you're ready.
 
-## Recent Improvements (v1.6 — RAG Retrieval Quality)
+## Recent Improvements (v2.0 — AST + LLM RAG Optimization)
 
-### Current Changes
+### Current Architecture (spec 008)
 
-- **SpecKit CLI integration** — `install.sh` now includes an optional step to install [SpecKit](https://github.com/github/spec-kit) (`specify` CLI) for spec-driven development workflows. Requires Python 3.11+ and uv; skips gracefully if unavailable.
-- **`.opencode/` untracked** — The `.opencode/` directory is now per-user configuration, no longer committed to git. Each developer maintains their own slash commands, skills, and agent definitions locally.
-
-### New in v1.6
-
-- **Query complexity classifier** — Deterministic regex-based routing (`classifyQuery`) detects keyword/symbol queries (camelCase, dot-notation, quoted strings, lookup verbs) and routes them directly to BM25, skipping vector search entirely. Configurable via `retrieval.classificationRules` in project.json. Eliminates keyword lookup regression.
-- **Line-number-aware results** — MCP search results now display `file:startLine-endLine` format (e.g., `src/Foo.ts:10-25`). Pipeline validates chunk boundaries against actual file line counts.
-- **Confidence-based early exit** — Keyword queries classified at ≥0.8 confidence skip the semantic fallback path entirely, with structured logging of `earlyExit`/`earlyExitReason` for observability. Configurable via `retrieval.earlyExitConfidence`.
-- **Benchmark preflight gate** — `BenchmarkRunner.run()` now validates all required MCP tools are available before executing queries. Throws `BenchmarkPreflightError` with a formatted tool status table if any required tool is blocked. Bypass with `skipPreflight: true`.
-- **Configurable hybrid search tuning** — Four new project.json fields: `keywordPrefetchMultiplier`, `semanticPrefetchMultiplier` (1-10, control branch prefetch limits), `rrfK` (1-200, RRF constant), and `rrfScoreThreshold` (0-1). Tune hybrid search per-project without code changes.
-- **New MCP tools:** `get_module_dependencies` and `benchmark_preflight` (5 total benchmark tools)
-
-### New in v1.1
-
-- **LLM-based semantic chunking** — New `--strategy llm` option for `ia-framework index` uses Ollama to generate rich prose summaries of code chunks, stored in a separate `{project}-llm` collection. Content-hash caching (SHA-256) avoids re-processing unchanged files. Use alongside AST chunking for complementary retrieval strategies. The chunking model can be pre-configured via `init --llm-model` or in project.json's `indexing.llm.model`.
-- **Multi-collection search** — Search across both AST and LLM collections simultaneously with Reciprocal Rank Fusion (RRF) merging. Results are tagged with their source (`ast`/`llm`) so you can see which strategy found each match.
-- **Dashboard Search page** — Interactive search directly in the dashboard with collection selector (AST/LLM/both), result list with source tags, latency metrics, score distribution charts, and an A/B comparison layout for side-by-side strategy evaluation.
-- **Dashboard Search History** — All searches are auto-persisted to SQLite. Filter by date, strategy, query text, or minimum score. Replay past searches and diff results before/after re-indexing.
-- **Dashboard Analytics** — MRR and latency trend charts over time, strategy comparison (radar/bar charts + comparison table), score distribution histograms, and token breakdown charts (indexing vs query, AST/LLM split).
-- **`ia-framework init` command** — Auto-detect your target project's tech stack (language, framework, package manager, test runner) with interactive confirmation and project.json generation.
-- **Java language support** — tree-sitter Java grammar added for AST-aware chunking of Java codebases.
-- **251+ tests** across 14 packages (up from 218), all passing with TDD.
-
-### From v1.0
-
-- **Hybrid search (MRR-optimized)** — `search_codebase_hybrid` MCP tool combines BM25 sparse vectors with dense semantic vectors via Reciprocal Rank Fusion (RRF).
-- **MRR-tuned score threshold** — Default `score_threshold` lowered from 0.5 → 0.3 based on benchmark sweep (MRR=0.50 across 0.3/0.4/0.5; 0.6 dropped to MRR=0.46).
-- **Prose-description embeddings** — Text vectors embed structured prose descriptions instead of raw source for better semantic matching.
-- **Corpus generator CLI** — `ia-framework benchmark init-corpus` generates a 30-query benchmark corpus using a local LLM.
-- **Graceful indexing stop** — `ia-framework index-stop` or dashboard Stop button halts indexing after the current batch.
-- **Dashboard live updates** — Polls for progress every 2 seconds during CLI-triggered indexing.
-- **Multi-schema PostgreSQL indexing** — `db index` supports databases with multiple schemas.
-- **Embedding model switching** — Switch models at any time with `--model`; dimension discovery and collection migration handled automatically.
-- **Qwen3 embedding support** — `qwen3-embedding:0.6b`, `1.7b`, and `4b` variants recognized with correct dimensions.
-- **32KB+ file support** — tree-sitter upgrade removes the previous file size limit.
+- **Unified indexing pipeline** — Single AST-first pass with optional LLM enrichment replaces the old `--strategy ast|llm` toggle. Every file is parsed, classified, optionally enriched, and embedded through one pipeline.
+- **Triple-vector storage** — 3 named vectors per chunk (semantic, signature, sparse) replace the old dual-vector (text + code) scheme. Enables automatic query routing without separate tools.
+- **Lean Qdrant payloads** — No raw code stored in the vector database. Content is read from the filesystem at retrieval time, keeping the index lightweight and avoiding stale content.
+- **Stereotype + archLayer classification** — Every chunk is classified by role (service, controller, repository, entity, dto, test, ...) and layer (presentation, service, domain, persistence, infrastructure) for metadata filtering.
+- **10 supported formats** — TypeScript, TSX, JavaScript, JSX, Java, Proto, YAML, XML, SQL, plus any-file-as-module fallback.
+- **3 consolidated MCP tools** — `search_codebase`, `get_file`, `get_dependencies` replace the old 6+ tool surface. Metadata filters, line-range queries, BFS depth traversal built in.
+- **Session-level caching** — `CachingEmbeddingProvider` (LRU-100), `get_file` dedup (mtime-validated), `search_codebase` dedup (hash-keyed). Saves 70-90% tokens on repeated calls.
+- **Token-efficient `get_file`** — Optional `startLine`/`endLine` and `name` filters reduce response size by 70-80% per call.
+- **Test class exclusion** — Test files excluded from search by default; re-included when query has test intent.
+- **Interface implementation expansion** — Searching for an interface automatically surfaces its implementations.
+- **Query auto-classification** — Keyword/symbol queries route to BM25, semantic queries to dense vectors, with confidence-based early exit.
 
 ---
 
@@ -160,7 +162,7 @@ pnpm install
 pnpm build
 
 # Verify everything works
-pnpm test        # 251+ tests across 14 packages
+pnpm test        # 280+ tests across 23 packages
 pnpm typecheck   # Type-check all packages
 ```
 
@@ -233,10 +235,12 @@ mkdir -p .ia-framework
       "**/*.tsx",
       "**/*.js",
       "**/*.jsx",
-      "**/*.py",
-      "**/*.go",
-      "**/*.rs",
-      "**/*.java"
+      "**/*.java",
+      "**/*.proto",
+      "**/*.yaml",
+      "**/*.yml",
+      "**/*.xml",
+      "**/*.sql"
     ],
     "excludePatterns": [
       "**/node_modules/**",
@@ -285,7 +289,9 @@ Or set the API key via environment variable: `export OPENAI_API_KEY=sk-...`
 ia-framework index
 ```
 
-This walks your project, parses files with tree-sitter into AST-aware chunks, generates embeddings, and stores them in Qdrant. It also builds a file-level dependency graph (`graph.sqlite`) for hop expansion.
+This walks your project through the unified pipeline: parses files with tree-sitter into AST-aware chunks, classifies each by stereotype/archLayer, optionally enriches with LLM metadata (requires Ollama), generates triple-vector embeddings, and stores lean payloads in Qdrant. It also builds a file-level dependency graph (`graph.sqlite`) for hop expansion.
+
+Use `--skip-enrichment` to skip the LLM enrichment step (faster, works without Ollama).
 
 Subsequent runs are incremental — only modified files (detected via `git diff`) are re-indexed.
 
@@ -320,16 +326,13 @@ Add the MCP server to OpenCode's config at `~/.config/opencode/opencode.json`:
 
 Restart OpenCode. The following tools are now available to your AI assistant:
 
-| MCP Tool                  | Description                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------ |
-| `search_codebase`         | Semantic search with dependency graph expansion and query classification       |
-| `search_codebase_hybrid`  | Hybrid BM25 + semantic search with RRF fusion and configurable prefetch tuning |
-| `get_file`                | Retrieve all indexed chunks for a specific file                                |
-| `get_dependencies`        | Get imports and exports for a file                                             |
-| `get_module_dependencies` | Get Maven module dependency graph (BFS traversal)                              |
-| `benchmark_preflight`     | Validate MCP tool availability before benchmark runs                           |
-| `query_database`          | Execute SQL against a configured PostgreSQL database                           |
-| `index_database_schema`   | Index database schema into Qdrant                                              |
+| MCP Tool                | Description                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `search_codebase`       | Semantic + keyword search with auto-classification, metadata filters, and dependency graph expansion |
+| `get_file`              | Retrieve file content with optional line-range or function-name filtering                            |
+| `get_dependencies`      | Get imports/exports for a file or BFS module dependency traversal                                    |
+| `query_database`        | Execute SQL against a configured PostgreSQL database                                                 |
+| `index_database_schema` | Index database schema into Qdrant for search                                                         |
 
 ### Step 9: Start the Dashboard (Optional)
 
@@ -346,9 +349,9 @@ Open http://localhost:3000 to see:
 - **Token Usage** — Daily token consumption charts, per-query breakdown
 - **Benchmarks** — Hit@K and MRR trends over time
 - **Indexing** — Trigger re-indexing, view progress
-- **Search** — Interactive codebase search with collection selector (AST/LLM/both), source-tagged results, latency metrics, score distribution charts, and A/B comparison layout for strategy evaluation
-- **Search History** — Auto-persisted search log with filtering (date, strategy, query text, min score) and replay/diff for before/after comparison
-- **Analytics** — MRR and latency trends, strategy comparison (radar/bar charts + table), score distribution histograms, token breakdown charts (indexing vs query, AST/LLM split)
+- **Search** — Interactive codebase search with metadata filters (stereotype, archLayer, module), source-tagged results, latency metrics, score distribution charts
+- **Search History** — Auto-persisted search log with filtering (date, query text, min score) and replay/diff for before/after comparison
+- **Analytics** — MRR and latency trends, score distribution histograms, token breakdown charts (indexing vs query)
 
 ### Step 10: Inject RAG Guidance (Optional)
 
@@ -380,22 +383,22 @@ Verify the CLI is installed and working. Prints available commands and the dashb
 ```bash
 ia-framework init [options]
   --config <path>    Path to project.json
-  --llm-model <model>  Ollama model for LLM chunking (e.g. llama3.2:latest)
-  --llm-url <url>      Ollama URL for LLM chunking (default: http://localhost:11434)
+  --enrichment-model <model>  Ollama model for LLM enrichment (e.g. llama3.2:latest)
+  --enrichment-url <url>      Ollama URL for enrichment (default: http://localhost:11434)
 ```
 
 Auto-detect your target project's tech stack (language, framework, package manager, test runner, build commands). Presents an interactive confirmation and saves the detected profile to `project.json`.
 
 ```bash
 ia-framework index [options]
-  --strategy <type>  Chunking strategy: "ast" (default) or "llm"
+  --skip-enrichment  Skip LLM enrichment step (faster, works without Ollama)
   --force            Re-index all files (skip incremental detection)
   --model <name>     Override embedding model for this run (auto-pulls if not installed,
                      auto-discovers dimensions, detects collection mismatches)
   --config <path>    Path to project.json
 ```
 
-Indexes your target project into Qdrant. With `--strategy ast` (default), uses tree-sitter AST-aware chunking. With `--strategy llm`, uses Ollama to generate rich prose summaries stored in a separate `{project}-llm` collection with content-hash caching. Subsequent runs are incremental — only files changed since the last indexed git commit are re-processed. Use `--force` to re-index everything.
+Indexes your target project into Qdrant via the unified pipeline: AST parsing → stereotype classification → optional LLM enrichment → triple-vector embedding → lean storage. Subsequent runs are incremental — only files changed since the last indexed git commit are re-processed. Use `--force` to re-index everything.
 
 ```bash
 ia-framework index-stop [options]
@@ -407,7 +410,7 @@ Request graceful cancellation of a running index job. The indexer finishes its c
 ```bash
 ia-framework search <query> [options]
   --limit <n>        Max results (default: 10)
-  --threshold <n>    Min similarity score 0–1 (default: 0.3; MRR-tuned)
+  --threshold <n>    Min similarity score 0–1 (default: 0.5)
   --config <path>    Path to project.json
 
 # Examples
@@ -415,7 +418,7 @@ ia-framework search "authentication middleware"
 ia-framework search "database connection pool" --limit 5 --threshold 0.7
 ```
 
-Semantic search with dependency graph expansion. Results include 1–2 hops of imported files based on `retrieval.expansionHops` in config (0=off, 1=direct imports, 2=transitive).
+Semantic search with auto-classification and dependency graph expansion. Keyword queries route to BM25, semantic queries to dense vectors. Results include 0–2 hops of imported files based on `retrieval.expansionHops` in config (0=off, 1=direct imports, 2=transitive).
 
 ```bash
 ia-framework status [options]
@@ -521,7 +524,7 @@ ia-framework prompt bump [options]
   --config <path>    Path to project.json
 ```
 
-Increments the prompt version counter, invalidating the LLM chunk cache. Use this after modifying the LLM chunking prompt to force re-summarization on the next `index --strategy llm` run.
+Increments the prompt version counter, invalidating the LLM enrichment cache. Use this after modifying the enrichment prompt to force re-enrichment on the next `index` run.
 
 ```bash
 ia-framework prompt compare <v1> <v2> [options]
@@ -555,69 +558,64 @@ Checks whether RAG guidance has been injected into the target project's agent do
 
 ### search_codebase
 
-The primary tool. AI assistants call this to find relevant code for the task at hand.
+The primary tool. AI assistants call this to find relevant code for the task at hand. Queries are auto-classified (semantic/keyword/existence/aggregation) and routed to the optimal search path. Top-5 results include live file content read from disk; results 6-10 are metadata-only to reduce token usage.
 
-| Parameter         | Type   | Default  | Description                                                       |
-| ----------------- | ------ | -------- | ----------------------------------------------------------------- |
-| `query`           | string | required | Natural language search query                                     |
-| `limit`           | number | 10       | Maximum number of results                                         |
-| `score_threshold` | number | 0.3      | Minimum similarity score (0-1); tuned via MRR benchmark sweep     |
-| `expand_hops`     | number | 1        | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive |
+| Parameter         | Type    | Default  | Description                                                                                 |
+| ----------------- | ------- | -------- | ------------------------------------------------------------------------------------------- |
+| `query`           | string  | required | Natural language search query                                                               |
+| `limit`           | number  | 10       | Maximum number of results                                                                   |
+| `score_threshold` | number  | 0.5      | Minimum similarity score (0-1). Set to 0 to disable filtering.                              |
+| `expand_hops`     | number  | 2        | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive (default)                 |
+| `fallback`        | boolean | true     | Enable zero-result fallback with suggestions. Set false for raw empty results.              |
+| `use_template`    | boolean | true     | Enable prompt template injection for detected query intents. Set false to disable.          |
+| `repo`            | string  | —        | Filter results to a specific repo by name. Omit to search all repos.                        |
+| `stereotype`      | string  | —        | Filter by stereotype (e.g. 'service', 'repository', 'controller', 'entity', 'dto')          |
+| `archLayer`       | string  | —        | Filter by layer (e.g. 'presentation', 'service', 'domain', 'persistence', 'infrastructure') |
+| `module`          | string  | —        | Filter by module name (maps to moduleInfo.module in Qdrant payload)                         |
+| `language`        | string  | —        | Filter by programming language (e.g. 'java', 'typescript', 'python')                        |
 
-**Example response:**
+**Token-conscious patterns:**
 
-````markdown
-## Code results for: "authentication middleware"
-
-### 1. src/auth/middleware.ts (validateToken) — score: 0.89 [both]
-
-```typescript
-export function validateToken(req: Request): AuthResult {
-  const token = req.headers.get('Authorization')?.split(' ')[1];
-  // ...
-}
 ```
+# Narrow search with metadata filters — fewer irrelevant results
+search_codebase(query="entry creation", stereotype="service", module="entry-api")
 
-### 2. src/auth/types.ts (AuthResult) — score: 0.82 [text] ← expanded via dependency graph
-
-```typescript
-export interface AuthResult {
-  valid: boolean;
-  userId?: string;
-}
+# Disable expansion when you only need the exact match
+search_codebase(query="EntryService.create", expand_hops=0)
 ```
-````
-
-The `[both]`, `[text]`, `[code]` tags show which vector matched. Expanded results (from the dependency graph) appear alongside direct matches so the AI gets the full context.
-
-### search_codebase_hybrid
-
-Combines BM25 sparse vectors (term frequency) with dense semantic vectors and fuses the ranked lists using Reciprocal Rank Fusion (RRF). Best for queries that mix semantic intent with exact identifiers.
-
-| Parameter         | Type   | Default  | Description                                                       |
-| ----------------- | ------ | -------- | ----------------------------------------------------------------- |
-| `query`           | string | required | Natural language search query                                     |
-| `limit`           | number | 10       | Maximum number of results                                         |
-| `score_threshold` | number | 0.3      | Minimum similarity score (0-1)                                    |
-| `expand_hops`     | number | 1        | Dependency graph expansion: 0=off, 1=direct imports, 2=transitive |
-
-Falls back to standard semantic search if sparse vectors are not yet indexed (e.g., on older collections indexed before Phase 11).
 
 ### get_file
 
-Retrieves all indexed chunks for a file in reading order.
+Retrieves file content with optional filtering. Reads live content from the filesystem; falls back to stored Qdrant metadata if the file is inaccessible. Returns chunk-level metadata (imports, exports, dependency edges, stereotype, archLayer).
 
-| Parameter | Type   | Description                                         |
-| --------- | ------ | --------------------------------------------------- |
-| `path`    | string | Relative file path (e.g., `src/auth/middleware.ts`) |
+Session dedup: second identical call returns a short "Content unchanged" message (~15 tokens) if file mtime hasn't changed.
+
+| Parameter   | Type   | Default  | Description                                                                              |
+| ----------- | ------ | -------- | ---------------------------------------------------------------------------------------- |
+| `path`      | string | required | Relative file path (e.g., `src/auth/middleware.ts`). Supports `repo:path` prefix syntax. |
+| `startLine` | number | —        | Start line (1-indexed). When provided with endLine, returns only that range.             |
+| `endLine`   | number | —        | End line (1-indexed). When provided with startLine, returns only that range.             |
+| `name`      | string | —        | Filter to chunks matching this function/class name (case-insensitive).                   |
+
+**Token-conscious patterns:**
+
+```
+# After search_codebase returns "Entry.java:166-231 (create)", get just that range:
+get_file(path="src/Entry.java", startLine=166, endLine=231)
+
+# Or get by function name (uses indexed chunk metadata):
+get_file(path="src/Entry.java", name="create")
+```
 
 ### get_dependencies
 
-Returns imports and exports for a file.
+Returns imports and exports for a file or module. Provide either `path` (file-level lookup) or `module` (module-level with BFS traversal). Returns full `dependencyEdges` for graph navigation.
 
-| Parameter | Type   | Description        |
-| --------- | ------ | ------------------ |
-| `path`    | string | Relative file path |
+| Parameter | Type   | Default | Description                                                              |
+| --------- | ------ | ------- | ------------------------------------------------------------------------ |
+| `path`    | string | —       | Relative file path. Mutually exclusive with `module`.                    |
+| `module`  | string | —       | Module name (maps to moduleInfo.module). Mutually exclusive with `path`. |
+| `depth`   | number | 1       | BFS traversal depth for module queries (default: 1, max: 3).             |
 
 ### query_database
 
@@ -629,7 +627,7 @@ Executes SQL against a configured PostgreSQL database. Only available if `db.jso
 
 ### index_database_schema
 
-Triggers indexing of the PostgreSQL schema into Qdrant so `search_codebase` can find table/column information.
+Triggers indexing of the PostgreSQL schema into Qdrant so `search_codebase` can find table/column information. No parameters required.
 
 ## Extending with MCP Servers
 
@@ -723,19 +721,21 @@ The main config file is `.ia-framework/project.json`:
     "collectionName": "codebase"
   },
   "indexing": {
-    "includePatterns": ["**/*.ts", "**/*.py"],
+    "includePatterns": ["**/*.ts", "**/*.java", "**/*.proto", "**/*.yaml", "**/*.xml", "**/*.sql"],
     "excludePatterns": ["**/node_modules/**"],
     "respectGitignore": true,
     "maxChunkLines": 200,
-    "llm": {
+    "enrichment": {
       "model": "llama3.2:latest",
-      "ollamaUrl": "http://localhost:11434"
+      "ollamaUrl": "http://localhost:11434",
+      "concurrency": 4,
+      "retryAttempts": 2,
+      "skipOnFailure": true
     }
   },
   "retrieval": {
     "mode": "mcp-only", // "mcp-only", "auto-context" (v2), "combined" (v2)
-    "expansionHops": 1, // 0 = off, 1 = direct imports, 2 = transitive
-    "autoContextTopK": 5, // Top results for auto-context (v2)
+    "expansionHops": 2, // 0 = off, 1 = direct imports, 2 = transitive (default)
     "earlyExitConfidence": 0.8, // Keyword early exit threshold (0-1)
     "keywordPrefetchMultiplier": 3, // BM25 branch prefetch multiplier (1-10)
     "semanticPrefetchMultiplier": 3, // Dense branch prefetch multiplier (1-10)
@@ -978,7 +978,7 @@ The `.specify/` directory in the repo contains project-local SpecKit configurati
 ### Running Tests
 
 ```bash
-pnpm test           # All 218 tests (Turborepo-cached)
+pnpm test           # All 280+ tests (Turborepo-cached)
 pnpm typecheck      # Type-check all packages
 pnpm build          # Build all 14 packages
 pnpm lint           # ESLint + Prettier
@@ -986,33 +986,46 @@ pnpm lint           # ESLint + Prettier
 
 ### Project Structure
 
-| Package                          | Tests | Purpose                                             |
-| -------------------------------- | ----- | --------------------------------------------------- |
-| `@ia-framework/core`             | 7     | Config loader, schemas, logger, shared types        |
-| `@ia-framework/ast-parser`       | 31    | tree-sitter chunking with oversized chunk splitting |
-| `@ia-framework/embedding`        | 8     | Ollama + OpenAI embedding adapters                  |
-| `@ia-framework/vector-store`     | 8     | Qdrant dual-vector storage                          |
-| `@ia-framework/indexer`          | 17    | File walker, incremental indexing, context sources  |
-| `@ia-framework/retrieval`        | 24    | Search engine, dependency graph, hop expansion      |
-| `@ia-framework/mcp-server`       | 17    | 8 MCP tools via stdio transport                     |
-| `@ia-framework/observability`    | 27    | Token counting, metrics SQLite store                |
-| `@ia-framework/benchmark`        | 19    | Hit@K, MRR, benchmark store, comparison             |
-| `@ia-framework/project-detector` | 19    | Language, framework, package manager detection      |
-| `@ia-framework/db-context`       | 14    | PostgreSQL schema extraction                        |
-| `@ia-framework/dashboard-api`    | 20    | Hono REST API (8 endpoints)                         |
-| `@ia-framework/cli`              | 23    | Commander.js CLI (6 command groups)                 |
-| `@ia-framework/dashboard`        | —     | React 19 monitoring UI                              |
+| Package                          | Tests | Purpose                                                              |
+| -------------------------------- | ----- | -------------------------------------------------------------------- |
+| `@ia-framework/core`             | 7     | Config loader, schemas, logger, shared types (Stereotype, ArchLayer) |
+| `@ia-framework/ast-parser`       | 40+   | tree-sitter chunking, stereotype classifier, module resolver         |
+| `@ia-framework/embedding`        | 12    | Ollama + OpenAI adapters + CachingEmbeddingProvider                  |
+| `@ia-framework/vector-store`     | 8     | Qdrant triple-vector storage (semantic, signature, sparse)           |
+| `@ia-framework/indexer`          | 20+   | Unified pipeline, LLM enrichment, file walker, incremental indexing  |
+| `@ia-framework/retrieval`        | 24    | Search engine, query classifier, dependency graph, hop expansion     |
+| `@ia-framework/mcp-server`       | 25+   | 3 MCP tools + session dedup caches via stdio transport               |
+| `@ia-framework/observability`    | 27    | Token counting, metrics SQLite store                                 |
+| `@ia-framework/benchmark`        | 19    | Hit@K, MRR, benchmark store, comparison                              |
+| `@ia-framework/project-detector` | 19    | Language, framework, package manager detection                       |
+| `@ia-framework/db-context`       | 14    | PostgreSQL schema extraction                                         |
+| `@ia-framework/dashboard-api`    | 20    | Hono REST API (8 endpoints)                                          |
+| `@ia-framework/cli`              | 23    | Commander.js CLI (6 command groups)                                  |
+| `@ia-framework/dashboard`        | —     | React 19 monitoring UI                                               |
 
 ### Adding a New Language
 
-ia-framework uses tree-sitter WASM grammars. To add support for a new language:
+ia-framework uses tree-sitter WASM grammars for full AST parsing, plus lightweight regex/indentation parsers for config formats. To add support for a new language:
 
 1. Install the grammar: `pnpm add tree-sitter-<language> -F @ia-framework/ast-parser`
-2. Add a grammar loader in `packages/ast-parser/src/`
+2. Add a parser in `packages/ast-parser/src/parsers/`
 3. Register chunk extraction rules for the language's node types
-4. Add include patterns in your `project.json`
+4. Add the extension mapping to `LANGUAGE_MAP` in `packages/ast-parser/src/chunker.ts`
+5. Add include patterns in your `project.json`
 
-Currently supported: TypeScript, TSX, JavaScript, JSX, Python, Java.
+Currently supported:
+
+| Language/Format | Extensions                    | Parser Technology                       |
+| --------------- | ----------------------------- | --------------------------------------- |
+| TypeScript      | `.ts`, `.tsx`                 | tree-sitter (full AST)                  |
+| JavaScript      | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter (full AST)                  |
+| Java            | `.java`                       | tree-sitter (full AST)                  |
+| Proto           | `.proto`                      | Regex-based (message/service/enum)      |
+| YAML            | `.yaml`, `.yml`               | Indentation-based (top-level keys)      |
+| XML             | `.xml`                        | Regex/line-based (Spring/Maven targets) |
+| SQL             | `.sql`                        | Whole-file (Flyway migration)           |
+
+Any file with an unrecognized extension is indexed as a single `module` chunk containing the full file content.
 
 ## Troubleshooting
 

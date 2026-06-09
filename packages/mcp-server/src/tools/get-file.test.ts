@@ -1,5 +1,5 @@
-import { describe, test, expect, vi } from 'vitest';
-import { parseRepoPath, getFileHandler } from './get-file.js';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { parseRepoPath, getFileHandler, resetGetFileSessionCache } from './get-file.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 
 describe('parseRepoPath', () => {
@@ -418,5 +418,174 @@ describe('T143: get_file with both name and line range — name takes precedence
     // Should use name-based filtering (lines 166-231), not the provided line range (1-10)
     expect(text).toContain('create method via name');
     expect(text).not.toContain('line range content that should not appear');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 18 (T150–T153): get_file session dedup
+// ---------------------------------------------------------------------------
+
+describe('T150: get_file session dedup returns short message on duplicate call', () => {
+  beforeEach(() => resetGetFileSessionCache());
+
+  function makeChunk(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
+    return {
+      chunkId: 'chunk-1',
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+      content: '',
+      startLine: 1,
+      endLine: 50,
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'authenticate',
+      imports: [],
+      exports: [],
+      score: 1.0,
+      matchedVector: 'semantic',
+      ...overrides,
+    };
+  }
+
+  test('returns short "Content unchanged" message on second identical call when mtime unchanged', async () => {
+    const chunk = makeChunk();
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    // Use a realistically-sized file content so the full response is larger than the dedup message
+    const fileContent = Array.from({ length: 50 }, (_, i) => `const line${i} = ${i};`).join('\n');
+    const readFileFn = vi.fn().mockResolvedValue(fileContent);
+    const statFn = vi.fn().mockResolvedValue({ mtimeMs: 1000 });
+
+    const options = { readFileFn, statFn, sessionCache: true };
+
+    // First call — full response
+    const first = await getFileHandler(engine, { path: 'src/auth.ts' }, options);
+    const firstText = (first.content[0] as { text: string }).text;
+    expect(firstText).toContain('const line0');
+
+    // Second call — should return short dedup message
+    const second = await getFileHandler(engine, { path: 'src/auth.ts' }, options);
+    const secondText = (second.content[0] as { text: string }).text;
+    expect(secondText.length).toBeLessThan(firstText.length);
+    expect(secondText.toLowerCase()).toContain('unchanged');
+  });
+});
+
+describe('T151: get_file session dedup invalidates on mtime change', () => {
+  beforeEach(() => resetGetFileSessionCache());
+
+  function makeChunk(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
+    return {
+      chunkId: 'chunk-1',
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+      content: '',
+      startLine: 1,
+      endLine: 50,
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'authenticate',
+      imports: [],
+      exports: [],
+      score: 1.0,
+      matchedVector: 'semantic',
+      ...overrides,
+    };
+  }
+
+  test('invalidates cached entry and returns fresh content when file mtime changes', async () => {
+    const chunk = makeChunk();
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi
+      .fn()
+      .mockResolvedValueOnce('original content')
+      .mockResolvedValueOnce('updated content');
+    const statFn = vi
+      .fn()
+      .mockResolvedValueOnce({ mtimeMs: 1000 }) // first call
+      .mockResolvedValueOnce({ mtimeMs: 2000 }); // second call - mtime changed
+
+    const options = { readFileFn, statFn, sessionCache: true };
+
+    // First call
+    const first = await getFileHandler(engine, { path: 'src/auth.ts' }, options);
+    const firstText = (first.content[0] as { text: string }).text;
+    expect(firstText).toContain('original content');
+
+    // Second call with changed mtime — should re-read file
+    const second = await getFileHandler(engine, { path: 'src/auth.ts' }, options);
+    const secondText = (second.content[0] as { text: string }).text;
+    expect(secondText).toContain('updated content');
+    expect(secondText.toLowerCase()).not.toContain('unchanged');
+  });
+});
+
+describe('T153: session dedup produces separate cache entries for different parameters', () => {
+  beforeEach(() => resetGetFileSessionCache());
+
+  function makeChunk(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
+    return {
+      chunkId: 'chunk-1',
+      filePath: '/project/src/auth.ts',
+      relativePath: 'src/auth.ts',
+      content: '',
+      startLine: 1,
+      endLine: 50,
+      language: 'typescript',
+      chunkType: 'function',
+      name: 'authenticate',
+      imports: [],
+      exports: [],
+      score: 1.0,
+      matchedVector: 'semantic',
+      ...overrides,
+    };
+  }
+
+  test('different paths produce separate cache entries', async () => {
+    const chunk = makeChunk();
+    const chunk2 = makeChunk({ relativePath: 'src/user.ts', filePath: '/project/src/user.ts' });
+    const engine = {
+      getFile: vi.fn().mockResolvedValueOnce([chunk]).mockResolvedValueOnce([chunk2]),
+    };
+    const readFileFn = vi
+      .fn()
+      .mockResolvedValueOnce('auth content')
+      .mockResolvedValueOnce('user content');
+    const statFn = vi.fn().mockResolvedValue({ mtimeMs: 1000 });
+
+    const options = { readFileFn, statFn, sessionCache: true };
+
+    const first = await getFileHandler(engine, { path: 'src/auth.ts' }, options);
+    const second = await getFileHandler(engine, { path: 'src/user.ts' }, options);
+
+    const firstText = (first.content[0] as { text: string }).text;
+    const secondText = (second.content[0] as { text: string }).text;
+    // Both should be full responses (different cache keys)
+    expect(firstText).toContain('auth content');
+    expect(secondText).toContain('user content');
+  });
+
+  test('same path with different name filter produces separate cache entries', async () => {
+    const chunk1 = makeChunk({ name: 'create', startLine: 10, endLine: 20 });
+    const chunk2 = makeChunk({ name: 'delete', startLine: 30, endLine: 40 });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk1, chunk2]) };
+    const readFileFn = vi
+      .fn()
+      .mockImplementation((_path: string, _repo?: string, startLine?: number) => {
+        if (startLine === 10) return Promise.resolve('create body');
+        if (startLine === 30) return Promise.resolve('delete body');
+        return Promise.resolve('full file');
+      });
+    const statFn = vi.fn().mockResolvedValue({ mtimeMs: 1000 });
+
+    const options = { readFileFn, statFn, sessionCache: true };
+
+    const first = await getFileHandler(engine, { path: 'src/auth.ts', name: 'create' }, options);
+    const second = await getFileHandler(engine, { path: 'src/auth.ts', name: 'delete' }, options);
+
+    const firstText = (first.content[0] as { text: string }).text;
+    const secondText = (second.content[0] as { text: string }).text;
+    expect(firstText).toContain('create body');
+    expect(secondText).toContain('delete body');
   });
 });

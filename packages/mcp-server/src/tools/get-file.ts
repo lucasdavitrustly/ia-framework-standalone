@@ -23,9 +23,56 @@ export interface GetFileOptions {
     startLine?: number,
     endLine?: number,
   ) => Promise<string>;
+  /** Optional stat function for mtime-based cache invalidation. Returns { mtimeMs: number }. */
+  statFn?: (path: string, repo?: string) => Promise<{ mtimeMs: number }>;
+  /** Enable session-level dedup cache. Default: false. */
+  sessionCache?: boolean;
 }
 
 export type ToolOutput = CallToolResult;
+
+// ---------------------------------------------------------------------------
+// Session-level dedup cache (T155)
+// ---------------------------------------------------------------------------
+
+interface GetFileCacheEntry {
+  responseText: string;
+  mtimeMs: number;
+  lineCount: number;
+  lastAccess: number;
+}
+
+const GET_FILE_CACHE_MAX = 100;
+const getFileCache = new Map<string, GetFileCacheEntry>();
+let getFileCacheAccessCounter = 0;
+
+function buildGetFileCacheKey(
+  path: string,
+  repo: string | undefined,
+  startLine: number | undefined,
+  endLine: number | undefined,
+  name: string | undefined,
+): string {
+  return `${repo ?? ''}:${path}:${startLine ?? ''}:${endLine ?? ''}:${name ?? ''}`;
+}
+
+function evictGetFileLRU(): void {
+  let oldestKey: string | undefined;
+  let oldestAccess = Infinity;
+  for (const [key, entry] of getFileCache) {
+    if (entry.lastAccess < oldestAccess) {
+      oldestAccess = entry.lastAccess;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey) getFileCache.delete(oldestKey);
+}
+
+/** Exported for testing: reset the session cache (used between test runs). */
+export function resetGetFileSessionCache(): void {
+  getFileCache.clear();
+  getFileCacheAccessCounter = 0;
+}
 
 /**
  * Parse an optional `repo:path` prefix from a file path string.
@@ -107,8 +154,65 @@ export async function getFileHandler(
     endLine: r.endLine,
   }));
 
+  // ── Session dedup check (T155) ──────────────────────────────────────────────
+  if (options?.sessionCache && readFileFn && options.statFn) {
+    const cacheKey = buildGetFileCacheKey(
+      filePath,
+      repo,
+      input.startLine,
+      input.endLine,
+      input.name,
+    );
+    const cached = getFileCache.get(cacheKey);
+
+    if (cached) {
+      // Check file mtime to validate cache
+      try {
+        const stat = await options.statFn(filePath, repo);
+        if (stat.mtimeMs === cached.mtimeMs) {
+          // Cache hit — mtime unchanged, return short dedup message
+          cached.lastAccess = ++getFileCacheAccessCounter;
+          const shortMsg = `Content unchanged since previous request (${cached.lineCount} lines, ${filePath}). Use startLine/endLine or name to narrow.`;
+          return {
+            content: [{ type: 'text', text: shortMsg }],
+            structuredContent: { answered: true, cached: true, chunks },
+          };
+        }
+        // Mtime changed — invalidate and fall through to re-read
+        getFileCache.delete(cacheKey);
+      } catch {
+        // stat failed — invalidate and fall through
+        getFileCache.delete(cacheKey);
+      }
+    }
+  }
+
   // ── Filesystem-read path ──────────────────────────────────────────────────
   if (readFileFn) {
+    // Helper to store response in session cache after a successful filesystem read
+    const storeInCache = async (text: string, lineCount: number): Promise<void> => {
+      if (!options?.sessionCache || !options.statFn) return;
+      const cacheKey = buildGetFileCacheKey(
+        filePath,
+        repo,
+        input.startLine,
+        input.endLine,
+        input.name,
+      );
+      try {
+        const stat = await options.statFn(filePath, repo);
+        if (getFileCache.size >= GET_FILE_CACHE_MAX) evictGetFileLRU();
+        getFileCache.set(cacheKey, {
+          responseText: text,
+          mtimeMs: stat.mtimeMs,
+          lineCount,
+          lastAccess: ++getFileCacheAccessCounter,
+        });
+      } catch {
+        // stat failed — skip caching
+      }
+    };
+
     try {
       // ── Name filter path: filter chunks by name, read only matching ranges ──
       if (input.name) {
@@ -141,6 +245,11 @@ export async function getFileHandler(
 
           const title = `## File: ${filePath} (filtered by name: "${input.name}")`;
           const text = `${title}\n\n${sections.join('\n\n')}`;
+          const totalLines = matchingChunks.reduce(
+            (sum, c) => sum + (c.endLine - c.startLine + 1),
+            0,
+          );
+          await storeInCache(text, totalLines);
           return {
             content: [{ type: 'text', text }],
             structuredContent: {
@@ -157,6 +266,8 @@ export async function getFileHandler(
         const note = `Note: No chunks matching name "${input.name}" found. Returning full file.`;
         const title = `## File: ${filePath}`;
         const text = `${note}\n\n${title}\n\n\`\`\`${lang}\n${fileContent}\n\`\`\``;
+        const lineCount = fileContent.split('\n').length;
+        await storeInCache(text, lineCount);
         return {
           content: [{ type: 'text', text }],
           structuredContent: {
@@ -179,6 +290,7 @@ export async function getFileHandler(
         const lang = results[0]?.language ?? '';
         const title = `## File: ${filePath} (lines ${input.startLine}-${input.endLine})`;
         const text = `${title}\n\n\`\`\`${lang}\n${slicedContent}\n\`\`\``;
+        await storeInCache(text, end - start);
         return {
           content: [{ type: 'text', text }],
           structuredContent: {
@@ -194,6 +306,8 @@ export async function getFileHandler(
       const lang = results[0]?.language ?? '';
       const title = `## File: ${filePath}`;
       const text = `${title}\n\n\`\`\`${lang}\n${fileContent}\n\`\`\``;
+      const lineCount = fileContent.split('\n').length;
+      await storeInCache(text, lineCount);
       return {
         content: [{ type: 'text', text }],
         structuredContent: {

@@ -16,7 +16,7 @@
 import { join, dirname } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, createLogger, RepoRegistry } from '@ia-framework/core';
-import { createEmbeddingProvider } from '@ia-framework/embedding';
+import { createEmbeddingProvider, CachingEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import {
@@ -37,7 +37,9 @@ async function main(): Promise<void> {
 
   const config = await loadConfig(configPath);
 
-  const embeddingProvider = createEmbeddingProvider(config.embedding);
+  const baseEmbeddingProvider = createEmbeddingProvider(config.embedding);
+  // Wrap with caching layer (T157) — deterministic embed() results cached LRU-100
+  const embeddingProvider = new CachingEmbeddingProvider(baseEmbeddingProvider);
   // MCP server runs on the host machine — use QDRANT_HOST env var or fall back to localhost.
   // config.vectorStore.host may be "qdrant" (the Docker service name), which only
   // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
