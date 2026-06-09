@@ -99,6 +99,86 @@ select_embedding_model() {
 }
 
 # ──────────────────────────────────────────────────────
+# select_enrichment_model
+# Interactive model selection for LLM metadata enrichment.
+# Sets SELECTED_ENRICHMENT_MODEL env var.
+# ──────────────────────────────────────────────────────
+select_enrichment_model() {
+  echo ""
+  echo -e "  ${BOLD}Select an LLM enrichment model:${NC}"
+  echo "  (Used to generate descriptions, tags and relationships for indexed chunks)"
+  echo ""
+
+  # Get list of locally available models
+  local models=()
+  while IFS= read -r line; do
+    models+=("$line")
+  done < <(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
+
+  local selected_model=""
+
+  if [ ${#models[@]} -eq 0 ]; then
+    echo "  No models found locally."
+    echo "  Recommended: qwen3:8b (good quality/speed), mistral:7b, llama3:8b"
+    printf "  Enter a model name to pull [qwen3:8b]: "
+    read -r selected_model
+    selected_model="${selected_model:-qwen3:8b}"
+  else
+    # Known enrichment LLM models for hint markers
+    local known_llm="qwen3 mistral llama3 llama2 gemma2 phi3 codellama deepseek-coder"
+
+    for i in "${!models[@]}"; do
+      local hint=""
+      local short_name="${models[$i]%%:*}"
+      if echo "$known_llm" | grep -qw "$short_name"; then
+        hint=" [llm]"
+      fi
+      echo "    $((i+1)). ${models[$i]}${hint}"
+    done
+    echo "    $((${#models[@]}+1)). Enter a custom model name"
+    echo "    $((${#models[@]}+2)). Skip enrichment (index without LLM metadata)"
+
+    printf "  Select [1 = first model, or press Enter for qwen3:8b default]: "
+    read -r choice
+    choice="${choice:-}"
+
+    local skip_opt=$(( ${#models[@]} + 2 ))
+    local custom_opt=$(( ${#models[@]} + 1 ))
+
+    if [ "$choice" = "$skip_opt" ] 2>/dev/null; then
+      echo -e "  ${YELLOW}⚠${NC} Enrichment skipped — indexes will contain AST metadata only (no LLM descriptions)"
+      export SELECTED_ENRICHMENT_MODEL=""
+      return 0
+    elif [ "$choice" = "$custom_opt" ] 2>/dev/null; then
+      printf "  Enter model name: "
+      read -r selected_model
+    elif [ -n "$choice" ] && [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#models[@]}" ] 2>/dev/null; then
+      selected_model="${models[$((choice-1))]}"
+    else
+      # No choice or invalid — default to qwen3:8b
+      selected_model="qwen3:8b"
+    fi
+  fi
+
+  # Auto-pull if not already available
+  if [ -n "$selected_model" ] && ! ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -qx "$selected_model"; then
+    echo -e "  ${YELLOW}→${NC} Pulling enrichment model: ${selected_model}"
+    echo "    (This may take several minutes for larger models...)"
+    if ! ollama pull "$selected_model"; then
+      echo -e "  ${YELLOW}⚠${NC} Failed to pull ${selected_model} — enrichment will be skipped at index time."
+      selected_model=""
+    fi
+  fi
+
+  if [ -n "$selected_model" ]; then
+    echo -e "  ${GREEN}✓${NC} Enrichment model ${selected_model} ready"
+  fi
+
+  # Export for init-config.sh to consume
+  export SELECTED_ENRICHMENT_MODEL="$selected_model"
+}
+
+# ──────────────────────────────────────────────────────
 # install_ollama
 # Installs Ollama if not already installed.
 # Starts the Ollama service.
@@ -163,8 +243,11 @@ install_ollama() {
     esac
   fi
 
-  # Interactive model selection
+  # Interactive model selection for embedding
   select_embedding_model
+
+  # Interactive model selection for enrichment (LLM metadata)
+  select_enrichment_model
 
   return 0
 }

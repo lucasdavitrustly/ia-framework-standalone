@@ -187,8 +187,6 @@ Guidelines:
   - Use `ia-framework_get_dependencies` to understand a file's imports and exports
 - Fall back to Glob/Grep/Read only when:
   - ia-framework tools return no results or insufficient context
-  - You need to search non-code files (configs, logs, etc.)
-  - You need broad file pattern matching (e.g. "find all .test.ts files")
 - Use Bash only for listing directory contents or other read-only operations
 - Adapt your search approach based on the thoroughness level specified by the caller
 - Return file paths as absolute paths in your final response

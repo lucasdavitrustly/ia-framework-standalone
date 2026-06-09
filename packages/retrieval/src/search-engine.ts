@@ -6,22 +6,26 @@ import type {
   FallbackSuggestion,
 } from './types.js';
 import { analyzeRetrievalQuery } from './query-intelligence.js';
-import { mmrRerank, classifyQueryLambda } from './mmr.js';
+import { mmrRerank, classifyQueryLambda, jaccardSimilarity } from './mmr.js';
 import { getRelatedTerms } from './search-synonyms.js';
 import { applyElbowTruncation } from './elbow-detection.js';
+import { DependencyGraph } from './dependency-graph.js';
+import { classifyQuery, getVectorsForQueryType, detectTestIntent } from './query-classifier.js';
 
 type VectorSearchResult = {
   id: string;
   score: number;
-  vectorName: 'text' | 'code';
+  vectorName: string;
   payload: {
     chunkId: string;
-    filePath: string;
+    /** @deprecated not written by new indexer — reconstructed from projectRoot + relativePath */
+    filePath?: string | undefined;
     relativePath: string;
     language: string;
     chunkType: string;
     name?: string | undefined;
-    content: string;
+    content?: string | undefined;
+    contentHash?: string | undefined;
     startLine: number;
     endLine: number;
     imports: string[];
@@ -39,21 +43,36 @@ type VectorSearchResult = {
     calls?: string[] | undefined;
     calledBy?: string[] | undefined;
     repoId?: string | undefined;
+    dependencyEdges?:
+      | Array<{
+          targetPath: string;
+          relation: string;
+          symbols?: string[] | undefined;
+        }>
+      | undefined;
   };
 };
 
 function toRetrievalResult(
   raw: VectorSearchResult,
-  matchedVector: 'text' | 'code' | 'both',
+  matchedVector: string,
+  projectRoot?: string,
 ): RetrievalResult {
+  // T078: filePath is no longer stored in Qdrant by the new indexer.
+  // Reconstruct absolute path from projectRoot + relativePath.
+  // Fall back to stored filePath for backward compat with old-schema collections.
+  const filePath =
+    raw.payload.filePath ||
+    (projectRoot ? `${projectRoot}/${raw.payload.relativePath}` : raw.payload.relativePath);
   return {
     chunkId: raw.payload.chunkId,
-    filePath: raw.payload.filePath,
+    filePath,
     relativePath: raw.payload.relativePath,
     language: raw.payload.language,
     chunkType: raw.payload.chunkType,
     name: raw.payload.name,
-    content: raw.payload.content,
+    content: raw.payload.content ?? '',
+    contentHash: raw.payload.contentHash,
     startLine: raw.payload.startLine,
     endLine: raw.payload.endLine,
     imports: raw.payload.imports,
@@ -71,7 +90,11 @@ function toRetrievalResult(
     calledBy: raw.payload.calledBy,
     repoId: raw.payload.repoId,
     score: raw.score,
+    scoreType: 'cosine' as const,
     matchedVector,
+    ...(raw.payload.dependencyEdges != null
+      ? { dependencyEdges: raw.payload.dependencyEdges }
+      : {}),
   };
 }
 
@@ -150,6 +173,62 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
 }
 
 /**
+ * T135: Apply test exclusion filter by default.
+ *
+ * Injects `must_not: [{ key: 'stereotype', match: { value: 'test' } }]` into
+ * the query filter unless:
+ * 1. The query has test intent (user is explicitly asking about tests)
+ * 2. The user already provided a stereotype filter (explicit inclusion/exclusion)
+ *
+ * This prevents test classes, helpers, fakes, and fixtures from appearing in
+ * production code searches — freeing result slots for relevant implementation code.
+ */
+function applyTestExclusionFilter(query: RetrievalQuery): Record<string, unknown> | undefined {
+  const hasTestIntent = detectTestIntent(query.text);
+
+  // Check if user explicitly provided a stereotype filter
+  const userFilter = query.filter as Record<string, unknown> | undefined;
+  const hasStereotypeFilter = userFilter ? hasFilterKey(userFilter, 'stereotype') : false;
+
+  // Don't apply exclusion when test intent or explicit stereotype filter
+  if (hasTestIntent || hasStereotypeFilter) {
+    return userFilter;
+  }
+
+  // Inject must_not for test stereotype
+  const mustNot = [{ key: 'stereotype', match: { value: 'test' } }];
+
+  if (!userFilter) {
+    return { must_not: mustNot };
+  }
+
+  // Merge with existing filter (preserve existing must/should/must_not)
+  return {
+    ...userFilter,
+    must_not: [...((userFilter.must_not as Array<unknown>) ?? []), ...mustNot],
+  };
+}
+
+/**
+ * Check if a Qdrant filter object references a specific key anywhere
+ * (in must, should, or must_not clauses).
+ */
+function hasFilterKey(filter: Record<string, unknown>, key: string): boolean {
+  const checkClauses = (clauses: unknown): boolean => {
+    if (!Array.isArray(clauses)) return false;
+    return clauses.some(
+      (clause: unknown) =>
+        typeof clause === 'object' &&
+        clause !== null &&
+        'key' in clause &&
+        (clause as { key: string }).key === key,
+    );
+  };
+
+  return checkClauses(filter.must) || checkClauses(filter.should) || checkClauses(filter.must_not);
+}
+
+/**
  * Semantic search engine that queries both 'text' and 'code' Qdrant vectors,
  * deduplicates results by chunkId (max-score merge), and returns ranked RetrievalResult[].
  */
@@ -161,9 +240,38 @@ export class SearchEngine {
   }
 
   /**
+   * T067: Lightweight health check — probes the embedding provider and vector
+   * store with a minimal query to verify they are reachable.
+   *
+   * Called lazily on first `searchWithExpansion()` invocation, but can also
+   * be called directly (e.g. on server startup or for operational dashboards).
+   *
+   * Returns `{ ok: true, latencyMs }` on success or
+   * `{ ok: false, error, latencyMs }` on failure (does not throw).
+   */
+  async healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+    const start = Date.now();
+    try {
+      await this.config.embeddingProvider.embed('health check probe', 'query');
+      return { ok: true, latencyMs: Date.now() - start };
+    } catch (err) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
    * Search the indexed codebase using a natural language query.
-   * Embeds the query, searches both 'text' and 'code' named vectors,
-   * merges results by max-score, and returns top `limit` results.
+   *
+   * T061: Unified search pipeline.
+   * 1. Classify the query to determine which vectors to search.
+   * 2. Embed the query once (all dense searches use the same vector).
+   * 3. Search only the relevant vectors based on query type.
+   * 4. Merge by max-score.
+   * 5. Apply MMR diversity and domain-aware reranking.
    */
   async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
     const { embeddingProvider, vectorStore } = this.config;
@@ -171,45 +279,73 @@ export class SearchEngine {
     const scoreThreshold = query.scoreThreshold ?? this.config.defaultScoreThreshold ?? 0.3;
     const searchLimit = limit * (this.config.mmrCandidateMultiplier ?? 3); // over-fetch for MMR (per D-06)
 
-    // Embed the query once (same vector for both searches)
+    // Classify query to determine which vectors to search
+    const queryType = classifyQuery(query.text);
+    const vectorsToSearch = getVectorsForQueryType(queryType);
+
+    // T135: Apply test exclusion filter by default unless test intent detected
+    // or user explicitly provided a stereotype filter
+    const effectiveFilter = applyTestExclusionFilter(query);
+
+    // Embed the query once (same dense vector for semantic and signature searches)
     const queryVector = await embeddingProvider.embed(query.text, 'query');
 
-    // Search both named vectors in parallel
-    const [textResults, codeResults] = await Promise.all([
-      vectorStore.search(queryVector, {
-        vectorName: 'text',
-        limit: searchLimit,
-        scoreThreshold,
-        filter: query.filter,
-      }),
-      vectorStore.search(queryVector, {
-        vectorName: 'code',
-        limit: searchLimit,
-        scoreThreshold,
-        filter: query.filter,
-      }),
-    ]);
+    // Collect all search promises (dense + optionally sparse/keyword)
+    const allSearchPromises: Promise<{ vectorName: string; results: VectorSearchResult[] }>[] = [];
 
-    // Merge by chunkId — max-score strategy
-    const merged = new Map<string, RetrievalResult>();
-
-    for (const raw of textResults) {
-      const { chunkId } = raw.payload;
-      merged.set(chunkId, toRetrievalResult(raw, 'text'));
+    // Dense vector searches
+    for (const vectorName of vectorsToSearch.filter((v) => v !== 'sparse')) {
+      allSearchPromises.push(
+        vectorStore
+          .search(queryVector, {
+            vectorName,
+            limit: searchLimit,
+            scoreThreshold,
+            filter: effectiveFilter,
+          })
+          .then((results) => ({ vectorName, results })),
+      );
     }
 
-    for (const raw of codeResults) {
-      const { chunkId } = raw.payload;
-      const existing = merged.get(chunkId);
-      if (existing) {
-        // Keep the higher score, mark as 'both'
-        if (raw.score > existing.score) {
-          merged.set(chunkId, toRetrievalResult(raw, 'both'));
+    // T091: fire searchKeyword for sparse vector when the query type calls for it
+    if (vectorsToSearch.includes('sparse') && vectorStore.searchKeyword) {
+      const sparseVector = computeTermFrequencySparseVector(query.text);
+      allSearchPromises.push(
+        vectorStore
+          .searchKeyword({
+            sparseVector,
+            limit: searchLimit,
+            filter: effectiveFilter,
+          })
+          .then((results) => ({ vectorName: 'sparse', results })),
+      );
+    }
+
+    const vectorResults = await Promise.all(allSearchPromises);
+
+    // Merge by chunkId — max-score strategy, tracking which vectors matched
+    const merged = new Map<string, RetrievalResult>();
+
+    for (const { vectorName, results } of vectorResults) {
+      for (const raw of results) {
+        const { chunkId } = raw.payload;
+        const existing = merged.get(chunkId);
+        if (existing) {
+          if (raw.score > existing.score) {
+            merged.set(
+              chunkId,
+              toRetrievalResult(
+                raw,
+                `${existing.matchedVector}+${vectorName}`,
+                this.config.projectRoot,
+              ),
+            );
+          } else {
+            existing.matchedVector = `${existing.matchedVector}+${vectorName}`;
+          }
         } else {
-          existing.matchedVector = 'both';
+          merged.set(chunkId, toRetrievalResult(raw, vectorName, this.config.projectRoot));
         }
-      } else {
-        merged.set(chunkId, toRetrievalResult(raw, 'code'));
       }
     }
 
@@ -218,8 +354,17 @@ export class SearchEngine {
 
     if (this.config.mmrEnabled !== false) {
       const lambda = this.config.mmrLambda ?? classifyQueryLambda(query.text);
-      // TODO: Add pino debug log: MMR: {rawCandidates.length} candidates → {limit} results
-      const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit });
+      // T092: when content is absent (lean-payload), jaccardSimilarity on content is always 0,
+      // causing MMR to degrade to pure score sort with no diversity. Pass a custom similarityFn
+      // that uses relativePath + name + defines as a proxy for content similarity.
+      const similarityFn = (a: RetrievalResult, b: RetrievalResult): number => {
+        const textA =
+          a.content || [a.relativePath, a.name, ...(a.defines ?? [])].filter(Boolean).join(' ');
+        const textB =
+          b.content || [b.relativePath, b.name, ...(b.defines ?? [])].filter(Boolean).join(' ');
+        return jaccardSimilarity(textA, textB);
+      };
+      const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit, similarityFn });
       // Apply domain bonuses after MMR so diversity is not overridden by rerankResults
       const reranked = rerankResults(mmrResult, query);
       // Elbow detection: truncate at significant score drops
@@ -246,11 +391,12 @@ export class SearchEngine {
    * Search with optional dependency-graph expansion.
    * 1. Runs base search() to get top results.
    * 2. If a dependencyGraph is configured and hops > 0, resolves neighbor files
-   *    via BFS and fetches their chunks from the vector store.
-   * 3. Merges expansion chunks (score overridden to 0) after base results,
+   *    via SQLite BFS and fetches their chunks from the vector store.
+   * 3. T040: Also expands via payload-embedded dependencyEdges (no SQLite required).
+   * 4. Merges expansion chunks (score overridden to 0) after base results,
    *    deduplicating by chunkId.
    *
-   * Falls back to plain search() when no dependency graph is configured or hops=0.
+   * Falls back to plain search() when hops=0.
    */
   async searchWithExpansion(
     query: RetrievalQuery,
@@ -259,52 +405,67 @@ export class SearchEngine {
     const hops = options?.hops ?? 1;
     const baseResults = await this.search(query);
 
-    // Fall back to plain search when graph is unavailable or hops=0
-    if (!this.config.dependencyGraph || hops === 0) {
+    // Skip expansion entirely when hops=0
+    if (hops === 0) {
       return baseResults;
     }
 
-    // Collect unique file paths from base results
-    const baseFilePaths = [...new Set(baseResults.map((r) => r.filePath))];
     const baseChunkIds = new Set(baseResults.map((r) => r.chunkId));
-    const intent = analyzeRetrievalQuery(query.text);
-    const dominantModule =
-      query.preferredModule ??
-      baseResults.find((result) => result.modulePath)?.modulePath ??
-      undefined;
-
-    // Get neighbor files from the dependency graph
-    let neighborFiles = await this.config.dependencyGraph.getNeighborFiles(baseFilePaths, hops);
-
-    if ((intent.architectureQuery || intent.dataFlowQuery) && dominantModule) {
-      const normalizedModule = normalizePath(dominantModule);
-      neighborFiles = [
-        ...neighborFiles.filter((filePath) => normalizePath(filePath).includes(normalizedModule)),
-        ...neighborFiles.filter((filePath) => !normalizePath(filePath).includes(normalizedModule)),
-      ];
-    }
-
-    // Filter out files that are already represented in base results
-    const baseFileSet = new Set(baseFilePaths);
-    const newFiles = neighborFiles.filter((f) => !baseFileSet.has(f));
-
-    if (newFiles.length === 0) {
-      return baseResults;
-    }
-
-    // Fetch chunks for neighbor files using filePath filter
-    const expansionChunks = await this.fetchChunksForFiles(newFiles);
-
-    // Deduplicate against base results and set score=0 for expansion chunks
     const expandedResults: RetrievalResult[] = [];
-    for (const chunk of expansionChunks) {
-      if (!baseChunkIds.has(chunk.chunkId)) {
-        baseChunkIds.add(chunk.chunkId);
-        expandedResults.push({ ...chunk, score: 0 });
+
+    // --- SQLite dependency graph expansion (when graph is configured) ---
+    if (this.config.dependencyGraph) {
+      // T094: use relativePath for both graph lookup and Qdrant filter — filePath is deprecated
+      const baseRelativePaths = [...new Set(baseResults.map((r) => r.relativePath))];
+      const intent = analyzeRetrievalQuery(query.text);
+      const dominantModule =
+        query.preferredModule ??
+        baseResults.find((result) => result.modulePath)?.modulePath ??
+        undefined;
+
+      let neighborFiles = await this.config.dependencyGraph.getNeighborFiles(
+        baseRelativePaths,
+        hops,
+      );
+
+      if ((intent.architectureQuery || intent.dataFlowQuery) && dominantModule) {
+        const normalizedModule = normalizePath(dominantModule);
+        neighborFiles = [
+          ...neighborFiles.filter((filePath) => normalizePath(filePath).includes(normalizedModule)),
+          ...neighborFiles.filter(
+            (filePath) => !normalizePath(filePath).includes(normalizedModule),
+          ),
+        ];
+      }
+
+      const baseRelativeSet = new Set(baseRelativePaths);
+      const newFiles = neighborFiles.filter((f) => !baseRelativeSet.has(f));
+
+      if (newFiles.length > 0) {
+        // T094: use fetchChunksForRelativePaths (relativePath filter) instead of deprecated fetchChunksForFiles
+        const sqliteChunks = await this.fetchChunksForRelativePaths(newFiles);
+        for (const chunk of sqliteChunks) {
+          if (!baseChunkIds.has(chunk.chunkId)) {
+            baseChunkIds.add(chunk.chunkId);
+            expandedResults.push({ ...chunk, score: 0 });
+          }
+        }
       }
     }
 
-    return [...baseResults, ...expandedResults];
+    // --- T040: Payload-edge expansion (works without SQLite graph) ---
+    const payloadTargetPaths = DependencyGraph.expandFromPayloadEdges(baseResults, hops);
+    if (payloadTargetPaths.length > 0) {
+      const payloadChunks = await this.fetchChunksForRelativePaths(payloadTargetPaths);
+      for (const chunk of payloadChunks) {
+        if (!baseChunkIds.has(chunk.chunkId)) {
+          baseChunkIds.add(chunk.chunkId);
+          expandedResults.push({ ...chunk, score: 0 });
+        }
+      }
+    }
+
+    return expandedResults.length > 0 ? [...baseResults, ...expandedResults] : baseResults;
   }
 
   /**
@@ -324,16 +485,41 @@ export class SearchEngine {
     const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
 
     const results = await vectorStore.search(zeroVector, {
-      vectorName: 'text',
+      vectorName: 'semantic',
       limit: filePaths.length * 50, // generous limit for multi-file fetch
       filter,
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'text'));
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 
   /**
-   * Fetch adjacent chunks (before/after) for a given chunk, using chunkIndex metadata.
+   * T040: Fetch all chunks for the given relative paths from the vector store.
+   * Uses a Qdrant filter matching relativePath against the provided list.
+   */
+  private async fetchChunksForRelativePaths(relativePaths: string[]): Promise<RetrievalResult[]> {
+    if (relativePaths.length === 0) return [];
+    const { embeddingProvider, vectorStore } = this.config;
+
+    const filter = {
+      should: relativePaths.map((rp) => ({
+        key: 'relativePath',
+        match: { value: rp },
+      })),
+    };
+
+    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
+
+    const results = await vectorStore.search(zeroVector, {
+      vectorName: 'semantic',
+      limit: relativePaths.length * 50,
+      filter,
+    });
+
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
+  }
+
+  /**
    * Returns chunks ordered by chunkIndex. Useful for expanding context around a match.
    */
   async getAdjacentChunks(
@@ -362,13 +548,15 @@ export class SearchEngine {
 
     const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
     const results = await vectorStore.search(zeroVector, {
-      vectorName: 'text',
+      vectorName: 'semantic',
       limit: indices.length,
       filter,
     });
 
     return results
-      .map((raw) => ({ ...toRetrievalResult(raw, 'text'), expansionSource: 'adjacent' as const }))
+      .map((raw) => ({
+        ...toRetrievalResult(raw, 'semantic', this.config.projectRoot),
+      }))
       .sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
   }
 
@@ -405,14 +593,13 @@ export class SearchEngine {
 
     const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
     const hits = await vectorStore.search(zeroVector, {
-      vectorName: 'text',
+      vectorName: 'semantic',
       limit: Math.min(targetNames.size * 2, 20),
       filter,
     });
 
     return hits
-      .map((raw) => toRetrievalResult(raw, 'text'))
-      .filter((r) => !seenIds.has(r.chunkId))
+      .map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot))
       .map((r) => ({ ...r, expansionSource: 'call-chain' as const }));
   }
 
@@ -480,7 +667,7 @@ export class SearchEngine {
       const suggestions: FallbackSuggestion[] = kwRaw.slice(0, maxSuggestions).map((r) => ({
         file: r.payload.relativePath,
         name: r.payload.name ?? r.payload.chunkType,
-        snippet: r.payload.content.slice(0, 200),
+        snippet: (r.payload.content ?? '').slice(0, 200),
       }));
 
       // Step 4: Related-concept expansion when keyword also returns nothing
@@ -517,28 +704,16 @@ export class SearchEngine {
       };
     }
 
-    // All fallbacks exhausted (keyword not supported)
-    // Step 4: Related-concept expansion
-    const relatedTerms = getRelatedTerms(query.text);
-    if (relatedTerms.length > 0) {
-      for (const term of relatedTerms) {
-        const relatedResults = await this.search({
-          ...query,
-          text: term,
-          scoreThreshold: undefined,
-        });
-        if (relatedResults.length > 0) {
-          return {
-            found: false,
-            fallback_used: true,
-            fallback_mode: 'keyword',
-            results: [],
-            suggestions: [],
-            relatedResults: relatedResults.slice(0, 3),
-            related_query: term,
-          };
-        }
-      }
+    // T068: Step 5 — glob/grep scroll fallback when keyword search not supported
+    const scrollResults = await this.scrollFallback(query.text, query.filter);
+    if (scrollResults.length > 0) {
+      return {
+        found: true,
+        fallback_used: true,
+        fallback_mode: 'keyword',
+        results: scrollResults,
+        suggestions: [],
+      };
     }
 
     return {
@@ -548,6 +723,64 @@ export class SearchEngine {
       results: [],
       suggestions: [],
     };
+  }
+
+  /**
+   * T068: Zero-result fallback using scroll — glob for path-like queries, grep for identifiers.
+   * Called internally when all other fallback mechanisms return empty results.
+   *
+   * - Path-like (contains `/` or has file extension): scroll and filter by relativePath fragment.
+   * - Identifier-like (CamelCase, dot.notation): scroll and filter by exact `name` match.
+   */
+  private async scrollFallback(
+    query: string,
+    filter?: Record<string, unknown>,
+  ): Promise<RetrievalResult[]> {
+    const { vectorStore } = this.config;
+    if (!vectorStore.scroll) return [];
+
+    const isPathLike = query.includes('/') || /\.\w{1,5}$/.test(query);
+    const isIdentifierLike =
+      /^[A-Z][a-zA-Z0-9]*$/.test(query) || /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/.test(query);
+
+    if (!isPathLike && !isIdentifierLike) return [];
+
+    // Scroll a sample of chunks (limit to avoid scanning huge collections)
+    const scrollResult = await vectorStore.scroll({ limit: 200, filter });
+    const { points } = scrollResult;
+
+    let matched: typeof points;
+
+    if (isPathLike) {
+      // Glob: find chunks whose relativePath contains any fragment of the query
+      const fragment = query.split('/').pop()!; // basename or last segment
+      matched = points.filter((p) => p.payload.relativePath?.includes(fragment));
+    } else {
+      // Grep: find chunks whose name exactly matches the identifier
+      matched = points.filter((p) => p.payload.name === query);
+    }
+
+    return matched.slice(0, 5).map((p) => ({
+      chunkId: p.payload.chunkId,
+      // T078: reconstruct filePath from projectRoot when not stored
+      filePath:
+        p.payload.filePath ||
+        (this.config.projectRoot
+          ? `${this.config.projectRoot}/${p.payload.relativePath}`
+          : p.payload.relativePath),
+      relativePath: p.payload.relativePath,
+      content: p.payload.content ?? '',
+      startLine: p.payload.startLine ?? 0,
+      endLine: p.payload.endLine ?? 0,
+      language: p.payload.language ?? '',
+      chunkType: p.payload.chunkType ?? 'unknown',
+      name: p.payload.name,
+      imports: p.payload.imports ?? [],
+      exports: p.payload.exports ?? [],
+      score: 0,
+      matchedVector: 'glob-grep',
+      repoId: p.payload.repoId,
+    }));
   }
 
   /**
@@ -570,12 +803,12 @@ export class SearchEngine {
     const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
 
     const results = await vectorStore.search(zeroVector, {
-      vectorName: 'text',
+      vectorName: 'semantic',
       limit: 1000, // get all chunks for the file
       filter,
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'text'));
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 
   /**
@@ -611,7 +844,10 @@ export class SearchEngine {
       semanticPrefetchMultiplier: this.config.semanticPrefetchMultiplier,
     });
 
-    const rawResults = results.map((raw) => toRetrievalResult(raw, 'both'));
+    const rawResults = results.map((raw) => ({
+      ...toRetrievalResult(raw, 'both', this.config.projectRoot),
+      scoreType: 'rrf' as const,
+    }));
 
     // Post-retrieval RRF threshold: filter out low-relevance results.
     // RRF scores are rank-based (~0.01–0.03), not cosine (~0–1).
@@ -627,6 +863,77 @@ export class SearchEngine {
     }
 
     return rerankResults(thresholded, query);
+  }
+
+  /**
+   * T136: Search with automatic interface implementation expansion.
+   *
+   * 1. Runs base search() to get top results.
+   * 2. Identifies interface results (chunkType === 'interface').
+   * 3. For each interface, searches for implementations via dependency edges
+   *    (chunks that have `dependencyEdges[].relation === 'implements'` targeting
+   *    the interface's relativePath).
+   * 4. Appends unique implementations to the result set (deduplicates by chunkId).
+   *
+   * This eliminates the need for follow-up searches when an interface is found
+   * but its implementation is not in the top results.
+   */
+  async searchWithInterfaceExpansion(query: RetrievalQuery): Promise<RetrievalResult[]> {
+    const baseResults = await this.search(query);
+
+    // Identify interface results
+    const interfaceResults = baseResults.filter((r) => r.chunkType === 'interface');
+
+    if (interfaceResults.length === 0) {
+      return baseResults;
+    }
+
+    const baseChunkIds = new Set(baseResults.map((r) => r.chunkId));
+    const expandedResults: RetrievalResult[] = [];
+
+    for (const ifaceResult of interfaceResults) {
+      const implChunks = await this.findImplementations(ifaceResult.relativePath);
+      for (const chunk of implChunks) {
+        if (!baseChunkIds.has(chunk.chunkId)) {
+          baseChunkIds.add(chunk.chunkId);
+          expandedResults.push({ ...chunk, score: 0, expansionSource: 'interface-impl' });
+        }
+      }
+    }
+
+    return expandedResults.length > 0 ? [...baseResults, ...expandedResults] : baseResults;
+  }
+
+  /**
+   * Find chunks that implement a given interface by searching for dependency edges
+   * with `relation: 'implements'` targeting the interface's relativePath.
+   */
+  private async findImplementations(interfaceRelativePath: string): Promise<RetrievalResult[]> {
+    const { embeddingProvider, vectorStore } = this.config;
+
+    // Use Qdrant nested filter to find chunks with implements edge targeting this interface
+    const filter = {
+      must: [
+        {
+          key: 'dependencyEdges[].targetPath',
+          match: { value: interfaceRelativePath },
+        },
+        {
+          key: 'dependencyEdges[].relation',
+          match: { value: 'implements' },
+        },
+      ],
+    };
+
+    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
+
+    const results = await vectorStore.search(zeroVector, {
+      vectorName: 'semantic',
+      limit: 10, // reasonable limit for implementations
+      filter,
+    });
+
+    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
   }
 }
 

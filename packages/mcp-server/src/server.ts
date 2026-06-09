@@ -1,41 +1,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
-import { registerSearchCodebaseHybridTool } from './tools/search-codebase-hybrid.js';
 import { registerGetFileTool } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
-import { registerGetModuleDependenciesTool } from './tools/get-module-dependencies.js';
-import type { ModuleDepsEngine } from './tools/get-module-dependencies.js';
-import { registerBenchmarkPreflightTool } from './tools/benchmark-preflight.js';
 import { registerQueryDatabaseTool } from './tools/query-database.js';
 import { registerIndexDatabaseSchemaTool } from './tools/index-database-schema.js';
 import { withRequestLogging, type RequestLoggerDeps } from './request-logger.js';
 import type { SearchEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
-import type { ModuleChunkResult } from './tools/get-module-dependencies.js';
-
-/**
- * Create a searchByModule adapter that queries SearchEngine with a mavenModule.artifactId filter.
- * Extracted for testability.
- */
-export function createSearchByModuleAdapter(
-  searchEngine: SearchEngine | MultiCollectionSearchEngine,
-): (moduleName: string, limit: number) => Promise<ModuleChunkResult[]> {
-  return async (moduleName: string, limit: number) => {
-    const artifactId = moduleName.includes(':') ? moduleName.split(':')[1]! : moduleName;
-    const results = await searchEngine.search({
-      text: 'interface DTO',
-      limit,
-      scoreThreshold: 0.1,
-      filter: { must: [{ key: 'mavenModule.artifactId', match: { value: artifactId } }] },
-    });
-    return results.map((r) => ({
-      name: r.name,
-      relativePath: r.relativePath,
-      chunkType: r.chunkType,
-      content: r.content,
-    }));
-  };
-}
 
 export interface McpServerConfig {
   searchEngine: SearchEngine | MultiCollectionSearchEngine;
@@ -49,15 +22,21 @@ export interface McpServerConfig {
   dbConfigPath?: string | undefined;
   /** Path to .ia-framework/project.json — needed for index_database_schema */
   configPath?: string | undefined;
-  /** Path to the target project root — needed for getModuleGraph */
-  projectRoot?: string | undefined;
   /** Default dependency graph expansion hops for search_codebase (0=off, 1=direct, 2=transitive) */
   defaultExpansionHops?: 0 | 1 | 2 | undefined;
+  /** Absolute path to the target project root (used by tools for filesystem reads) */
+  projectRoot?: string | undefined;
+  /** Resolved repo list for multi-repo filesystem reads (name → absolute path) */
+  repos?: Array<{ name: string; path: string }> | undefined;
 }
 
 /**
  * Create and configure an MCP server with all retrieval tools registered.
  * Returns the McpServer instance — call server.connect(transport) to start.
+ *
+ * Registered tools: search_codebase, get_file, get_dependencies
+ * (search_codebase_hybrid, get_module_dependencies, and benchmark_preflight
+ *  were removed in feature 008 — functionality merged into the three tools above)
  */
 export function createMcpServer(config: McpServerConfig): McpServer {
   const server = new McpServer({
@@ -65,76 +44,81 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     version: config.serverVersion ?? '0.0.1',
   });
 
+  // Build repo-path map for multi-repo filesystem reads
+  const primaryRoot = config.projectRoot;
+  const repoPathMap = new Map<string, string>(
+    (config.repos ?? (primaryRoot ? [{ name: '_default', path: primaryRoot }] : [])).map((r) => [
+      r.name,
+      r.path,
+    ]),
+  );
+  const resolveRoot = (repoId?: string): string | undefined =>
+    repoId ? (repoPathMap.get(repoId) ?? primaryRoot) : primaryRoot;
+
+  // Filesystem read closure for search_codebase (line-range slicing)
+  const searchReadFileFn =
+    repoPathMap.size > 0
+      ? async (
+          relativePath: string,
+          startLine: number,
+          endLine: number,
+          repoId?: string,
+        ): Promise<string> => {
+          const root = resolveRoot(repoId);
+          if (!root) throw new Error('No project root configured for filesystem read');
+          const raw = await readFile(join(root, relativePath), 'utf-8');
+          const lines = raw.split('\n');
+          return lines.slice(startLine - 1, endLine).join('\n');
+        }
+      : undefined;
+
+  // Filesystem read closure for get_file (full file or line-range content)
+  const getFileReadFileFn =
+    repoPathMap.size > 0
+      ? async (
+          filePath: string,
+          repo?: string,
+          startLine?: number,
+          endLine?: number,
+        ): Promise<string> => {
+          const root = resolveRoot(repo);
+          if (!root) throw new Error('No project root configured for filesystem read');
+          const raw = await readFile(join(root, filePath), 'utf-8');
+          if (startLine !== undefined && endLine !== undefined) {
+            const lines = raw.split('\n');
+            return lines.slice(startLine - 1, endLine).join('\n');
+          }
+          return raw;
+        }
+      : undefined;
+
   registerSearchCodebaseTool(server, config.searchEngine, {
     metricsStore: config.metricsStore,
     tokenCounter: config.tokenCounter,
     sessionId: config.sessionId,
     defaultExpansionHops: config.defaultExpansionHops,
-    confidenceThreshold: 0.65,
-    defaultScoreThreshold: 0.6,
+    confidenceThreshold: 0.45,
+    defaultScoreThreshold: 0.4,
+    ...(searchReadFileFn ? { readFileFn: searchReadFileFn } : {}),
+    sessionCache: { enabled: true },
   });
-  registerSearchCodebaseHybridTool(server, config.searchEngine, {
-    defaultScoreThreshold: 0.02,
-    confidenceThreshold: 0.025,
+
+  // Build statFn closure for get_file session dedup (mtime-based cache invalidation)
+  const getFileStatFn =
+    repoPathMap.size > 0
+      ? async (filePath: string, repo?: string): Promise<{ mtimeMs: number }> => {
+          const root = resolveRoot(repo);
+          if (!root) throw new Error('No project root configured for stat');
+          const s = await stat(join(root, filePath));
+          return { mtimeMs: s.mtimeMs };
+        }
+      : undefined;
+
+  registerGetFileTool(server, config.searchEngine, {
+    ...(getFileReadFileFn ? { readFileFn: getFileReadFileFn } : {}),
+    ...(getFileStatFn ? { statFn: getFileStatFn, sessionCache: true } : {}),
   });
-  registerGetFileTool(server, config.searchEngine);
   registerGetDependenciesTool(server, config.searchEngine);
-
-  // Build composite preflight engine with optional capabilities
-  const preflightEngine: Parameters<typeof registerBenchmarkPreflightTool>[1] = {
-    search: (query) => config.searchEngine.search(query),
-    searchWithExpansion: (query, options) =>
-      config.searchEngine.searchWithExpansion(query, options),
-    ...('searchHybrid' in config.searchEngine
-      ? {
-          searchHybrid: (query: { text: string; limit?: number }) =>
-            (
-              config.searchEngine as {
-                searchHybrid: (q: {
-                  text: string;
-                  limit?: number;
-                }) => Promise<import('@ia-framework/retrieval').RetrievalResult[]>;
-              }
-            ).searchHybrid(query),
-        }
-      : {}),
-    getFile: (path) => config.searchEngine.getFile(path),
-    ...(config.metricsStore && config.projectRoot
-      ? {
-          getModuleDependencies: async () => {
-            const graph = config.metricsStore!.getModuleGraph(config.projectRoot!);
-            if (!graph) throw new Error('Module graph not indexed');
-            return graph;
-          },
-        }
-      : {}),
-    ...(config.dbConfigPath
-      ? {
-          queryDatabase: async (sql: string) => {
-            const { loadDbConfig, PostgresSource } = await import('@ia-framework/db-context');
-            const dbConfig = await loadDbConfig(config.dbConfigPath!);
-            const source = new PostgresSource(dbConfig);
-            try {
-              return await source.executeQuery(sql);
-            } finally {
-              await source.close();
-            }
-          },
-        }
-      : {}),
-  };
-  registerBenchmarkPreflightTool(server, preflightEngine);
-
-  // Register Maven module dependencies tool if metricsStore + projectRoot available
-  if (config.metricsStore && config.projectRoot) {
-    const metricsStore = config.metricsStore;
-    const projectRoot = config.projectRoot;
-    const moduleDepsEngine: ModuleDepsEngine = {
-      getModuleGraph: () => metricsStore.getModuleGraph(projectRoot),
-      searchByModule: createSearchByModuleAdapter(config.searchEngine),
-    };
-    registerGetModuleDependenciesTool(server, moduleDepsEngine);
-  }
 
   if (config.dbConfigPath) {
     registerQueryDatabaseTool(server, config.dbConfigPath);

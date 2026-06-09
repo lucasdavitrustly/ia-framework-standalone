@@ -135,6 +135,8 @@ export interface SearchResult {
   startLine: number;
   endLine: number;
   score: number;
+  /** Score type — 'cosine' for primary dense search, 'rrf' for hybrid RRF fallback */
+  scoreType?: 'cosine' | 'rrf';
   source: 'ast' | 'llm';
   chunkType: string;
   matchedVector: string;
@@ -250,6 +252,8 @@ export interface ScoreCandidate {
   startLine: number;
   endLine: number;
   score: number;
+  /** Score type — 'cosine' for primary dense search, 'rrf' for hybrid RRF fallback */
+  scoreType?: 'cosine' | 'rrf';
   source: 'ast' | 'llm';
   chunkType: string;
   content: string;

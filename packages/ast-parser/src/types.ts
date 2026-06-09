@@ -14,6 +14,8 @@ export interface CodeChunk {
   /** Type of code construct */
   chunkType:
     | 'function'
+    | 'method'
+    | 'class-signature'
     | 'class'
     | 'interface'
     | 'type'
@@ -21,7 +23,11 @@ export interface CodeChunk {
     | 'module'
     | 'other'
     | 'semantic'
-    | 'aspect';
+    | 'aspect'
+    | 'config-block'
+    | 'service-def'
+    | 'message-def'
+    | 'migration';
   /** Name of the construct (function/class/type name), if applicable */
   name?: string | undefined;
   /** Raw source code text of this chunk */
@@ -34,7 +40,7 @@ export interface CodeChunk {
   imports: string[];
   /** Names this chunk exports */
   exports: string[];
-  /** Parent construct name when this chunk is a sub-chunk (e.g., method split from a class, or fragment of an oversized function) */
+  /** Parent construct name when this chunk is a sub-chunk */
   parentName?: string | undefined;
   /** Direct superclass name (e.g., "BaseService"). Extracted from extends clause. */
   superclass?: string | undefined;
@@ -42,12 +48,80 @@ export interface CodeChunk {
   interfaces?: string[] | undefined;
   /** True when this class is defined inside another class (inner/nested class) */
   isInnerClass?: boolean | undefined;
-  /** LLM-generated prose summary of this chunk, used for text embedding when available (per D-04) */
+  /** LLM-generated prose summary (legacy) */
   description?: string | undefined;
   /** 0-based position of this chunk within its source file */
   chunkIndex?: number | undefined;
   /** Total number of chunks produced from the same source file */
   totalChunks?: number | undefined;
+
+  // === New fields (Feature 008) ===
+  /** Java annotations or decorators (e.g., ['@Service', '@Transactional']) */
+  annotations?: string[] | undefined;
+  /** Visibility modifier */
+  visibility?: 'public' | 'protected' | 'package' | 'private' | undefined;
+  /** Symbol names defined in this chunk */
+  defines?: string[] | undefined;
+  /** Symbol names called/referenced in this chunk */
+  calls?: string[] | undefined;
+  /**
+   * Compact class context prepended to method chunks for disambiguation.
+   * Format: class declaration + field declarations, max 5 lines.
+   */
+  contextHeader?: string | undefined;
+  /**
+   * For class-signature chunks: the full class declaration + fields + method signatures (no bodies).
+   */
+  classSignature?: string | undefined;
+  /** Heuristic stereotype (e.g., 'service', 'controller', 'repository') */
+  stereotype?: string | undefined;
+  /** Heuristic architectural layer */
+  archLayer?: string | undefined;
+  /** Module hierarchy info from directory structure / pom.xml */
+  moduleInfo?:
+    | {
+        group: string;
+        module: string;
+        submodule?: string | undefined;
+      }
+    | undefined;
+  /** Maven coordinates if inside a Maven project */
+  mavenCoordinates?:
+    | {
+        groupId: string;
+        artifactId: string;
+        version: string;
+      }
+    | undefined;
+  /** SHA256 of content — used for enrichment cache keying */
+  contentHash?: string | undefined;
+  /** Dependency edges to other files */
+  dependencyEdges?:
+    | Array<{
+        targetPath: string;
+        relation: string;
+        symbols?: string[] | undefined;
+      }>
+    | undefined;
+
+  // === Phase 14: Heuristic semantic enrichment for thin classes ===
+  /**
+   * Structured annotation/decorator metadata extracted from AST.
+   * Used by buildSemanticInput() to synthesize rich embeddings for thin delegation classes
+   * (controllers, facades) without requiring LLM enrichment.
+   */
+  annotationMeta?:
+    | {
+        /** @Operation(summary=...) or @ApiOperation values */
+        operationSummaries?: string[] | undefined;
+        /** @RequestMapping / @GetMapping / @PostMapping path values */
+        endpointPaths?: string[] | undefined;
+        /** HTTP methods derived from @XMapping annotations (GET, POST, PUT, DELETE, PATCH) */
+        httpMethods?: string[] | undefined;
+        /** @Tag(name=...) value */
+        tagName?: string | undefined;
+      }
+    | undefined;
 }
 
 /**

@@ -6,7 +6,8 @@
 # init_config
 # Creates default .ia-framework/project.json if it doesn't exist.
 # Prompts for target project path.
-# Uses SELECTED_EMBED_MODEL and SELECTED_EMBED_DIMS env vars from install-ollama.sh.
+# Uses SELECTED_EMBED_MODEL, SELECTED_EMBED_DIMS, SELECTED_ENRICHMENT_MODEL env vars
+# from install-ollama.sh.
 # Args: $1 = ia-framework directory (optional, defaults to SCRIPT_DIR or cwd)
 # Exit code: 0 on success, 1 on failure.
 # ──────────────────────────────────────────────────────
@@ -52,6 +53,39 @@ if (config.embedding && !config.embedding.prefixes) {
 // Fix vectorStore host from "qdrant" to "localhost"
 if (config.vectorStore && config.vectorStore.host === "qdrant") {
   config.vectorStore.host = "localhost";
+  changed = true;
+}
+
+// Remove deprecated strategy field from indexing
+if (config.indexing && config.indexing.strategy !== undefined) {
+  delete config.indexing.strategy;
+  changed = true;
+}
+
+// Remove deprecated indexing.llm field (replaced by indexing.enrichment)
+if (config.indexing && config.indexing.llm !== undefined) {
+  // Migrate to enrichment block if not already set
+  if (!config.indexing.enrichment) {
+    config.indexing.enrichment = {
+      provider: "ollama",
+      model: config.indexing.llm.model || "qwen3:8b",
+      baseUrl: config.indexing.llm.ollamaUrl || "http://localhost:11434",
+      skipOnFailure: true
+    };
+  }
+  delete config.indexing.llm;
+  changed = true;
+}
+
+// Add enrichment block if missing and enrichment model is selected
+const selectedEnrichmentModel = '${SELECTED_ENRICHMENT_MODEL:-}';
+if (selectedEnrichmentModel && config.indexing && !config.indexing.enrichment) {
+  config.indexing.enrichment = {
+    provider: "ollama",
+    model: selectedEnrichmentModel,
+    baseUrl: "http://localhost:11434",
+    skipOnFailure: true
+  };
   changed = true;
 }
 
@@ -115,6 +149,9 @@ MERGE_EOF
     if [ -n "${SELECTED_EMBED_DIMS:-}" ]; then
       cli_args+=("--embed-dims" "$SELECTED_EMBED_DIMS")
     fi
+    if [ -n "${SELECTED_ENRICHMENT_MODEL:-}" ]; then
+      cli_args+=("--enrichment-model" "$SELECTED_ENRICHMENT_MODEL")
+    fi
     cli_args+=("--force")
     if node "$cli_bin" init "${cli_args[@]}"; then
       echo -e "  ${GREEN}✓${NC} Config created with detected profile: ${config_file}"
@@ -141,6 +178,19 @@ MERGE_EOF
   # Fallback: write default config without profile
   local repo_name
   repo_name=$(basename "$target_path")
+
+  # Build enrichment block if model selected
+  local enrichment_block=""
+  if [ -n "${SELECTED_ENRICHMENT_MODEL:-}" ]; then
+    enrichment_block=",
+    \"enrichment\": {
+      \"provider\": \"ollama\",
+      \"model\": \"${SELECTED_ENRICHMENT_MODEL}\",
+      \"baseUrl\": \"http://localhost:11434\",
+      \"skipOnFailure\": true
+    }"
+  fi
+
   cat > "$config_file" <<EOF
 {
   "repos": [
@@ -183,7 +233,7 @@ MERGE_EOF
       "**/coverage/**",
       "**/__pycache__/**"
     ],
-    "respectGitignore": true
+    "respectGitignore": true${enrichment_block}
   }
 }
 EOF

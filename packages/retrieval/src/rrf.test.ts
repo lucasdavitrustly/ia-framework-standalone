@@ -24,7 +24,7 @@ function makeResult(
 describe('rrfMerge', () => {
   const k = 60;
 
-  it('Test 1: single list with 3 results returns RRF-rescored results', () => {
+  it('Test 1: single list preserves original scores (no RRF conversion — fusion is meaningless)', () => {
     const r1 = makeResult({ chunkId: 'a', score: 0.9 });
     const r2 = makeResult({ chunkId: 'b', score: 0.8 });
     const r3 = makeResult({ chunkId: 'c', score: 0.7 });
@@ -33,14 +33,16 @@ describe('rrfMerge', () => {
     const result = rrfMerge(lists, 10);
 
     expect(result).toHaveLength(3);
-    // RRF scores: 1/(60+0+1)=1/61, 1/(60+1+1)=1/62, 1/(60+2+1)=1/63
-    expect(result[0]!.score).toBeCloseTo(1 / (k + 0 + 1), 10);
-    expect(result[1]!.score).toBeCloseTo(1 / (k + 1 + 1), 10);
-    expect(result[2]!.score).toBeCloseTo(1 / (k + 2 + 1), 10);
-    // Order preserved (highest RRF score first)
+    // Original cosine scores preserved — NOT replaced with 1/(60+rank+1)
+    expect(result[0]!.score).toBe(0.9);
+    expect(result[1]!.score).toBe(0.8);
+    expect(result[2]!.score).toBe(0.7);
+    // Order preserved
     expect(result[0]!.chunkId).toBe('a');
     expect(result[1]!.chunkId).toBe('b');
     expect(result[2]!.chunkId).toBe('c');
+    // Source tag applied
+    expect(result[0]!.source).toBe('ast');
   });
 
   it('Test 2: two lists with no overlapping chunkIds returns all results sorted by RRF score', () => {
@@ -96,14 +98,23 @@ describe('rrfMerge', () => {
     expect(rrfMerge([{ source: 'ast', results: [] }], 10)).toEqual([]);
   });
 
-  it('Test 5: single list with 1 source returns results with RRF scores', () => {
+  it('Test 5: single list preserves original cosine scores (no RRF conversion)', () => {
     const r1 = makeResult({ chunkId: 'a', score: 0.9 });
-    const lists: RankedList[] = [{ source: 'ast', results: [r1] }];
+    const r2 = makeResult({ chunkId: 'b', score: 0.75 });
+    const lists: RankedList[] = [{ source: 'ast', results: [r1, r2] }];
     const result = rrfMerge(lists, 10);
 
-    expect(result).toHaveLength(1);
+    expect(result).toHaveLength(2);
     expect(result[0]!.chunkId).toBe('a');
-    expect(result[0]!.score).toBeCloseTo(1 / (k + 0 + 1), 10);
+    // Original cosine score preserved — NOT replaced with 1/(60+rank+1)
+    expect(result[0]!.score).toBe(0.9);
+    expect(result[1]!.score).toBe(0.75);
+    // scoreType preserved (cosine from search engine, not overwritten to 'rrf')
+    expect(result[0]!.scoreType).not.toBe('rrf');
+    expect(result[1]!.scoreType).not.toBe('rrf');
+    // Source tag is still applied
+    expect(result[0]!.source).toBe('ast');
+    expect(result[1]!.source).toBe('ast');
   });
 
   it('Test 6: limit truncation — 3 results per list, limit=4 returns top 4', () => {

@@ -150,6 +150,8 @@ export interface IndexingConfig {
   embeddingConcurrency?: number | undefined;
   /** LLM chunking configuration (optional — model and Ollama URL for LLM-based chunking strategy) */
   llm?: { model: string; ollamaUrl: string } | undefined;
+  /** LLM enrichment configuration (optional — enables Ollama metadata enrichment) */
+  enrichment?: EnrichmentConfig | undefined;
 }
 
 /**
@@ -192,6 +194,120 @@ export interface RepoEntry {
   provides?: string[] | undefined;
   /** Optional per-repo profile override */
   profile?: ProjectProfile | undefined;
+}
+
+// ============================================================
+// AST + LLM RAG Optimization — Shared Types (Feature 008)
+// ============================================================
+
+/**
+ * Architectural stereotype of a code chunk (heuristic classification).
+ */
+export type Stereotype =
+  | 'controller'
+  | 'service'
+  | 'repository'
+  | 'entity'
+  | 'dto'
+  | 'mapper'
+  | 'config'
+  | 'aspect'
+  | 'filter'
+  | 'interceptor'
+  | 'exception-handler'
+  | 'validator'
+  | 'event-listener'
+  | 'scheduler'
+  | 'client'
+  | 'gateway'
+  | 'test'
+  | 'proto-service'
+  | 'proto-message'
+  | 'unknown';
+
+/**
+ * Architectural layer classification.
+ */
+export type ArchLayer =
+  | 'presentation'
+  | 'service'
+  | 'domain'
+  | 'persistence'
+  | 'infrastructure'
+  | 'crosscutting';
+
+/**
+ * Module hierarchy info derived from directory structure / pom.xml.
+ */
+export interface ModuleInfo {
+  group: string; // top-level directory (e.g., "payments")
+  module: string; // second-level (e.g., "merchant-gateway")
+  submodule?: string; // third-level (e.g., "merchant-gateway-core")
+}
+
+/**
+ * Maven project coordinates parsed from pom.xml.
+ */
+export interface MavenCoordinates {
+  groupId: string;
+  artifactId: string;
+  version: string;
+}
+
+/**
+ * LLM-identified relationship between chunks.
+ */
+export interface RelationshipTag {
+  target: string;
+  type: 'uses' | 'implements' | 'extends' | 'configures' | 'produces' | 'consumes' | 'tests';
+  label?: string;
+}
+
+/**
+ * A directed dependency edge from one file/chunk to another.
+ */
+export interface DependencyEdge {
+  targetPath: string; // relative to repo root
+  relation: 'imports' | 'exports' | 'implements' | 'configures' | 'references' | 'generates';
+  symbols?: string[];
+}
+
+/**
+ * Extended chunk type values including new AST constructs.
+ */
+export type ChunkType =
+  | 'method'
+  | 'class-signature'
+  | 'class'
+  | 'interface'
+  | 'type'
+  | 'enum'
+  | 'module'
+  | 'config-block'
+  | 'service-def'
+  | 'message-def'
+  | 'migration'
+  | 'aspect'
+  | 'other';
+
+/**
+ * Configuration for the LLM enrichment pipeline (Ollama).
+ */
+export interface EnrichmentConfig {
+  /** Ollama provider (currently the only supported provider) */
+  provider: 'ollama';
+  /** Model name (e.g., 'qwen3:8b') */
+  model: string;
+  /** Ollama base URL (default: http://localhost:11434) */
+  baseUrl?: string;
+  /** Context window size in tokens (default: 32768) */
+  numCtx?: number;
+  /** Max concurrent Ollama requests (default: auto-detect from GPU) */
+  concurrency?: number;
+  /** Retry attempts on Ollama failure (default: 2) */
+  retryAttempts?: number;
+  /** If true, skip LLM enrichment when Ollama is unavailable instead of failing (default: true) */
+  skipOnFailure?: boolean;
 }
 
 /**

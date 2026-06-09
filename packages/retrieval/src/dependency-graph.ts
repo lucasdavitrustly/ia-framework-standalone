@@ -274,6 +274,32 @@ export class DependencyGraph {
       .run(filePath, collection);
   }
 
+  /**
+   * T039: Pure static helper — no DB access.
+   * Collects targetPaths from payload-embedded dependencyEdges up to `hops` levels.
+   * Currently only supports hops=1 (direct dependencies); hops=0 returns [].
+   * The source relativePaths themselves are excluded from the result.
+   */
+  static expandFromPayloadEdges(
+    results: Array<{
+      relativePath: string;
+      dependencyEdges?: Array<{ targetPath: string; relation: string }> | undefined;
+    }>,
+    hops: number,
+  ): string[] {
+    if (hops === 0) return [];
+    const sourceSet = new Set(results.map((r) => r.relativePath));
+    const targets = new Set<string>();
+    for (const r of results) {
+      for (const edge of r.dependencyEdges ?? []) {
+        if (!sourceSet.has(edge.targetPath)) {
+          targets.add(edge.targetPath);
+        }
+      }
+    }
+    return Array.from(targets);
+  }
+
   /** Close DB connection. */
   close(): void {
     this.db.close();

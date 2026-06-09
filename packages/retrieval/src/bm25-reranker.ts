@@ -107,7 +107,13 @@ export function bm25Rerank(
   }
 
   // Tokenize all documents and compute stats
-  const docTokens: string[][] = results.map((r) => tokenize(r.content));
+  // T093: fall back to name/packageName/defines/calls when content is empty (lean-payload schema)
+  const docTokens: string[][] = results.map((r) => {
+    const text =
+      r.content ||
+      [r.name, r.packageName, ...(r.defines ?? []), ...(r.calls ?? [])].filter(Boolean).join(' ');
+    return tokenize(text);
+  });
   const docTfs: TermFrequency[] = docTokens.map(computeTf);
   const docLengths = docTokens.map((t) => t.length);
   const avgDocLength = docLengths.reduce((a, b) => a + b, 0) / docLengths.length;

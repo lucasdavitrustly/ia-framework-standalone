@@ -10,7 +10,7 @@ function makeChunk(
     filePath: '/test/file.ts',
     relativePath: 'file.ts',
     language: 'typescript',
-    chunkType: 'function',
+    chunkType: 'other', // use 'other' so tests can verify splitting behaviour (function/method are never split)
     name: 'testFunction',
     imports: [],
     exports: [],
@@ -297,14 +297,14 @@ describe('splitOversizedChunks - method boundary splitting', () => {
   });
 
   it('falls back to fixed splitting for non-class chunks', () => {
-    // Large function without method boundaries
+    // Large 'other' chunk without method boundaries (e.g. generated code block)
     const content = generateLargeFunction(300);
     const lineCount = content.split('\n').length;
     const chunk = makeChunk({
       startLine: 1,
       endLine: lineCount,
       content,
-      chunkType: 'function',
+      chunkType: 'other',
       name: 'bigFunction',
     });
 

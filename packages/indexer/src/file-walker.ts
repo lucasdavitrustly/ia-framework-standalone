@@ -42,6 +42,11 @@ const SOURCE_EXTENSIONS = new Set([
   '.java',
   '.kt',
   '.rb',
+  '.proto',
+  '.yaml',
+  '.yml',
+  '.xml',
+  '.sql',
 ]);
 
 const DEFAULT_EXCLUDE = [

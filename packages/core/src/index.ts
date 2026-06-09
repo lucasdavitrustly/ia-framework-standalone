@@ -12,6 +12,15 @@ export type {
   RetrievalConfig,
   RepoEntry,
   ProjectConfig,
+  // Feature 008: AST + LLM RAG Optimization
+  EnrichmentConfig,
+  Stereotype,
+  ArchLayer,
+  ModuleInfo,
+  MavenCoordinates,
+  RelationshipTag,
+  DependencyEdge,
+  ChunkType,
 } from './types/index.js';
 
 // Config

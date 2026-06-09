@@ -17,6 +17,10 @@ function makeChunkId(filePath: string, startLine: number, endLine: number): stri
   return createHash('sha1').update(`${filePath}:${startLine}:${endLine}`).digest('hex');
 }
 
+function makeClassSignatureChunkId(filePath: string, startLine: number, endLine: number): string {
+  return createHash('sha1').update(`${filePath}:sig:${startLine}:${endLine}`).digest('hex');
+}
+
 // Java top-level declaration types we want to chunk
 const CHUNK_TYPE_MAP: Partial<Record<string, CodeChunk['chunkType']>> = {
   class_declaration: 'class',
@@ -90,6 +94,21 @@ function extractImports(rootNode: Parser.SyntaxNode): string[] {
 }
 
 /**
+ * T037: Convert Java import paths to DependencyEdge objects.
+ * `com.example.Foo` → { targetPath: 'com/example/Foo.java', relation: 'imports', symbols: ['Foo'] }
+ */
+function importsToDependencyEdges(
+  imports: string[],
+): Array<{ targetPath: string; relation: string; symbols?: string[] }> {
+  return imports.map((imp) => {
+    const parts = imp.split('.');
+    const symbol = parts[parts.length - 1] ?? imp;
+    const targetPath = imp.replace(/\./g, '/') + '.java';
+    return { targetPath, relation: 'imports', symbols: [symbol] };
+  });
+}
+
+/**
  * Extract package declaration text from root node (e.g., "package com.example.service;")
  */
 function extractPackage(rootNode: Parser.SyntaxNode): string {
@@ -112,6 +131,281 @@ function hasAspectAnnotation(classNode: Parser.SyntaxNode): boolean {
   return modifiers.children.some(
     (c) => (c.type === 'marker_annotation' || c.type === 'annotation') && c.text.includes('Aspect'),
   );
+}
+
+// ── T024: annotations and visibility helpers ────────────────────────────────
+
+function getModifiers(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
+  return (
+    node.childForFieldName('modifiers') ??
+    node.children.find((c) => c.type === 'modifiers') ??
+    undefined
+  );
+}
+
+function extractAnnotations(node: Parser.SyntaxNode): string[] {
+  const modifiers = getModifiers(node);
+  if (!modifiers) return [];
+  return modifiers.children
+    .filter((c) => c.type === 'marker_annotation' || c.type === 'annotation')
+    .map((c) => c.text);
+}
+
+// ── T117: Annotation value extraction for annotationMeta ────────────────────
+
+/** HTTP method mapping: annotation name → HTTP method */
+const HTTP_MAPPING_ANNOTATIONS: Record<string, string> = {
+  GetMapping: 'GET',
+  PostMapping: 'POST',
+  PutMapping: 'PUT',
+  DeleteMapping: 'DELETE',
+  PatchMapping: 'PATCH',
+};
+
+/**
+ * Extract the string value from an annotation's arguments.
+ * Handles: @Foo("value"), @Foo(key = "value"), @Foo(value = "value")
+ * Returns the first string literal value found, or the value of a specific key.
+ */
+function extractAnnotationStringValue(
+  annotationNode: Parser.SyntaxNode,
+  key?: string,
+): string | undefined {
+  const args =
+    annotationNode.childForFieldName('arguments') ??
+    annotationNode.children.find((c) => c.type === 'annotation_argument_list');
+  if (!args) return undefined;
+
+  for (const child of args.children) {
+    if (child.type === 'element_value_pair') {
+      const keyNode = child.childForFieldName('key') ?? child.children[0];
+      const valueNode =
+        child.childForFieldName('value') ?? child.children.find((c) => c.type === 'string_literal');
+      if (keyNode && valueNode) {
+        const keyText = keyNode.text;
+        if (!key || keyText === key || keyText === 'value') {
+          // Strip surrounding quotes from string literal
+          const raw = valueNode.text;
+          if (raw.startsWith('"') && raw.endsWith('"')) {
+            return raw.slice(1, -1);
+          }
+        }
+      }
+    } else if (child.type === 'string_literal') {
+      // Direct value: @Foo("value")
+      const raw = child.text;
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        return raw.slice(1, -1);
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Get the annotation name from a marker_annotation or annotation node.
+ * E.g., "@Operation(...)" → "Operation", "@RestController" → "RestController"
+ */
+function getAnnotationName(annotationNode: Parser.SyntaxNode): string {
+  const nameNode =
+    annotationNode.childForFieldName('name') ??
+    annotationNode.children.find((c) => c.type === 'identifier');
+  return nameNode?.text ?? annotationNode.text.replace(/^@/, '').split('(')[0] ?? '';
+}
+
+/**
+ * Extract annotationMeta from a class declaration and its methods.
+ * Aggregates:
+ * - @Operation(summary=...) from methods → operationSummaries
+ * - @Tag(name=...) from class → tagName
+ * - @RequestMapping("...") from class → endpointPaths
+ * - @GetMapping/@PostMapping/... from methods → httpMethods + endpointPaths
+ */
+function extractAnnotationMeta(
+  classNode: Parser.SyntaxNode,
+): CodeChunk['annotationMeta'] | undefined {
+  const operationSummaries: string[] = [];
+  const endpointPaths: string[] = [];
+  const httpMethods: string[] = [];
+  let tagName: string | undefined;
+
+  // 1. Class-level annotations
+  const classModifiers = getModifiers(classNode);
+  if (classModifiers) {
+    for (const ann of classModifiers.children) {
+      if (ann.type !== 'annotation' && ann.type !== 'marker_annotation') continue;
+      const name = getAnnotationName(ann);
+
+      if (name === 'RequestMapping') {
+        const path = extractAnnotationStringValue(ann, 'value');
+        if (path) endpointPaths.push(path);
+      } else if (name === 'Tag') {
+        const nameVal = extractAnnotationStringValue(ann, 'name');
+        if (nameVal) tagName = nameVal;
+      }
+    }
+  }
+
+  // 2. Method-level annotations (from class body)
+  const classBody = classNode.children.find((c) => c.type === 'class_body');
+  if (classBody) {
+    for (const member of classBody.children) {
+      if (member.type !== 'method_declaration' && member.type !== 'constructor_declaration') {
+        continue;
+      }
+      const memberModifiers = getModifiers(member);
+      if (!memberModifiers) continue;
+
+      for (const ann of memberModifiers.children) {
+        if (ann.type !== 'annotation' && ann.type !== 'marker_annotation') continue;
+        const name = getAnnotationName(ann);
+
+        if (name === 'Operation') {
+          const summary = extractAnnotationStringValue(ann, 'summary');
+          if (summary) operationSummaries.push(summary);
+        } else if (name in HTTP_MAPPING_ANNOTATIONS) {
+          const method = HTTP_MAPPING_ANNOTATIONS[name]!;
+          if (!httpMethods.includes(method)) httpMethods.push(method);
+          const path = extractAnnotationStringValue(ann, 'value');
+          if (path && !endpointPaths.includes(path)) endpointPaths.push(path);
+        } else if (name === 'RequestMapping') {
+          const path = extractAnnotationStringValue(ann, 'value');
+          if (path && !endpointPaths.includes(path)) endpointPaths.push(path);
+        }
+      }
+    }
+  }
+
+  // Only return annotationMeta if there's meaningful content
+  if (
+    operationSummaries.length === 0 &&
+    endpointPaths.length === 0 &&
+    httpMethods.length === 0 &&
+    !tagName
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(operationSummaries.length > 0 ? { operationSummaries } : {}),
+    ...(endpointPaths.length > 0 ? { endpointPaths } : {}),
+    ...(httpMethods.length > 0 ? { httpMethods } : {}),
+    ...(tagName ? { tagName } : {}),
+  };
+}
+
+function extractVisibility(
+  node: Parser.SyntaxNode,
+): 'public' | 'protected' | 'private' | 'package' {
+  const modifiers = getModifiers(node);
+  if (!modifiers) return 'package';
+  for (const c of modifiers.children) {
+    const txt = c.text;
+    if (txt === 'public') return 'public';
+    if (txt === 'protected') return 'protected';
+    if (txt === 'private') return 'private';
+  }
+  return 'package';
+}
+
+// ── T025: contextHeader and class-signature helpers ─────────────────────────
+
+/**
+ * Build a contextHeader for method chunks:
+ * class declaration line + field declarations, at most 5 non-empty lines total.
+ */
+function buildContextHeader(classNode: Parser.SyntaxNode, sourceLines: string[]): string {
+  const headerLines: string[] = [];
+
+  // Find the class/interface/enum/record declaration line
+  const startRow = classNode.startPosition.row;
+  const endRow = classNode.endPosition.row;
+  for (let r = startRow; r <= Math.min(endRow, startRow + 10); r++) {
+    const line = sourceLines[r] ?? '';
+    if (/\b(class|interface|enum|record)\b/.test(line)) {
+      headerLines.push(line.trimEnd());
+      break;
+    }
+  }
+
+  // Add field declarations (first line of each) until we have 5 non-empty lines
+  const classBody = classNode.children.find(
+    (c) => c.type === 'class_body' || c.type === 'interface_body' || c.type === 'enum_body',
+  );
+  if (classBody) {
+    for (const child of classBody.children) {
+      if (child.type !== 'field_declaration') continue;
+      const firstLine = sourceLines[child.startPosition.row]?.trimEnd();
+      if (firstLine != null && firstLine.trim().length > 0) {
+        headerLines.push(firstLine);
+      }
+      if (headerLines.filter((l) => l.trim().length > 0).length >= 5) break;
+    }
+  }
+
+  return headerLines.join('\n');
+}
+
+/**
+ * Return the method signature (everything up to but not including the body block),
+ * with the opening brace replaced by '{ }' to indicate an empty stub.
+ */
+function getMethodSignatureLine(methodNode: Parser.SyntaxNode, sourceLines: string[]): string {
+  const bodyNode = methodNode.childForFieldName('body');
+  if (!bodyNode) {
+    // Abstract method — no body
+    return sourceLines
+      .slice(methodNode.startPosition.row, methodNode.endPosition.row + 1)
+      .join('\n')
+      .trimEnd();
+  }
+  const bodyStartRow = bodyNode.startPosition.row;
+  const bodyStartCol = bodyNode.startPosition.column;
+  const sigLines = sourceLines.slice(methodNode.startPosition.row, bodyStartRow + 1);
+  if (sigLines.length > 0) {
+    sigLines[sigLines.length - 1] =
+      (sourceLines[bodyStartRow] ?? '').substring(0, bodyStartCol).trimEnd() + ' { }';
+  }
+  return sigLines.join('\n').trimEnd();
+}
+
+/**
+ * Build the content for a class-signature chunk:
+ * class declaration + field declarations + method signatures (no bodies).
+ */
+function buildClassSignatureContent(classNode: Parser.SyntaxNode, sourceLines: string[]): string {
+  const parts: string[] = [];
+
+  // 1. Class declaration line
+  const startRow = classNode.startPosition.row;
+  const endRow = classNode.endPosition.row;
+  for (let r = startRow; r <= Math.min(endRow, startRow + 10); r++) {
+    const line = sourceLines[r] ?? '';
+    if (/\b(class|interface|enum|record)\b/.test(line)) {
+      parts.push(line.trimEnd());
+      break;
+    }
+  }
+
+  // 2. Class body: fields and method/constructor signatures (no bodies)
+  const classBody = classNode.children.find((c) => c.type === 'class_body');
+  if (classBody) {
+    for (const child of classBody.children) {
+      if (child.type === 'field_declaration') {
+        parts.push(
+          sourceLines
+            .slice(child.startPosition.row, child.endPosition.row + 1)
+            .join('\n')
+            .trimEnd(),
+        );
+      } else if (child.type === 'method_declaration' || child.type === 'constructor_declaration') {
+        parts.push(getMethodSignatureLine(child, sourceLines));
+      }
+    }
+    parts.push('}');
+  }
+
+  return parts.join('\n');
 }
 
 /**
@@ -250,6 +544,9 @@ function collectDeclarations(
         superclass: extractSuperclass(targetNode),
         interfaces: extractInterfaces(targetNode),
         isInnerClass: enclosingName != null ? true : undefined,
+        annotations: extractAnnotations(targetNode),
+        visibility: extractVisibility(targetNode),
+        ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
       });
       // Do NOT recurse — entire @Aspect class is emitted as one chunk
       continue;
@@ -282,11 +579,16 @@ function collectDeclarations(
     let parentName: string | undefined;
 
     // Method/constructor members inside a class/interface get preamble + parentName
+    let contextHeader: string | undefined;
     if (isMember && enclosingNode && rootNode && enclosingName) {
       const isInsideAspect = hasAspectAnnotation(enclosingNode);
       const preamble = buildPreamble(rootNode, enclosingNode, sourceLines, isInsideAspect);
       content = preamble + '\n\n' + rawContent;
       parentName = enclosingName;
+      // T025: set contextHeader for method/constructor chunks
+      if (chunkType === 'function' || chunkType === 'method') {
+        contextHeader = buildContextHeader(enclosingNode, sourceLines);
+      }
     }
 
     // Inner class (top-level declaration inside another class) gets parentName from enclosing
@@ -307,6 +609,10 @@ function collectDeclarations(
       imports: allImports,
       exports: name ? [name] : [],
       parentName,
+      annotations: extractAnnotations(targetNode),
+      visibility: extractVisibility(targetNode),
+      ...(contextHeader != null ? { contextHeader } : {}),
+      ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
       ...(isTopLevel &&
       (targetNode.type === 'class_declaration' || targetNode.type === 'record_declaration')
         ? {
@@ -322,6 +628,35 @@ function collectDeclarations(
           }
         : {}),
     });
+
+    // T025: emit class-signature chunk for top-level class/record declarations
+    if (
+      isTopLevel &&
+      (targetNode.type === 'class_declaration' || targetNode.type === 'record_declaration')
+    ) {
+      const className = getNodeName(targetNode);
+      const sigContent = buildClassSignatureContent(targetNode, sourceLines);
+      // T117: extract structured annotation values for thin-class enrichment
+      const annotationMeta = extractAnnotationMeta(targetNode);
+      chunks.push({
+        id: makeClassSignatureChunkId(filePath, startLine, endLine),
+        filePath,
+        relativePath,
+        language: 'java',
+        chunkType: 'class-signature',
+        name: className,
+        content: sigContent,
+        startLine,
+        endLine,
+        imports: allImports,
+        exports: className ? [className] : [],
+        parentName: enclosingName,
+        annotations: extractAnnotations(targetNode),
+        visibility: extractVisibility(targetNode),
+        ...(annotationMeta ? { annotationMeta } : {}),
+        ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
+      });
+    }
 
     // Recurse into class/interface bodies for inner declarations — pass enclosing context
     if (isTopLevel) {
@@ -383,6 +718,7 @@ export function parseJava(sourceCode: string, filePath: string, relativePath: st
       endLine: lines.length,
       imports: allImports,
       exports: [],
+      ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
     });
   }
 

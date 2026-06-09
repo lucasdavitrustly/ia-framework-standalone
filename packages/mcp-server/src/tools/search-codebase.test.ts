@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { searchCodebaseHandler, formatResult } from './search-codebase.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
+import { searchCodebaseHandler, formatResult, resetSearchSessionCache } from './search-codebase.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import * as classificationModule from '../classification/index.js';
 
@@ -584,6 +585,262 @@ describe('searchCodebaseHandler - repo param and grouping', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// T057: Metadata filters (stereotype, archLayer, module, language)
+// ---------------------------------------------------------------------------
+
+describe('T057: metadata filters — stereotype / archLayer / module / language', () => {
+  function makeFilterEngine(searchFn = vi.fn().mockResolvedValue([])) {
+    return {
+      searchWithExpansion: searchFn,
+      search: vi.fn().mockResolvedValue([]),
+    };
+  }
+
+  it('passes stereotype to Qdrant filter must array', async () => {
+    const engine = makeFilterEngine();
+    await searchCodebaseHandler(engine, {
+      query: 'payment service',
+      stereotype: 'service',
+      expand_hops: 0,
+    });
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          must: expect.arrayContaining([{ key: 'stereotype', match: { value: 'service' } }]),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('passes archLayer to Qdrant filter must array', async () => {
+    const engine = makeFilterEngine();
+    await searchCodebaseHandler(engine, {
+      query: 'controllers list',
+      archLayer: 'controller',
+      expand_hops: 0,
+    });
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          must: expect.arrayContaining([{ key: 'archLayer', match: { value: 'controller' } }]),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('passes module to Qdrant filter must array', async () => {
+    const engine = makeFilterEngine();
+    await searchCodebaseHandler(engine, {
+      query: 'billing logic',
+      module: 'billing-service',
+      expand_hops: 0,
+    });
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          must: expect.arrayContaining([
+            { key: 'moduleInfo.module', match: { value: 'billing-service' } },
+          ]),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('passes language to Qdrant filter must array', async () => {
+    const engine = makeFilterEngine();
+    await searchCodebaseHandler(engine, {
+      query: 'java repositories',
+      language: 'java',
+      expand_hops: 0,
+    });
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          must: expect.arrayContaining([{ key: 'language', match: { value: 'java' } }]),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('combines repo and stereotype filters in the same must array', async () => {
+    const engine = makeFilterEngine();
+    await searchCodebaseHandler(engine, {
+      query: 'payment service',
+      repo: 'backend',
+      stereotype: 'repository',
+      expand_hops: 0,
+    });
+    expect(engine.searchWithExpansion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          must: expect.arrayContaining([
+            { key: 'repoId', match: { value: 'backend' } },
+            { key: 'stereotype', match: { value: 'repository' } },
+          ]),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T058: Filesystem read at retrieval for top-5 results
+// ---------------------------------------------------------------------------
+
+describe('T058: filesystem read for top-5 results', () => {
+  it('calls readFileFn with relativePath, startLine, endLine for first result', async () => {
+    const result = makeResult({
+      chunkId: 'r1',
+      relativePath: 'src/auth.ts',
+      startLine: 10,
+      endLine: 20,
+      content: 'stored-payload-content',
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('live code from file');
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'payment gateway retry logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', 10, 20, undefined);
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('live code from file');
+    expect(text).not.toContain('stored-payload-content');
+  });
+
+  it('falls back to stored content when readFileFn throws', async () => {
+    const result = makeResult({
+      chunkId: 'r1',
+      content: 'stored-fallback-content',
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockRejectedValue(new Error('ENOENT: file not found'));
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'auth logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('stored-fallback-content');
+  });
+
+  it('uses stored content when no readFileFn provided', async () => {
+    const result = makeResult({ chunkId: 'r1', content: 'stored content unchanged' });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+
+    const output = await searchCodebaseHandler(engine, { query: 'auth', expand_hops: 0 });
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('stored content unchanged');
+  });
+
+  it('forwards repoId from result to readFileFn as fourth argument', async () => {
+    const result = makeResult({
+      chunkId: 'r1',
+      relativePath: 'src/auth.ts',
+      startLine: 10,
+      endLine: 20,
+      content: 'stored-payload-content',
+      repoId: 'core',
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('live code from core repo');
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'payment gateway retry logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    expect(readFileFn).toHaveBeenCalledWith('src/auth.ts', 10, 20, 'core');
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('live code from core repo');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T059: Token budget — top-5 with content, results 6-10 metadata-only
+// ---------------------------------------------------------------------------
+
+describe('T059: token budget — top-5 content, results 6-10 metadata-only', () => {
+  function makeTenResults() {
+    return Array.from({ length: 10 }, (_, i) =>
+      makeResult({
+        chunkId: `c${i}`,
+        score: 0.95 - i * 0.03,
+        relativePath: `src/file${i}.ts`,
+        name: `fn${i}`,
+        content: `content-for-file-${i}`,
+      }),
+    );
+  }
+
+  it('top-5 results include code block in output', async () => {
+    const results = makeTenResults();
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue(results),
+      search: vi.fn().mockResolvedValue(results),
+    };
+
+    const output = await searchCodebaseHandler(engine, {
+      query: 'payment gateway retry logic',
+      expand_hops: 0,
+      limit: 10,
+    });
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    // The 1st result's content should appear in a code block
+    expect(text).toContain('content-for-file-0');
+    // Verify code blocks are present for top 5 results
+    expect(text).toContain('content-for-file-4');
+  });
+
+  it('results 6-10 are metadata-only — no code block in output', async () => {
+    const results = makeTenResults();
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue(results),
+      search: vi.fn().mockResolvedValue(results),
+    };
+
+    const output = await searchCodebaseHandler(engine, {
+      query: 'payment gateway retry logic',
+      expand_hops: 0,
+      limit: 10,
+    });
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    // Result 6 (index 5) appears in output but WITHOUT its content
+    expect(text).toContain('src/file5.ts');
+    expect(text).not.toContain('content-for-file-5');
+    // Result 10 (index 9) same
+    expect(text).toContain('src/file9.ts');
+    expect(text).not.toContain('content-for-file-9');
+  });
+});
+
 describe('formatResult - line number display', () => {
   it('includes :startLine-endLine in header with named chunk', () => {
     const result = makeResult({
@@ -610,5 +867,221 @@ describe('formatResult - line number display', () => {
     const output = formatResult(result, 1);
     expect(output).toContain('### 1. src/Foo.ts:10-25 —');
     expect(output).not.toMatch(/src\/Foo\.ts:10-25 \(/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T069: contentHash drift detection — flag stale results at retrieval time
+// ---------------------------------------------------------------------------
+
+describe('T069: contentHash drift detection', () => {
+  it('flags result as stale in structuredContent when live hash differs from stored contentHash', async () => {
+    const storedHash = createHash('sha256').update('old content').digest('hex');
+    const result = makeResult({
+      chunkId: 'r-stale',
+      relativePath: 'src/service.ts',
+      startLine: 10,
+      endLine: 20,
+      content: 'old content',
+      contentHash: storedHash,
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('new live content — different from indexed');
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'service logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    expect((output.structuredContent as any)?.results[0]?.stale).toBe(true);
+  });
+
+  it('does not flag stale when live hash matches stored contentHash', async () => {
+    const liveContent = 'stable content — unchanged';
+    const storedHash = createHash('sha256').update(liveContent).digest('hex');
+    const result = makeResult({
+      chunkId: 'r-fresh',
+      content: liveContent,
+      contentHash: storedHash,
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue(liveContent);
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'service logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    expect((output.structuredContent as any)?.results[0]?.stale).toBeFalsy();
+  });
+
+  it('does not flag stale when result has no contentHash stored', async () => {
+    const result = makeResult({
+      chunkId: 'r-no-hash',
+      content: 'some content',
+      // No contentHash — older indexed chunk pre-T069
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('completely different content');
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'service logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    expect((output.structuredContent as any)?.results[0]?.stale).toBeFalsy();
+  });
+
+  it('includes [stale] tag in formatted text output for stale results', async () => {
+    const storedHash = createHash('sha256').update('original').digest('hex');
+    const result = makeResult({
+      chunkId: 'r-stale-text',
+      content: 'original',
+      contentHash: storedHash,
+    });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('modified content — file changed since indexing');
+
+    const output = await searchCodebaseHandler(
+      engine,
+      { query: 'service logic', expand_hops: 0 },
+      { readFileFn },
+    );
+
+    const text = (output.content[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('[stale]');
+  });
+});
+
+describe('Phase 12 (US7): formatResult score type labels', () => {
+  it('T098: renders "score: X.XX" for cosine results', () => {
+    const r = makeResult({ score: 0.82, scoreType: 'cosine' });
+    const output = formatResult(r, 1);
+    expect(output).toContain('score: 0.82');
+    expect(output).not.toContain('rrf:');
+  });
+
+  it('T098: renders "rrf: X.XXXX" for RRF results', () => {
+    const r = makeResult({ score: 0.0213, scoreType: 'rrf' });
+    const output = formatResult(r, 1);
+    expect(output).toContain('rrf: 0.0213');
+    expect(output).not.toContain('score: 0.02');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 18 (T152–T153): search_codebase session dedup
+// ---------------------------------------------------------------------------
+
+describe('T152: search_codebase session dedup returns short message on duplicate call', () => {
+  beforeEach(() => resetSearchSessionCache());
+
+  it('returns short "Same results" message on second identical call with same query+filters', async () => {
+    const result = makeResult({ score: 0.9 });
+    const engine = {
+      searchWithExpansion: vi.fn().mockResolvedValue([result]),
+      search: vi.fn().mockResolvedValue([result]),
+    };
+
+    const sessionCache = { enabled: true } as const;
+
+    // First call — full response
+    const first = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const firstText = (first.content[0] as { type: 'text'; text: string }).text;
+    expect(firstText).toContain('myFunction');
+
+    // Second identical call — should return short dedup message
+    const second = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const secondText = (second.content[0] as { type: 'text'; text: string }).text;
+    expect(secondText.length).toBeLessThan(firstText.length);
+    expect(secondText.toLowerCase()).toContain('same results');
+  });
+});
+
+describe('T153: search_codebase session dedup separate entries for different params', () => {
+  beforeEach(() => resetSearchSessionCache());
+
+  it('different queries produce separate cache entries (no false dedup)', async () => {
+    const result1 = makeResult({ name: 'paymentFn', score: 0.9 });
+    const result2 = makeResult({ name: 'authFn', score: 0.85 });
+    const engine = {
+      searchWithExpansion: vi
+        .fn()
+        .mockResolvedValueOnce([result1])
+        .mockResolvedValueOnce([result2]),
+      search: vi.fn().mockResolvedValue([]),
+    };
+
+    const sessionCache = { enabled: true } as const;
+
+    const first = await searchCodebaseHandler(
+      engine,
+      { query: 'payment service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const second = await searchCodebaseHandler(
+      engine,
+      { query: 'auth service', expand_hops: 0 },
+      { sessionCache },
+    );
+
+    const firstText = (first.content[0] as { type: 'text'; text: string }).text;
+    const secondText = (second.content[0] as { type: 'text'; text: string }).text;
+    // Both should be full responses (different cache keys)
+    expect(firstText).toContain('paymentFn');
+    expect(secondText).toContain('authFn');
+  });
+
+  it('same query with different filter produces separate cache entries', async () => {
+    const result1 = makeResult({ name: 'ServiceFn', score: 0.9 });
+    const result2 = makeResult({ name: 'ControllerFn', score: 0.85 });
+    const engine = {
+      searchWithExpansion: vi
+        .fn()
+        .mockResolvedValueOnce([result1])
+        .mockResolvedValueOnce([result2]),
+      search: vi.fn().mockResolvedValue([]),
+    };
+
+    const sessionCache = { enabled: true } as const;
+
+    const first = await searchCodebaseHandler(
+      engine,
+      { query: 'entry logic', stereotype: 'service', expand_hops: 0 },
+      { sessionCache },
+    );
+    const second = await searchCodebaseHandler(
+      engine,
+      { query: 'entry logic', stereotype: 'controller', expand_hops: 0 },
+      { sessionCache },
+    );
+
+    const firstText = (first.content[0] as { type: 'text'; text: string }).text;
+    const secondText = (second.content[0] as { type: 'text'; text: string }).text;
+    expect(firstText).toContain('ServiceFn');
+    expect(secondText).toContain('ControllerFn');
   });
 });

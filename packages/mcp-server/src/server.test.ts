@@ -4,7 +4,6 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { searchCodebaseHandler } from './tools/search-codebase.js';
 import { getFileHandler } from './tools/get-file.js';
 import { getDependenciesHandler } from './tools/get-dependencies.js';
-import { benchmarkPreflightHandler } from './tools/benchmark-preflight.js';
 import { createMcpServer } from './server.js';
 
 /** Extract text from a CallToolResult's first content item */
@@ -40,9 +39,7 @@ function makeMockEngine(
   return {
     search: vi.fn().mockResolvedValue(searchResults),
     searchWithExpansion: vi.fn().mockResolvedValue(searchResults),
-    searchHybrid: vi.fn().mockResolvedValue(searchResults),
     getFile: vi.fn().mockResolvedValue(fileResults),
-    getModuleDependencies: vi.fn().mockResolvedValue(fileResults),
     queryDatabase: vi.fn().mockResolvedValue(fileResults),
   };
 }
@@ -176,29 +173,6 @@ describe('MCP Server Tools', () => {
     });
   });
 
-  describe('benchmark_preflight handler', () => {
-    test('Test 7c: reports runnable preflight when required tools are callable', async () => {
-      const engine = makeMockEngine([makeResult()], [makeResult()]);
-
-      const output = await benchmarkPreflightHandler(engine);
-      const text = getFirstText(output);
-
-      expect(text).toContain('Benchmark preflight');
-      expect(text).toContain('0 blocked');
-    });
-
-    test('Test 7d: reports fallback when semantic search is blocked but get_file works', async () => {
-      const engine = makeMockEngine([makeResult()], [makeResult()]);
-      engine.searchWithExpansion.mockRejectedValueOnce(new Error('permission denied'));
-
-      const output = await benchmarkPreflightHandler(engine);
-      const text = getFirstText(output);
-
-      expect(text).toContain('search_codebase: fallback');
-      expect(text).toContain('fallback: get_file');
-    });
-  });
-
   describe('createMcpServer', () => {
     test('Test 8: createMcpServer() returns an object with a connect() method', () => {
       const engine = makeMockEngine();
@@ -207,10 +181,9 @@ describe('MCP Server Tools', () => {
       expect(typeof server.connect).toBe('function');
     });
 
-    test('Test 9: registers benchmark_preflight tool', () => {
+    test('Test 9: createMcpServer() registers the 3 core retrieval tools', () => {
       const engine = makeMockEngine();
       const server = createMcpServer({ searchEngine: engine as never });
-
       expect(server).toBeDefined();
     });
   });

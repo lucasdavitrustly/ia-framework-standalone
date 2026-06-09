@@ -7,27 +7,70 @@ import { parseRepoPath } from './get-file.js';
 
 type Engine = {
   getFile(path: string): Promise<RetrievalResult[]>;
-  search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
+  search?(query: {
+    text: string;
+    limit?: number | undefined;
+    scoreThreshold?: number | undefined;
+    filter?: Record<string, unknown> | undefined;
+  }): Promise<RetrievalResult[]>;
   /** Available repos for cross-repo import annotation */
   repos?: Array<{ name: string; provides?: string[] | undefined }>;
 };
 
 export interface GetDependenciesInput {
-  path: string;
+  /** Relative file path — file-level query. Mutually exclusive with `module`. */
+  path?: string;
+  /** Module name (e.g. 'com.example:auth-service') — module-level BFS. Mutually exclusive with `path`. */
+  module?: string;
+  /** BFS traversal depth for module queries (default: 1). */
+  depth?: number;
+  /** Filter to specific repo. */
+  repo?: string;
 }
 
 export type ToolOutput = CallToolResult;
 
 /**
  * Handle the get_dependencies tool call.
- * Extracts unique imports and exports from all chunks in the file.
- * Supports multi-repo resolution with optional repo:path prefix syntax.
+ * Supports two modes:
+ * - `path`: extract dependency edges from a specific file's indexed chunks.
+ * - `module`: BFS traversal from all files in a module up to `depth` hops.
+ *
+ * Exactly one of `path` or `module` must be provided.
  */
 export async function getDependenciesHandler(
   engine: Engine,
   input: GetDependenciesInput,
 ): Promise<ToolOutput> {
-  const { repo, path: filePath } = parseRepoPath(input.path);
+  // Validate mutual exclusion
+  if (input.path !== undefined && (input as any).module !== undefined) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Error: cannot specify both `path` and `module` — provide exactly one.',
+        },
+      ],
+    };
+  }
+
+  if ((input as any).module !== undefined) {
+    return getDependenciesForModule(engine, (input as any).module as string, input);
+  }
+
+  // Path-mode (default): backward-compat with original behavior
+  return getDependenciesForPath(engine, input);
+}
+
+// ---------------------------------------------------------------------------
+// Path-level dependency extraction
+// ---------------------------------------------------------------------------
+
+async function getDependenciesForPath(
+  engine: Engine,
+  input: GetDependenciesInput,
+): Promise<ToolOutput> {
+  const { repo, path: filePath } = parseRepoPath(input.path!);
 
   let results: RetrievalResult[];
   let fallbackNote: string | undefined;
@@ -137,6 +180,23 @@ export async function getDependenciesHandler(
     });
   }
 
+  // Collect all dependencyEdges across all chunks (deduped by targetPath+relation)
+  const edgeMap = new Map<
+    string,
+    (typeof results)[0]['dependencyEdges'] extends Array<infer T> | undefined ? T : never
+  >();
+  for (const chunk of results) {
+    for (const edge of chunk.dependencyEdges ?? []) {
+      edgeMap.set(`${edge.targetPath}:${edge.relation}`, edge);
+    }
+  }
+  const allEdges = [...edgeMap.values()];
+
+  // Build structured imports from dependencyEdges
+  const structuredImports = allEdges
+    .filter((e) => e.relation === 'imports')
+    .map((e) => ({ path: e.targetPath, symbols: e.symbols ?? [], relation: e.relation }));
+
   const header = `## Dependencies for: ${filePath}`;
   const text = `${fallbackNote ? `${fallbackNote}\n\n` : ''}${header}\n\n${textParts.join('\n\n')}`;
   const conclusion = `Conclusion: found dependency evidence for ${input.path}.`;
@@ -146,7 +206,124 @@ export async function getDependenciesHandler(
     structuredContent: {
       ...(fallbackNote ? { fallbackUsed: true } : {}),
       answered: true,
+      target: filePath,
+      imports: structuredImports,
+      dependencyEdges: allEdges,
       deps: structuredDeps,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Module-level BFS dependency traversal
+// ---------------------------------------------------------------------------
+
+async function getDependenciesForModule(
+  engine: Engine,
+  moduleName: string,
+  input: GetDependenciesInput,
+): Promise<ToolOutput> {
+  const depth = input.depth ?? 1;
+
+  if (!engine.search) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Cannot perform module-level query: search capability not available.`,
+        },
+      ],
+    };
+  }
+
+  // Extract artifactId for the filter (support both 'groupId:artifactId' and bare 'artifactId')
+  const artifactId = moduleName.includes(':') ? moduleName.split(':')[1]! : moduleName;
+
+  // BFS state
+  const visitedPaths = new Set<string>();
+  const allEdges: Array<{ targetPath: string; relation: string; symbols?: string[] | undefined }> =
+    [];
+
+  // Hop 0: get all files in the starting module via search filter
+  const startChunks = await engine.search({
+    text: '',
+    limit: 100,
+    scoreThreshold: 0,
+    filter: { must: [{ key: 'moduleInfo.module', match: { value: artifactId } }] },
+  });
+
+  // Collect starting file paths
+  const startPaths = new Set<string>(
+    startChunks.map((c) => c.relativePath).filter(Boolean) as string[],
+  );
+
+  for (const chunk of startChunks) {
+    for (const edge of chunk.dependencyEdges ?? []) {
+      allEdges.push(edge);
+    }
+    if (chunk.relativePath) visitedPaths.add(chunk.relativePath);
+  }
+
+  // BFS hops 1..depth: follow dependencyEdge targetPaths
+  let frontier = [
+    ...new Set(allEdges.map((e) => e.targetPath).filter((p) => !visitedPaths.has(p))),
+  ];
+
+  for (let hop = 1; hop < depth; hop++) {
+    if (frontier.length === 0) break;
+    const nextFrontier: string[] = [];
+
+    for (const targetPath of frontier) {
+      if (visitedPaths.has(targetPath)) continue;
+      visitedPaths.add(targetPath);
+
+      try {
+        const chunks = await engine.getFile(targetPath);
+        for (const chunk of chunks) {
+          for (const edge of chunk.dependencyEdges ?? []) {
+            if (!visitedPaths.has(edge.targetPath)) {
+              allEdges.push(edge);
+              nextFrontier.push(edge.targetPath);
+            }
+          }
+        }
+      } catch {
+        // file not indexed — skip
+      }
+    }
+
+    frontier = [...new Set(nextFrontier)];
+  }
+
+  // Deduplicate edges
+  const edgeMap = new Map<string, (typeof allEdges)[0]>();
+  for (const edge of allEdges) {
+    edgeMap.set(`${edge.targetPath}:${edge.relation}`, edge);
+  }
+  const uniqueEdges = [...edgeMap.values()];
+
+  const structuredImports = uniqueEdges
+    .filter((e) => e.relation === 'imports')
+    .map((e) => ({ path: e.targetPath, symbols: e.symbols ?? [], relation: e.relation }));
+
+  const header = `## Module Dependencies: ${moduleName}`;
+  const importLines =
+    structuredImports.length > 0
+      ? structuredImports
+          .map((i) => `- ${i.path} (${i.symbols.join(', ') || 'no symbols'})`)
+          .join('\n')
+      : '(none)';
+  const filesInModule =
+    startPaths.size > 0 ? [...startPaths].map((p) => `- ${p}`).join('\n') : '(none)';
+  const text = `${header}\n\n### Files in module\n${filesInModule}\n\n### Imports (depth=${depth})\n${importLines}`;
+
+  return {
+    content: [{ type: 'text', text }],
+    structuredContent: {
+      answered: true,
+      target: moduleName,
+      imports: structuredImports,
+      dependencyEdges: uniqueEdges,
     },
   };
 }
@@ -159,13 +336,31 @@ export function registerGetDependenciesTool(server: McpServer, engine: Engine): 
     'get_dependencies',
     {
       description:
-        'Get the imports and exports for a specific file. Returns a deduplicated list of module dependencies and exported symbols.',
+        'Get the imports and exports for a specific file or module. ' +
+        'Provide either `path` (file-level lookup) or `module` (module-level with BFS traversal). ' +
+        'Returns imports, exports, and full dependencyEdges for graph navigation. ' +
+        'Use `depth` to control BFS traversal depth for module queries (default: 1).',
       inputSchema: {
-        path: z.string().describe('Relative file path (e.g., "src/auth/middleware.ts")'),
+        path: z
+          .string()
+          .optional()
+          .describe(
+            'Relative file path (e.g., "src/auth/middleware.ts"). Mutually exclusive with module.',
+          ),
+        module: z
+          .string()
+          .optional()
+          .describe(
+            'Module name to look up (maps to moduleInfo.module). Mutually exclusive with path.',
+          ),
+        depth: z
+          .number()
+          .optional()
+          .describe('BFS traversal depth for module queries (default: 1, max: 3).'),
       },
     },
     async (input) => {
-      return getDependenciesHandler(engine, input);
+      return getDependenciesHandler(engine, input as GetDependenciesInput);
     },
   );
 }

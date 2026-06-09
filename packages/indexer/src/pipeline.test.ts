@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ChunkMetadata } from '@ia-framework/core';
 
@@ -49,6 +49,7 @@ vi.mock('@ia-framework/ast-parser', () => ({
   parseFile: mockParseFile,
   extractCalls: () => undefined,
   buildCalledByIndex: () => new Map(),
+  classify: vi.fn().mockReturnValue({ stereotype: 'unknown' }),
 }));
 
 // ── Mock incremental helpers ─────────────────────────────────────────────────
@@ -168,28 +169,28 @@ describe('IndexingPipeline', () => {
     );
   });
 
-  it('Test 2: run() calls embeddingProvider.embedBatch() with text descriptions and code content', async () => {
+  it('Test 2: run() calls embeddingProvider.embedBatch() with semantic descriptions and signature inputs', async () => {
     await pipeline.run(makeConfig());
 
-    // First call: text descriptions (auto-generated from chunk metadata)
+    // First call: semantic inputs (language + chunkType + name + content fallback)
     expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.any(String)]),
       'document',
     );
-    // Second call: raw code content
-    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(['function testFn() {}'], 'document');
+    // Second call: signature inputs (name + chunkType fallback since no signature on chunk)
+    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(['testFn function'], 'document');
   });
 
-  it('Test 3: run() calls vectorStore.upsertBatch() with VectorPoints having both textVector and codeVector', async () => {
+  it('Test 3: run() calls vectorStore.upsertBatch() with VectorPoints having semantic and signature vectors', async () => {
     await pipeline.run(makeConfig());
 
     expect(vectorStore.upsertBatch).toHaveBeenCalledOnce();
     const [points] = vectorStore.upsertBatch.mock.calls[0] as [
-      { textVector: number[]; codeVector: number[] }[],
+      { semantic: number[]; signature: number[] }[],
     ];
     expect(points).toHaveLength(1);
-    expect(points[0]!.textVector).toEqual([0.1, 0.2, 0.3]);
-    expect(points[0]!.codeVector).toEqual([0.1, 0.2, 0.3]);
+    expect(points[0]!.semantic).toEqual([0.1, 0.2, 0.3]);
+    expect(points[0]!.signature).toEqual([0.1, 0.2, 0.3]);
   });
 
   it('Test 4: run() calls progress callback with stage="done" when complete', async () => {
@@ -226,10 +227,23 @@ describe('IndexingPipeline', () => {
 
     await pipeline.run(makeConfig({ incremental: true }));
 
-    // Should call deleteByFilter for the changed file before re-indexing
-    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ filePath: changedFile });
+    // T095 fix: deleteByFilter is called with relativePath (not absolute filePath)
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ relativePath: 'foo.ts' });
     // Should call parseFile for the changed file
     expect(mockParseFile).toHaveBeenCalledWith(changedFile, expect.any(Object));
+  });
+
+  it('T090: incremental run deletes stale chunks by relativePath, not absolute filePath', async () => {
+    const changedFile = join(tmpDir, 'foo.ts');
+    const expectedRelativePath = relative(tmpDir, changedFile); // = 'foo.ts'
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit-hash');
+    mockGetChangedFiles.mockResolvedValue([changedFile]);
+
+    await pipeline.run(makeConfig({ incremental: true }));
+
+    // After fix: deleteByFilter must use relativePath, not the deprecated absolute filePath
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ relativePath: expectedRelativePath });
+    expect(vectorStore.deleteByFilter).not.toHaveBeenCalledWith({ filePath: changedFile });
   });
 
   it('Test 7: run() calls vectorStore.initialize() before upserting', async () => {
@@ -336,7 +350,11 @@ describe('IndexingPipeline — contextSources', () => {
     const result = await pipeline.run(makeConfig({ contextSources: [source] }));
 
     expect(source.getChunks).toHaveBeenCalledOnce();
-    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith([tableChunk.content]);
+    // ThreeVectorEmbedder calls embedBatch twice per batch (semantic + signature), both with 'document'
+    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.any(String)]),
+      'document',
+    );
     expect(vectorStore.upsertBatch).toHaveBeenCalled();
     expect(result.chunksIndexed).toBe(1);
   });
@@ -406,6 +424,90 @@ describe('IndexingPipeline — contextSources', () => {
     await pipeline.run(makeConfig()); // no contextSources
 
     expect(source.getChunks).not.toHaveBeenCalled();
+  });
+});
+
+// ── T019: Unified pipeline — VectorPoints must not carry raw code ─────────────
+//
+// This test verifies that when the pipeline produces VectorPoints for Qdrant,
+// the payload does NOT contain a 'content' (raw code) field.
+// That field is intentionally omitted — code is read from the filesystem at retrieval time.
+//
+// NOTE: This test will FAIL until the pipeline is updated to emit lean payloads.
+
+describe('IndexingPipeline — T019: lean VectorPoint payloads (no raw code)', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `indexer-lean-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'Payment.java'), 'public class Payment {}');
+
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'chunk-1',
+        filePath: join(tmpDir, 'Payment.java'),
+        relativePath: 'Payment.java',
+        language: 'java',
+        chunkType: 'class',
+        name: 'Payment',
+        content: 'public class Payment {}',
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: ['Payment'],
+        contentHash: 'sha256-of-payment',
+      },
+    ]);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  it('upserts VectorPoints whose payload does NOT contain a content field', async () => {
+    await pipeline.run(makeConfig());
+
+    expect(vectorStore.upsertBatch).toHaveBeenCalled();
+    const [points] = vectorStore.upsertBatch.mock.calls[0] as [Record<string, unknown>[]];
+    expect(points.length).toBeGreaterThan(0);
+
+    for (const point of points) {
+      // The payload is nested under point.payload OR the point itself IS the payload —
+      // check both shapes. The key requirement: 'content' must not be present.
+      const payload = (point['payload'] ?? point) as Record<string, unknown>;
+      expect(payload).not.toHaveProperty('content');
+    }
+  });
+
+  it('upserts VectorPoints whose payload contains relativePath and startLine for filesystem lookup', async () => {
+    await pipeline.run(makeConfig());
+
+    const [points] = vectorStore.upsertBatch.mock.calls[0] as [Record<string, unknown>[]];
+    expect(points.length).toBeGreaterThan(0);
+
+    for (const point of points) {
+      const payload = (point['payload'] ?? point) as Record<string, unknown>;
+      expect(payload).toHaveProperty('relativePath');
+      expect(payload).toHaveProperty('startLine');
+    }
   });
 });
 
@@ -973,24 +1075,6 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
     ...overrides,
   });
 
-  it('forces full re-index when prompt hash changed and strategy is llm', async () => {
-    mockGetLastIndexedCommit.mockResolvedValue('abc123');
-    mockGetChangedFiles.mockResolvedValue([]);
-    mockGetLastPromptContentHash.mockResolvedValue('old-hash-different');
-
-    const llmStrategy = {
-      name: 'llm',
-      chunk: vi.fn().mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]),
-    };
-
-    const result = await pipeline.run(
-      makeConfig({ incremental: true, chunkingStrategy: llmStrategy }),
-    );
-
-    expect(result.filesIndexed).toBeGreaterThan(0);
-    expect(llmStrategy.chunk).toHaveBeenCalled();
-  });
-
   it('does not force re-index when prompt hash matches', async () => {
     mockGetLastIndexedCommit.mockResolvedValue('abc123');
     mockGetChangedFiles.mockResolvedValue([]);
@@ -1016,26 +1100,6 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
     const result = await pipeline.run(makeConfig({ incremental: true }));
 
     expect(result.filesIndexed).toBe(0);
-  });
-
-  it('saves prompt hash when strategy is llm', async () => {
-    mockGetLastIndexedCommit.mockResolvedValue(null);
-    mockGetLastPromptContentHash.mockResolvedValue(null);
-
-    const llmStrategy = {
-      name: 'llm',
-      chunk: vi.fn().mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]),
-    };
-
-    await pipeline.run(makeConfig({ chunkingStrategy: llmStrategy }));
-
-    expect(mockSaveLastIndexedCommit).toHaveBeenCalledWith(
-      expect.any(String),
-      'abc123',
-      'test-collection',
-      undefined,
-      'test-hash-abc',
-    );
   });
 
   it('does not save prompt hash when strategy is ast', async () => {

@@ -17,7 +17,16 @@ function CandidateRow({ candidate }: { candidate: ScoreCandidate }) {
       <span className="w-20 text-gray-400 text-xs shrink-0">
         {candidate.startLine}–{candidate.endLine}
       </span>
-      <span className="w-16 font-mono text-xs shrink-0">{candidate.score.toFixed(3)}</span>
+      <span className="w-20 font-mono text-xs shrink-0">
+        {candidate.scoreType === 'rrf' ? (
+          <>
+            <span className="text-yellow-500 mr-0.5">rrf</span>
+            {candidate.score.toFixed(4)}
+          </>
+        ) : (
+          candidate.score.toFixed(3)
+        )}
+      </span>
       <span className="w-14 shrink-0">
         <SourceTag source={candidate.source} />
       </span>

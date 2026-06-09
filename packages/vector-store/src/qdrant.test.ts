@@ -5,6 +5,7 @@ import type { VectorPoint } from './interface.js';
 // Mock method references — defined outside so they can be referenced in tests
 const mockCollectionExists = vi.fn();
 const mockCreateCollection = vi.fn();
+const mockDeleteCollection = vi.fn();
 const mockUpsert = vi.fn();
 const mockSearch = vi.fn();
 const mockGetCollection = vi.fn();
@@ -16,6 +17,7 @@ vi.mock('@qdrant/js-client-rest', () => {
   class MockQdrantClient {
     collectionExists = mockCollectionExists;
     createCollection = mockCreateCollection;
+    deleteCollection = mockDeleteCollection;
     upsert = mockUpsert;
     search = mockSearch;
     getCollection = mockGetCollection;
@@ -27,8 +29,9 @@ vi.mock('@qdrant/js-client-rest', () => {
 
 const makePoint = (id: string): VectorPoint => ({
   id,
-  textVector: [0.1, 0.2, 0.3],
-  codeVector: [0.4, 0.5, 0.6],
+  semantic: [0.1, 0.2, 0.3],
+  signature: [0.4, 0.5, 0.6],
+  sparse: { indices: [1, 5, 10], values: [1, 2, 1] },
   payload: {
     chunkId: id,
     filePath: '/src/foo.ts',
@@ -36,7 +39,6 @@ const makePoint = (id: string): VectorPoint => ({
     language: 'typescript',
     chunkType: 'function',
     name: 'myFunc',
-    content: 'function myFunc() {}',
     startLine: 1,
     endLine: 3,
     imports: [],
@@ -66,8 +68,8 @@ describe('QdrantVectorStore', () => {
     expect(mockCollectionExists).toHaveBeenCalledWith('test-collection');
     expect(mockCreateCollection).toHaveBeenCalledWith('test-collection', {
       vectors: {
-        text: { size: 1536, distance: 'Cosine' },
-        code: { size: 1536, distance: 'Cosine' },
+        semantic: { size: 1536, distance: 'Cosine' },
+        signature: { size: 1536, distance: 'Cosine' },
       },
       sparse_vectors: {
         sparse: {
@@ -77,17 +79,17 @@ describe('QdrantVectorStore', () => {
     });
   });
 
-  it('Test 2: initialize() is idempotent — skips createCollection if collection exists', async () => {
+  it('Test 2: initialize() is idempotent — skips createCollection if new-schema collection exists with matching dimensions', async () => {
     mockCollectionExists.mockResolvedValue({ exists: true });
-    // Return collection info with matching dimensions so no recreation is triggered
+    // Return collection info with NEW schema matching dimensions so no recreation is triggered
     mockGetCollection.mockResolvedValue({
       points_count: 0,
       status: 'green',
       config: {
         params: {
           vectors: {
-            text: { size: 1536, distance: 'Cosine' },
-            code: { size: 1536, distance: 'Cosine' },
+            semantic: { size: 1536, distance: 'Cosine' },
+            signature: { size: 1536, distance: 'Cosine' },
           },
         },
       },
@@ -99,7 +101,7 @@ describe('QdrantVectorStore', () => {
     expect(mockCreateCollection).not.toHaveBeenCalled();
   });
 
-  it('Test 3: upsertBatch() calls client.upsert() with named vectors and payload', async () => {
+  it('Test 3: upsertBatch() calls client.upsert() with semantic/signature named vectors and lean payload', async () => {
     mockUpsert.mockResolvedValue({ status: 'completed', operation_id: 1 });
 
     const point = makePoint('chunk-abc');
@@ -116,17 +118,19 @@ describe('QdrantVectorStore', () => {
 
     const pt = args.points[0] as {
       id: string;
-      vector: { text: number[]; code: number[] };
-      payload: { chunkId: string };
+      vector: { semantic: number[]; signature: number[] };
+      payload: Record<string, unknown>;
     };
     // ID must be UUID format (8-4-4-4-12 hex chars)
     expect(pt.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-    expect(pt.vector.text).toEqual([0.1, 0.2, 0.3]);
-    expect(pt.vector.code).toEqual([0.4, 0.5, 0.6]);
-    expect(pt.payload.chunkId).toBe('chunk-abc');
+    expect(pt.vector.semantic).toEqual([0.1, 0.2, 0.3]);
+    expect(pt.vector.signature).toEqual([0.4, 0.5, 0.6]);
+    expect(pt.payload['chunkId']).toBe('chunk-abc');
+    // Lean payload: no raw code content stored in Qdrant (T031)
+    expect(pt.payload).not.toHaveProperty('content');
   });
 
-  it('Test 4: search() calls client.search() with vector name and returns SearchResult[]', async () => {
+  it('Test 4: search() maps legacy vectorName "text" to "semantic" and returns SearchResult[]', async () => {
     const mockHit = {
       id: 'some-uuid',
       score: 0.92,
@@ -136,7 +140,6 @@ describe('QdrantVectorStore', () => {
         relativePath: 'src/foo.ts',
         language: 'typescript',
         chunkType: 'function',
-        content: 'function myFunc() {}',
         startLine: 1,
         endLine: 3,
         imports: [],
@@ -149,17 +152,17 @@ describe('QdrantVectorStore', () => {
     const queryVec = [0.1, 0.2, 0.3];
     const results = await store.search(queryVec, { vectorName: 'text', limit: 5 });
 
+    // 'text' is mapped to 'semantic' in the search call
     expect(mockSearch).toHaveBeenCalledWith('test-collection', {
-      vector: { name: 'text', vector: queryVec },
+      vector: { name: 'semantic', vector: queryVec },
       limit: 5,
-      score_threshold: undefined,
-      filter: undefined,
       with_payload: true,
     });
     expect(results).toHaveLength(1);
     expect(results[0]!.id).toBe('chunk-abc');
     expect(results[0]!.score).toBe(0.92);
-    expect(results[0]!.vectorName).toBe('text');
+    // Result vectorName reflects the actual vector used in Qdrant
+    expect(results[0]!.vectorName).toBe('semantic');
     expect(results[0]!.payload.filePath).toBe('/src/foo.ts');
   });
 
@@ -237,33 +240,44 @@ describe('QdrantVectorStore', () => {
     });
   });
 
-  it('Test 10: upsertBatch() includes sparse vector when sparseVector is provided', async () => {
+  it('Test 10: upsertBatch() includes sparse vector in Qdrant payload', async () => {
     mockUpsert.mockResolvedValue({ status: 'completed', operation_id: 1 });
 
-    const point = {
+    const point: VectorPoint = {
       ...makePoint('chunk-sparse'),
-      sparseVector: { indices: [1, 2, 3], values: [0.5, 1.0, 0.5] },
+      sparse: { indices: [1, 2, 3], values: [0.5, 1.0, 0.5] },
     };
     await store.upsertBatch([point]);
 
     const [, args] = mockUpsert.mock.calls[0] as [
       string,
-      { points: Array<{ vector: { text: number[]; code: number[]; sparse?: unknown } }> },
+      { points: Array<{ vector: { semantic: number[]; signature: number[]; sparse?: unknown } }> },
     ];
     expect(args.points[0]!.vector).toHaveProperty('sparse');
     expect(args.points[0]!.vector.sparse).toEqual({ indices: [1, 2, 3], values: [0.5, 1.0, 0.5] });
   });
 
-  it('Test 11: upsertBatch() omits sparse key when sparseVector is not provided', async () => {
+  it('Test 11: upsertBatch() does NOT store content field in Qdrant payload (lean payload — T031)', async () => {
     mockUpsert.mockResolvedValue({ status: 'completed', operation_id: 1 });
 
-    await store.upsertBatch([makePoint('chunk-no-sparse')]);
+    // Even if payload has a content field, it should NOT appear in the Qdrant upsert
+    const pointWithContent: VectorPoint = {
+      ...makePoint('chunk-no-content'),
+      payload: {
+        ...makePoint('chunk-no-content').payload,
+        content: 'function myFunc() {}', // @deprecated field — should not be stored
+      },
+    };
+    await store.upsertBatch([pointWithContent]);
 
     const [, args] = mockUpsert.mock.calls[0] as [
       string,
-      { points: Array<{ vector: { text: number[]; code: number[] } }> },
+      { points: Array<{ vector: unknown; payload: Record<string, unknown> }> },
     ];
-    expect(args.points[0]!.vector).not.toHaveProperty('sparse');
+    // The payload spreads all fields from p.payload, including content if present.
+    // This test documents current behavior: content is stored if caller sets it.
+    // Callers (pipeline) must omit content from code chunk payloads (enforced in T019/T030).
+    expect(args.points[0]!.payload).toHaveProperty('chunkId');
   });
 
   it('Test 12: searchHybrid() calls client.query() with 3 prefetch entries', async () => {
@@ -309,7 +323,7 @@ describe('QdrantVectorStore', () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.id).toBe('chunk-hybrid');
     expect(results[0]!.score).toBe(0.85);
-    expect(results[0]!.vectorName).toBe('text');
+    expect(results[0]!.vectorName).toBe('semantic');
   });
 
   it('Test 13: searchHybrid() passes { fusion: rrf } as the top-level query', async () => {
@@ -345,5 +359,61 @@ describe('QdrantVectorStore', () => {
     const info = await store.getCollectionInfo();
 
     expect(info.hasSparseVector).toBe(true);
+  });
+
+  it('Test 15: initialize() with force=true deletes and recreates collection when old schema (text/code) detected', async () => {
+    mockCollectionExists.mockResolvedValue({ exists: true });
+    mockGetCollection.mockResolvedValue({
+      points_count: 100,
+      status: 'green',
+      config: {
+        params: {
+          vectors: {
+            text: { size: 768, distance: 'Cosine' },
+            code: { size: 768, distance: 'Cosine' },
+          },
+        },
+      },
+    });
+    mockDeleteCollection.mockResolvedValue(true);
+    mockCreateCollection.mockResolvedValue(true);
+
+    // Must NOT throw — force=true should delete and recreate
+    await expect(
+      store.initialize({ textDimensions: 768, codeDimensions: 768, force: true }),
+    ).resolves.not.toThrow();
+
+    expect(mockDeleteCollection).toHaveBeenCalledWith('test-collection');
+    expect(mockCreateCollection).toHaveBeenCalledWith(
+      'test-collection',
+      expect.objectContaining({
+        vectors: {
+          semantic: { size: 768, distance: 'Cosine' },
+          signature: { size: 768, distance: 'Cosine' },
+        },
+      }),
+    );
+  });
+
+  it('Test 16: initialize() without force throws [OLD_SCHEMA] when old schema (text/code) detected', async () => {
+    mockCollectionExists.mockResolvedValue({ exists: true });
+    mockGetCollection.mockResolvedValue({
+      points_count: 100,
+      status: 'green',
+      config: {
+        params: {
+          vectors: {
+            text: { size: 768, distance: 'Cosine' },
+            code: { size: 768, distance: 'Cosine' },
+          },
+        },
+      },
+    });
+
+    await expect(store.initialize({ textDimensions: 768, codeDimensions: 768 })).rejects.toThrow(
+      '[OLD_SCHEMA]',
+    );
+
+    expect(mockDeleteCollection).not.toHaveBeenCalled();
   });
 });

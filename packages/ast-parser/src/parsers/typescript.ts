@@ -44,6 +44,192 @@ const DECLARATION_TYPES = new Set([
 // Node types inside a class body that become their own chunks
 const CLASS_MEMBER_TYPES = new Set(['method_definition', 'public_field_definition']);
 
+// ── T118: TypeScript decorator value extraction for annotationMeta ───────────
+
+/** HTTP method decorator mapping: decorator name → HTTP method */
+const TS_HTTP_DECORATORS: Record<string, string> = {
+  Get: 'GET',
+  Post: 'POST',
+  Put: 'PUT',
+  Delete: 'DELETE',
+  Patch: 'PATCH',
+};
+
+/**
+ * Extract the first string literal argument from a decorator's arguments node.
+ * Handles: @Foo('value'), @Foo("value")
+ * Navigates: decorator → call_expression → arguments → string
+ */
+function extractDecoratorStringArg(decoratorNode: Parser.SyntaxNode): string | undefined {
+  // Navigate decorator → call_expression → arguments
+  const callExpr = decoratorNode.children.find((c) => c.type === 'call_expression');
+  const args =
+    callExpr?.children.find((c) => c.type === 'arguments') ??
+    decoratorNode.children.find((c) => c.type === 'arguments');
+  if (!args) return undefined;
+
+  for (const child of args.children) {
+    if (child.type === 'string' || child.type === 'template_string') {
+      // Strip surrounding quotes (' or " or `)
+      const raw = child.text;
+      if (
+        (raw.startsWith("'") && raw.endsWith("'")) ||
+        (raw.startsWith('"') && raw.endsWith('"')) ||
+        (raw.startsWith('`') && raw.endsWith('`'))
+      ) {
+        return raw.slice(1, -1);
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Extract the value of a specific key from an object literal argument in a decorator.
+ * E.g., @ApiOperation({ summary: 'Create entry' }) → extracts 'Create entry' for key 'summary'
+ * Navigates: decorator → call_expression → arguments → object → pair
+ */
+function extractDecoratorObjectKey(
+  decoratorNode: Parser.SyntaxNode,
+  key: string,
+): string | undefined {
+  // Navigate decorator → call_expression → arguments
+  const callExpr = decoratorNode.children.find((c) => c.type === 'call_expression');
+  const args =
+    callExpr?.children.find((c) => c.type === 'arguments') ??
+    decoratorNode.children.find((c) => c.type === 'arguments');
+  if (!args) return undefined;
+
+  // Find the object literal inside arguments
+  for (const child of args.children) {
+    if (child.type === 'object') {
+      for (const prop of child.children) {
+        if (prop.type === 'pair') {
+          const keyNode = prop.childForFieldName('key') ?? prop.children[0];
+          const valueNode = prop.childForFieldName('value') ?? prop.children[2];
+          if (keyNode && valueNode && keyNode.text === key) {
+            const raw = valueNode.text;
+            if (
+              (raw.startsWith("'") && raw.endsWith("'")) ||
+              (raw.startsWith('"') && raw.endsWith('"'))
+            ) {
+              return raw.slice(1, -1);
+            }
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Get the decorator name from a decorator node.
+ * The call_expression's function child contains the identifier.
+ * E.g., @Controller('path') → 'Controller'
+ */
+function getDecoratorName(decoratorNode: Parser.SyntaxNode): string {
+  // tree-sitter-typescript decorator structure:
+  //   decorator → '@' call_expression(identifier, arguments)
+  //   decorator → '@' identifier  (for marker decorators)
+  for (const child of decoratorNode.children) {
+    if (child.type === 'call_expression') {
+      const fn = child.childForFieldName('function') ?? child.children[0];
+      if (fn) return fn.text;
+    }
+    if (child.type === 'identifier') {
+      return child.text;
+    }
+  }
+  return '';
+}
+
+/**
+ * Extract annotationMeta from a class declaration's decorators and its methods' decorators.
+ * Aggregates NestJS-style controller/route decorators into structured metadata.
+ */
+function extractTsAnnotationMeta(
+  classNode: Parser.SyntaxNode,
+  exportNode: Parser.SyntaxNode,
+): CodeChunk['annotationMeta'] | undefined {
+  const operationSummaries: string[] = [];
+  const endpointPaths: string[] = [];
+  const httpMethods: string[] = [];
+  let tagName: string | undefined;
+
+  // 1. Class-level decorators (on the export statement or the class node itself)
+  const classDecorators = [
+    ...exportNode.children.filter((c) => c.type === 'decorator'),
+    ...classNode.children.filter((c) => c.type === 'decorator'),
+  ];
+
+  for (const dec of classDecorators) {
+    const name = getDecoratorName(dec);
+
+    if (name === 'Controller') {
+      const path = extractDecoratorStringArg(dec);
+      if (path && !endpointPaths.includes(path)) endpointPaths.push(path);
+    } else if (name === 'ApiTags') {
+      const tag = extractDecoratorStringArg(dec);
+      if (tag) tagName = tag;
+    }
+  }
+
+  // 2. Method-level decorators (from class body members)
+  const classBody = classNode.children.find((c) => c.type === 'class_body');
+  if (classBody) {
+    for (let i = 0; i < classBody.children.length; i++) {
+      const member = classBody.children[i]!;
+      if (!CLASS_MEMBER_TYPES.has(member.type)) {
+        // Decorators appear as siblings before the method in class_body
+        continue;
+      }
+
+      // Collect decorators preceding this method
+      const memberDecorators: Parser.SyntaxNode[] = [];
+      for (let j = i - 1; j >= 0; j--) {
+        const prev = classBody.children[j]!;
+        if (prev.type === 'decorator') {
+          memberDecorators.unshift(prev);
+        } else if (prev.type !== 'comment') {
+          break;
+        }
+      }
+
+      for (const dec of memberDecorators) {
+        const name = getDecoratorName(dec);
+
+        if (name in TS_HTTP_DECORATORS) {
+          const method = TS_HTTP_DECORATORS[name]!;
+          if (!httpMethods.includes(method)) httpMethods.push(method);
+          const path = extractDecoratorStringArg(dec);
+          if (path && !endpointPaths.includes(path)) endpointPaths.push(path);
+        } else if (name === 'ApiOperation') {
+          const summary = extractDecoratorObjectKey(dec, 'summary');
+          if (summary) operationSummaries.push(summary);
+        }
+      }
+    }
+  }
+
+  // Only return annotationMeta if there's meaningful content
+  if (
+    operationSummaries.length === 0 &&
+    endpointPaths.length === 0 &&
+    httpMethods.length === 0 &&
+    !tagName
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(operationSummaries.length > 0 ? { operationSummaries } : {}),
+    ...(endpointPaths.length > 0 ? { endpointPaths } : {}),
+    ...(httpMethods.length > 0 ? { httpMethods } : {}),
+    ...(tagName ? { tagName } : {}),
+  };
+}
+
 const CHUNK_TYPE_MAP: Partial<Record<string, CodeChunk['chunkType']>> = {
   function_declaration: 'function',
   class_declaration: 'class',
@@ -127,6 +313,53 @@ function extractImports(rootNode: Parser.SyntaxNode): string[] {
 }
 
 /**
+ * T038: Extract named symbols from a single import_statement node.
+ * e.g. `import { Foo, Bar } from './utils'` → ['Foo', 'Bar']
+ */
+function extractImportSymbols(importNode: Parser.SyntaxNode): string[] {
+  const clause = importNode.children.find(
+    (c) => c.type === 'import_clause' || c.type === 'named_imports',
+  );
+  if (!clause) return [];
+  const symbols: string[] = [];
+  // Walk to named_imports list
+  const named = clause.children.find((c) => c.type === 'named_imports') ?? clause;
+  for (const child of named.children) {
+    if (child.type === 'import_specifier') {
+      const name = child.childForFieldName('name') ?? child.children[0];
+      if (name) symbols.push(name.text);
+    }
+  }
+  return symbols;
+}
+
+/**
+ * T038: Build dependencyEdges from parsed import_statement nodes.
+ * Returns `{ targetPath, relation: 'imports', symbols }` per import.
+ */
+function buildImportEdges(
+  rootNode: Parser.SyntaxNode,
+): Array<{ targetPath: string; relation: string; symbols?: string[] }> {
+  const edges: Array<{ targetPath: string; relation: string; symbols?: string[] }> = [];
+  for (const child of rootNode.children) {
+    if (child.type === 'import_statement') {
+      const source = child.childForFieldName('source');
+      if (!source) continue;
+      const raw = source.text;
+      const targetPath = raw.slice(1, raw.length - 1);
+      const symbols = extractImportSymbols(child);
+      const edge: { targetPath: string; relation: string; symbols?: string[] } = {
+        targetPath,
+        relation: 'imports',
+      };
+      if (symbols.length > 0) edge.symbols = symbols;
+      edges.push(edge);
+    }
+  }
+  return edges;
+}
+
+/**
  * Extract individual members (methods, fields) from a class body node.
  * This decomposes large classes into smaller, semantically meaningful chunks —
  * each method becomes its own chunk with `parentName` linking back to the class.
@@ -139,6 +372,7 @@ function extractClassMembers(
   relativePath: string,
   language: string,
   allImports: string[],
+  importEdges: Array<{ targetPath: string; relation: string; symbols?: string[] }>,
 ): CodeChunk[] {
   const classBody = classNode.children.find((c) => c.type === 'class_body');
   if (!classBody) return [];
@@ -151,11 +385,12 @@ function extractClassMembers(
 
     const endLine = member.endPosition.row + 1;
 
-    // Decorators appear as sibling nodes immediately preceding the method in the class body
+    // Decorators and leading comments appear as sibling nodes immediately
+    // preceding the method in the class body. Walk backwards to capture them.
     let effectiveStart = member.startPosition.row + 1;
     for (let j = i - 1; j >= 0; j--) {
       const prev = classBody.children[j]!;
-      if (prev.type === 'decorator') {
+      if (prev.type === 'decorator' || prev.type === 'comment') {
         effectiveStart = prev.startPosition.row + 1;
       } else if (prev.type !== '{') {
         break;
@@ -180,6 +415,7 @@ function extractClassMembers(
       imports: allImports,
       exports: [],
       parentName: className,
+      ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
   }
 
@@ -201,6 +437,7 @@ export function parseTypeScript(
   const lines = sourceCode.split('\n');
 
   const allImports = extractImports(root);
+  const importEdges = buildImportEdges(root);
   const chunks: CodeChunk[] = [];
   let hasDeclarations = false;
 
@@ -249,6 +486,11 @@ export function parseTypeScript(
       targetNode.type === 'interface_declaration';
     const heritage = isClassOrInterface ? extractHeritage(targetNode) : {};
 
+    // T118: Extract annotationMeta from decorators for class declarations
+    const isClass =
+      targetNode.type === 'class_declaration' || targetNode.type === 'abstract_class_declaration';
+    const annotationMeta = isClass ? extractTsAnnotationMeta(targetNode, child) : undefined;
+
     chunks.push({
       id: makeChunkId(filePath, effectiveStartLine, endLine),
       filePath,
@@ -262,6 +504,8 @@ export function parseTypeScript(
       imports: allImports,
       exports: chunkExports,
       ...heritage,
+      ...(annotationMeta ? { annotationMeta } : {}),
+      ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
 
     // For class declarations, also extract individual members as sub-chunks
@@ -277,6 +521,7 @@ export function parseTypeScript(
         relativePath,
         language,
         allImports,
+        importEdges,
       );
       chunks.push(...memberChunks);
     }
@@ -296,6 +541,7 @@ export function parseTypeScript(
       endLine: lines.length,
       imports: allImports,
       exports: [],
+      ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
   }
 

@@ -7,14 +7,13 @@ import { loadConfig, createLogger, MavenModuleParser, RepoRegistry } from '@ia-f
 import { MetricsStore } from '@ia-framework/observability';
 import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
-import { IndexingPipeline, LlmChunkingStrategy, isOllamaReachable } from '@ia-framework/indexer';
-import type { IndexingProgress, ChunkingStrategy } from '@ia-framework/indexer';
+import { IndexingPipeline } from '@ia-framework/indexer';
+import type { IndexingProgress } from '@ia-framework/indexer';
 import {
   getLastEmbeddingModel,
   saveLastIndexedCommit,
   getCurrentCommit,
 } from '@ia-framework/indexer';
-import { PROMPT_CONTENT_HASH } from '@ia-framework/indexer';
 import { DependencyGraph } from '@ia-framework/retrieval';
 
 function resolveFrameworkDir(configPath: string): string {
@@ -163,7 +162,7 @@ export function indexCommand(): Command {
         'Browse all models: https://ollama.com/search',
       ].join('\n'),
     )
-    .option('-s, --strategy <type>', 'Chunking strategy: ast (default) or llm', 'ast')
+    .option('--skip-enrichment', 'Skip LLM enrichment (index AST metadata only, no Ollama)', false)
     .option(
       '-r, --repo <name>',
       'Index only the specified repo (must match a name in project.json repos[])',
@@ -189,7 +188,7 @@ Browse available models: https://ollama.com/search
         force: boolean;
         config: string;
         model?: string;
-        strategy: string;
+        skipEnrichment: boolean;
         repo?: string;
       }) => {
         const logger = createLogger('cli:index');
@@ -260,10 +259,9 @@ Browse available models: https://ollama.com/search
           // resolves inside Docker containers. From the host, Qdrant is reachable via localhost.
           const qdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
 
-          // Route collection name based on strategy BEFORE creating vectorStore (D-06, D-08, RETR-07)
+          // Route collection name (no more strategy suffix)
           const baseCollectionName = config.vectorStore.collectionName;
-          const collectionName =
-            options.strategy === 'llm' ? `${baseCollectionName}-llm` : baseCollectionName;
+          const collectionName = baseCollectionName;
 
           const vectorStore = new QdrantVectorStore({
             host: qdrantHost,
@@ -330,65 +328,19 @@ Browse available models: https://ollama.com/search
 
           const pipeline = new IndexingPipeline();
 
-          // LLM strategy setup: Ollama verification, model management, strategy creation
-          let chunkingStrategy: ChunkingStrategy | undefined;
-          let chunkingModel = '';
-          if (options.strategy === 'llm') {
-            // a. Verify Ollama connectivity (D-16)
-            const ollamaUrl = config.indexing?.llm?.ollamaUrl ?? 'http://localhost:11434';
-            const reachable = await isOllamaReachable(ollamaUrl);
-            if (!reachable) {
-              console.error(
-                `\n✗ Ollama is not running at ${ollamaUrl}. Start it with: ollama serve`,
-              );
-              process.exit(1);
-            }
-
-            // b. Determine chunking model (D-14, D-15)
-            chunkingModel = config.indexing?.llm?.model ?? 'llama3.2:latest';
-
-            // c. Check model availability (D-17, CLIE-02)
-            const modelAvailable = await isModelAvailable(chunkingModel, ollamaUrl);
-            if (!modelAvailable) {
-              console.log(`\n  ⚠ Chunking model "${chunkingModel}" not found locally.`);
-              const rl = createInterface({ input: process.stdin, output: process.stdout });
-              const answer = await rl.question(`  Pull "${chunkingModel}" now? (Y/n): `);
-              rl.close();
-              if (answer.trim().toLowerCase() !== 'n') {
-                await pullModel(chunkingModel, ollamaUrl);
-              } else {
-                // Offer to select from available models (CLIE-03)
-                const selected = await promptModelSelection(ollamaUrl);
-                chunkingModel = selected;
-                // Verify selected model is available (may need pull)
-                const selectedAvailable = await isModelAvailable(chunkingModel, ollamaUrl);
-                if (!selectedAvailable) {
-                  await pullModel(chunkingModel, ollamaUrl);
-                }
-              }
-            }
-
-            // d. Create LlmChunkingStrategy (D-18)
-            const cachePath = join(frameworkDir, 'llm-chunk-cache.json');
-            const llmStrategy = new LlmChunkingStrategy({
-              model: chunkingModel,
-              ollamaUrl,
-              cachePath,
-            });
-            await llmStrategy.loadCache();
-            chunkingStrategy = llmStrategy;
-          }
+          // --skip-enrichment flag: disable LLM enrichment for this run
+          const enrichmentConfig = options.skipEnrichment
+            ? null
+            : (config.indexing?.enrichment ?? null);
 
           console.log(`Collection: ${collectionName}`);
           console.log(`Model: ${config.embedding.model}`);
-          console.log(`Strategy: ${options.strategy}`);
-          if (options.strategy === 'llm') {
-            console.log(`Chunking model: ${chunkingModel}`);
-          }
+          console.log(`Enrichment: ${enrichmentConfig ? `${enrichmentConfig.model}` : 'disabled'}`);
           console.log(`Repos: ${reposToIndex.map((r) => r.name).join(', ')}`);
           console.log('');
 
           const BAR_WIDTH = 20;
+          let enrichmentStartedAt: number | null = null;
           const renderProgress = (progress: IndexingProgress): void => {
             let line: string;
             switch (progress.stage) {
@@ -406,6 +358,38 @@ Browse available models: https://ollama.com/search
                   ? ` ${progress.currentFile.split('/').pop()}`
                   : '';
                 line = `  [${bar}] ${String(pct).padStart(3)}%  parsing  ${progress.filesProcessed}/${progress.filesTotal} files${fileName}`;
+                break;
+              }
+              case 'enriching': {
+                // Track when enrichment started (first enriching event)
+                if (enrichmentStartedAt === null) enrichmentStartedAt = Date.now();
+                const completed = progress.batchesCompleted ?? 0;
+                const total = progress.batchesTotal ?? 0;
+                const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+                const filled = Math.round((pct / 100) * BAR_WIDTH);
+                const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+                const fileName = progress.currentFile
+                  ? ` ${progress.currentFile.split('/').pop()}`
+                  : '';
+                // Elapsed / ETA
+                const elapsedMs = Date.now() - enrichmentStartedAt;
+                const elapsedSec = Math.floor(elapsedMs / 1000);
+                const elapsedStr =
+                  elapsedSec >= 60
+                    ? `${Math.floor(elapsedSec / 60)}m${String(elapsedSec % 60).padStart(2, '0')}s`
+                    : `${elapsedSec}s`;
+                let etaStr = '';
+                if (completed > 0 && total > 0 && completed < total) {
+                  const etaMs = (elapsedMs / completed) * (total - completed);
+                  const etaSec = Math.ceil(etaMs / 1000);
+                  const etaFmt =
+                    etaSec >= 60
+                      ? `${Math.floor(etaSec / 60)}m${String(etaSec % 60).padStart(2, '0')}s`
+                      : `${etaSec}s`;
+                  etaStr = `  ~${etaFmt} left`;
+                }
+                const batchStr = total > 0 ? `${completed}/${total}` : '…';
+                line = `  [${bar}] ${String(pct).padStart(3)}%  enriching  ${batchStr} batches  ${elapsedStr}${etaStr}${fileName}`;
                 break;
               }
               case 'embedding': {
@@ -435,7 +419,7 @@ Browse available models: https://ollama.com/search
           await writeIndexingProgress(frameworkDir, {
             running: true,
             stage: 'walking',
-            strategy: options.strategy,
+            strategy: 'ast',
             filesTotal: 0,
             filesProcessed: 0,
             chunksTotal: 0,
@@ -531,11 +515,13 @@ Browse available models: https://ollama.com/search
                   excludePatterns: config.indexing?.excludePatterns,
                   maxChunkLines: config.indexing?.maxChunkLines,
                   incremental: !options.force,
+                  force: options.force,
                   dependencyGraph,
                   embeddingConcurrency: config.indexing?.embeddingConcurrency,
-                  chunkingStrategy,
                   mavenModuleGraph,
                   repoId: repo.name,
+                  skipEnrichment: options.skipEnrichment,
+                  ...(enrichmentConfig != null ? { enrichmentConfig } : {}),
                 },
                 (progress: IndexingProgress) => {
                   Object.assign(lastProgress, progress);
@@ -543,7 +529,7 @@ Browse available models: https://ollama.com/search
                   void writeIndexingProgress(frameworkDir, {
                     running: true,
                     stage: progress.stage,
-                    strategy: options.strategy,
+                    strategy: 'ast',
                     filesTotal: progress.filesTotal,
                     filesProcessed: progress.filesProcessed,
                     chunksTotal: progress.chunksTotal,
@@ -571,7 +557,7 @@ Browse available models: https://ollama.com/search
                 currentCommit ?? '',
                 collectionName,
                 config.embedding.model,
-                options.strategy === 'llm' ? PROMPT_CONTENT_HASH : undefined,
+                undefined,
                 repo.name,
               );
 
@@ -613,11 +599,6 @@ Browse available models: https://ollama.com/search
           }
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-          // Save LLM chunk cache if strategy is llm
-          if (chunkingStrategy && chunkingStrategy.name === 'llm') {
-            await (chunkingStrategy as LlmChunkingStrategy).saveCache();
-          }
-
           if (totalSkippedChunks > 0) {
             console.log(
               `\n  ⚠ ${totalSkippedChunks} chunks skipped due to embedding failures (will be retried on next index)`,
@@ -632,7 +613,7 @@ Browse available models: https://ollama.com/search
           await writeIndexingProgress(frameworkDir, {
             running: false,
             stage: 'done',
-            strategy: options.strategy,
+            strategy: 'ast',
             filesTotal: totalFilesIndexed,
             filesProcessed: totalFilesIndexed,
             chunksTotal: totalChunksIndexed,

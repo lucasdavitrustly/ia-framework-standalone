@@ -1,25 +1,27 @@
 import type { EmbeddingProvider } from '@ia-framework/embedding';
 import type { VectorStore, VectorPoint, ChunkPayload } from '@ia-framework/vector-store';
 import type { CodeChunk } from '@ia-framework/ast-parser';
-import { extractCalls, buildCalledByIndex } from '@ia-framework/ast-parser';
-import type { ContextSource } from '@ia-framework/core';
+import { parseFile, extractCalls, buildCalledByIndex, classify } from '@ia-framework/ast-parser';
+import type { ContextSource, EnrichmentConfig } from '@ia-framework/core';
 import { createLogger } from '@ia-framework/core';
 import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
+import { relative } from 'node:path';
 import PQueue from 'p-queue';
+import {
+  LlmEnricher,
+  type EnrichedCodeChunk,
+  type EnrichmentProgress,
+} from './enrichment/enricher.js';
 import { walkFiles } from './file-walker.js';
 import {
   getLastIndexedCommit,
-  getLastPromptContentHash,
   saveLastIndexedCommit,
   getCurrentCommit,
   getChangedFiles,
 } from './incremental.js';
-import { chunkToDescription } from './chunk-description.js';
-import { computeTermFrequencySparseVector } from '@ia-framework/retrieval';
 import type { ChunkingStrategy } from './strategies/types.js';
-import { AstChunkingStrategy } from './strategies/ast-strategy.js';
-import { PROMPT_CONTENT_HASH } from './strategies/prompt.js';
 import {
   inferLayerHints,
   inferModulePath,
@@ -28,6 +30,7 @@ import {
 } from './retrieval-metadata.js';
 import { detectConcepts, generateConceptChunks } from './concept-generator.js';
 import type { ModuleGraph } from '@ia-framework/core';
+import { ThreeVectorEmbedder } from './embedder.js';
 
 const logger = createLogger('indexer');
 
@@ -56,7 +59,10 @@ export interface IndexingConfig {
   contextSources?: ContextSource[] | undefined;
   /** Embedding concurrency override (default: provider-aware — Ollama=3, OpenAI=10) */
   embeddingConcurrency?: number | undefined;
-  /** Chunking strategy (default: AstChunkingStrategy). Phase 14 will add LlmChunkingStrategy. */
+  /**
+   * @deprecated ChunkingStrategy is no longer used by the unified pipeline.
+   * When provided, the pipeline delegates file parsing to this strategy for backward compat.
+   */
   chunkingStrategy?: ChunkingStrategy | undefined;
   /** Optional Maven module graph — if provided, chunks are enriched with maven_module metadata */
   mavenModuleGraph?: ModuleGraph | undefined;
@@ -80,10 +86,20 @@ export interface IndexingConfig {
         };
       }
     | undefined;
+  /** Skip LLM enrichment even if enrichmentConfig is provided (default: false) */
+  skipEnrichment?: boolean | undefined;
+  /** LLM enrichment configuration. When omitted, enrichment is skipped. */
+  enrichmentConfig?: EnrichmentConfig | undefined;
+  /**
+   * Force re-creation of the Qdrant collection even if it uses the old schema (text/code).
+   * When true, the old collection is deleted and recreated with the new 3-vector schema.
+   * Equivalent to the CLI --force flag.
+   */
+  force?: boolean | undefined;
 }
 
 export interface IndexingProgress {
-  stage: 'walking' | 'parsing' | 'embedding' | 'storing' | 'done';
+  stage: 'walking' | 'parsing' | 'enriching' | 'embedding' | 'storing' | 'done';
   filesTotal: number;
   filesProcessed: number;
   chunksTotal: number;
@@ -177,12 +193,12 @@ async function reloadBatchContents(batch: CodeChunk[]): Promise<string[]> {
 
 /**
  * Embed a single batch with retry logic and immediately upsert to Qdrant.
- * This avoids accumulating all vector points in memory — each batch is
- * stored and then released for GC.
+ * Uses ThreeVectorEmbedder to produce semantic/signature/sparse vectors.
+ * Payloads are lean — no raw code content stored (T019).
  * Retries once on failure; if both attempts fail, throws.
  */
 async function embedBatchAndStore(
-  batch: CodeChunk[],
+  batch: EnrichedCodeChunk[],
   provider: EmbeddingProvider,
   vectorStore: VectorStore,
   maxRetries = 1,
@@ -194,45 +210,67 @@ async function embedBatchAndStore(
   repoId?: string | undefined,
 ): Promise<number> {
   let lastError: unknown;
+  const embedder = new ThreeVectorEmbedder(provider);
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       // Reload full content from disk for this batch (content was truncated to save memory)
       const contents = await reloadBatchContents(batch);
-      const textDescriptions = batch.map((c) => c.description ?? chunkToDescription(c));
-      const codeTexts = contents;
-      // Text and code embeddings run in parallel within each batch
-      const [textVectors, codeVectors] = await Promise.all([
-        provider.embedBatch(textDescriptions, 'document'),
-        provider.embedBatch(codeTexts, 'document'),
-      ]);
+      // Pre-populate content on each chunk so ThreeVectorEmbedder can build embeddings
+      const chunksWithContent = batch.map((chunk, i) => ({ ...chunk, content: contents[i]! }));
+      // Embed all 3 vectors (semantic/signature/sparse) in a single batched operation
+      const embedResults = await embedder.embedBatch(chunksWithContent);
       // Build VectorPoints and upsert immediately
       const points: VectorPoint[] = [];
       for (let j = 0; j < batch.length; j++) {
         const chunk = batch[j]!;
         const content = contents[j]!;
+        const embedResult = embedResults[j]!;
+        // T078: filePath NOT stored — absolute path leaks host machine paths.
+        // Reconstruct at retrieval time as projectRoot + '/' + relativePath.
+        // T080: contentHash computed from reloaded content (not the truncated in-memory copy).
+        const contentHash = createHash('sha256').update(content).digest('hex');
+        // Lean payload — no raw code content (T019), no filePath (T078)
         const payload: ChunkPayload = {
           chunkId: chunk.id,
-          filePath: chunk.filePath,
           relativePath: chunk.relativePath,
           language: chunk.language,
           chunkType: chunk.chunkType,
-          name: chunk.name,
-          content,
           startLine: chunk.startLine,
           endLine: chunk.endLine,
           imports: chunk.imports,
           exports: chunk.exports,
-          parentName: chunk.parentName,
-          superclass: chunk.superclass,
-          interfaces: chunk.interfaces,
-          isInnerClass: chunk.isInnerClass,
           modulePath: inferModulePath(chunk.relativePath),
           packageName: inferPackageName(chunk.relativePath, content),
           layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, content),
-          chunkIndex: chunk.chunkIndex,
-          totalChunks: chunk.totalChunks,
+          contentHash,
           indexedAt: new Date().toISOString(),
+          ...(chunk.name != null ? { name: chunk.name } : {}),
+          ...(chunk.parentName != null ? { parentName: chunk.parentName } : {}),
+          ...(chunk.superclass != null ? { superclass: chunk.superclass } : {}),
+          ...(chunk.interfaces != null ? { interfaces: chunk.interfaces } : {}),
+          ...(chunk.isInnerClass != null ? { isInnerClass: chunk.isInnerClass } : {}),
+          ...(chunk.chunkIndex != null ? { chunkIndex: chunk.chunkIndex } : {}),
+          ...(chunk.totalChunks != null ? { totalChunks: chunk.totalChunks } : {}),
           ...(repoId ? { repoId } : {}),
+          // T079: classifier results (only when positive evidence found — 'unknown' skipped)
+          ...(chunk.stereotype != null ? { stereotype: chunk.stereotype } : {}),
+          ...(chunk.archLayer != null ? { archLayer: chunk.archLayer } : {}),
+          // T080: missing CodeChunk fields
+          ...(chunk.annotations != null ? { annotations: chunk.annotations } : {}),
+          ...(chunk.visibility != null ? { visibility: chunk.visibility } : {}),
+          ...(chunk.contextHeader != null ? { contextHeader: chunk.contextHeader } : {}),
+          ...(chunk.classSignature != null ? { classSignature: chunk.classSignature } : {}),
+          ...(chunk.dependencyEdges != null ? { dependencyEdges: chunk.dependencyEdges } : {}),
+          ...(chunk.moduleInfo != null ? { moduleInfo: chunk.moduleInfo } : {}),
+          // T122: Phase 14 — annotationMeta for thin-class semantic enrichment
+          ...(chunk.annotationMeta != null ? { annotationMeta: chunk.annotationMeta } : {}),
+          // T081: LLM enrichment fields (present only when LlmEnricher ran)
+          ...(chunk.description != null ? { description: chunk.description } : {}),
+          ...(chunk.businessContext != null ? { businessContext: chunk.businessContext } : {}),
+          ...(chunk.semanticTags != null ? { semanticTags: chunk.semanticTags } : {}),
+          ...(chunk.relationships != null ? { relationships: chunk.relationships } : {}),
+          ...(chunk.enrichedAt != null ? { enrichedAt: chunk.enrichedAt } : {}),
+          ...(chunk.enrichmentModel != null ? { enrichmentModel: chunk.enrichmentModel } : {}),
         };
         // Call-chain metadata enrichment
         if (callMeta) {
@@ -252,9 +290,9 @@ async function embedBatchAndStore(
         }
         points.push({
           id: chunk.id,
-          textVector: textVectors[j]!,
-          codeVector: codeVectors[j]!,
-          sparseVector: computeTermFrequencySparseVector(chunk.content),
+          semantic: embedResult.semantic,
+          signature: embedResult.signature,
+          sparse: embedResult.sparse,
           payload,
         });
       }
@@ -299,6 +337,7 @@ export class IndexingPipeline {
     await vectorStore.initialize({
       textDimensions: embeddingProvider.dimensions,
       codeDimensions: embeddingProvider.dimensions,
+      ...(config.force ? { force: true } : {}),
     });
 
     // Initialize dependency graph if configured
@@ -320,19 +359,8 @@ export class IndexingPipeline {
     if (incremental) {
       const lastCommit = await getLastIndexedCommit(frameworkDir, collectionName);
 
-      // Check if the LLM chunking prompt has changed — if so, force full re-index (D-20)
-      const isLlmStrategy = chunkingStrategy?.name === 'llm';
-      let promptChanged = false;
-      if (isLlmStrategy && lastCommit) {
-        const lastHash = await getLastPromptContentHash(frameworkDir, collectionName);
-        if (lastHash !== null && lastHash !== PROMPT_CONTENT_HASH) {
-          logger.info(
-            { lastHash, currentHash: PROMPT_CONTENT_HASH },
-            'LLM prompt changed — forcing full re-index',
-          );
-          promptChanged = true;
-        }
-      }
+      // Check if the LLM chunking prompt has changed — no longer applicable (strategy removed)
+      const promptChanged = false;
 
       if (promptChanged) {
         // Prompt changed — full re-index needed
@@ -345,7 +373,7 @@ export class IndexingPipeline {
         const changedFiles = await getChangedFiles(targetProjectPath, lastCommit);
         // Delete old chunks for changed files before re-indexing
         for (const filePath of changedFiles) {
-          await vectorStore.deleteByFilter({ filePath });
+          await vectorStore.deleteByFilter({ relativePath: relative(targetProjectPath, filePath) });
           if (dependencyGraph) {
             dependencyGraph.deleteEdgesForFile(filePath);
           }
@@ -376,19 +404,21 @@ export class IndexingPipeline {
     };
     onProgress?.({ ...progress });
 
-    // Parse all files into chunks using the configured strategy
-    const strategy = chunkingStrategy ?? new AstChunkingStrategy();
+    // Parse all files into chunks — use chunkingStrategy if provided (backward compat),
+    // otherwise call parseFile directly (the new default AST-first pipeline).
     const allChunks: CodeChunk[] = [];
     // Extract call-chain info per-file during parsing to avoid a second pass
     const callInfoMap = new Map<string, { defines: string; calls: string[] }>();
     for (const filePath of filesToProcess) {
       progress.currentFile = filePath;
       try {
-        const chunks = await strategy.chunk(filePath, {
-          maxChunkLines,
-          projectRoot: targetProjectPath,
-          signal,
-        });
+        const chunks = chunkingStrategy
+          ? await chunkingStrategy.chunk(filePath, {
+              maxChunkLines,
+              projectRoot: targetProjectPath,
+              signal,
+            })
+          : await parseFile(filePath, { maxChunkLines, projectRoot: targetProjectPath });
 
         // Assign chunk ordering metadata for adjacent-chunk retrieval
         const totalChunks = chunks.length;
@@ -397,6 +427,18 @@ export class IndexingPipeline {
           if (chunk) {
             chunk.chunkIndex = i;
             chunk.totalChunks = totalChunks;
+          }
+        }
+
+        // T079: Classify each chunk — assign stereotype/archLayer from heuristic rules.
+        // Only set when positive evidence found (skip 'unknown' to avoid noise in payload).
+        for (const chunk of chunks) {
+          const classification = classify(chunk);
+          if (classification.stereotype !== 'unknown') {
+            chunk.stereotype = classification.stereotype;
+          }
+          if (classification.archLayer) {
+            chunk.archLayer = classification.archLayer;
           }
         }
 
@@ -460,6 +502,29 @@ export class IndexingPipeline {
     }
 
     progress.chunksTotal = allChunks.length;
+
+    // T081: Run LLM enricher if configured and not skipped.
+    // T082: Emit 'enriching' progress stage between parsing and embedding.
+    let processedChunks: EnrichedCodeChunk[];
+    if (config.enrichmentConfig && !config.skipEnrichment) {
+      progress.stage = 'enriching';
+      progress.batchesTotal = undefined;
+      progress.batchesCompleted = undefined;
+      onProgress?.({ ...progress });
+      const enricher = new LlmEnricher(config.enrichmentConfig);
+      processedChunks = await enricher.enrich(allChunks, (ep: EnrichmentProgress) => {
+        progress.batchesTotal = ep.batchesTotal;
+        progress.batchesCompleted = ep.batchesCompleted;
+        progress.currentFile = ep.currentFile;
+        onProgress?.({ ...progress });
+      });
+    } else {
+      processedChunks = allChunks as EnrichedCodeChunk[];
+    }
+
+    // Reset batch counters before embedding so the embedding renderer starts fresh
+    progress.batchesTotal = undefined;
+    progress.batchesCompleted = undefined;
     progress.stage = 'embedding';
     onProgress?.({ ...progress });
 
@@ -471,10 +536,10 @@ export class IndexingPipeline {
     let chunksIndexed = 0;
     let skippedChunks = 0;
 
-    // Build batch list (references into allChunks — no copy)
-    const batches: CodeChunk[][] = [];
-    for (let i = 0; i < allChunks.length; i += embeddingBatchSize) {
-      batches.push(allChunks.slice(i, i + embeddingBatchSize));
+    // Build batch list (references into processedChunks — no copy)
+    const batches: EnrichedCodeChunk[][] = [];
+    for (let i = 0; i < processedChunks.length; i += embeddingBatchSize) {
+      batches.push(processedChunks.slice(i, i + embeddingBatchSize));
     }
 
     progress.batchesTotal = batches.length;
@@ -534,44 +599,43 @@ export class IndexingPipeline {
 
           progress.chunksTotal += sourceChunks.length;
 
-          // Embed source chunks in batches and upsert immediately
+          // Embed source chunks in batches and upsert immediately using ThreeVectorEmbedder
+          const srcEmbedder = new ThreeVectorEmbedder(embeddingProvider);
           for (let i = 0; i < sourceChunks.length; i += embeddingBatchSize) {
             const batch = sourceChunks.slice(i, i + embeddingBatchSize);
 
-            // For context sources, also split text vs code embedding
-            const textDescs = batch.map((c) => chunkToDescription(c));
-            const textVecs = await embeddingProvider.embedBatch(textDescs);
-            const codeTexts = batch.map((c) => c.content);
-            const codeVecs = await embeddingProvider.embedBatch(codeTexts);
+            // Context source chunks have content populated — cast to CodeChunk for embedder
+            const embedResults = await srcEmbedder.embedBatch(batch as unknown as CodeChunk[]);
 
             const points: VectorPoint[] = [];
             for (let j = 0; j < batch.length; j++) {
               const chunk = batch[j]!;
+              const embedResult = embedResults[j]!;
+              // Context source chunks keep content in payload (no filesystem file to read)
               const payload: ChunkPayload = {
                 chunkId: chunk.id,
                 filePath: chunk.filePath,
                 relativePath: chunk.relativePath,
                 language: chunk.language,
                 chunkType: chunk.chunkType,
-                name: chunk.name,
                 content: chunk.content,
                 startLine: chunk.startLine,
                 endLine: chunk.endLine,
                 imports: chunk.imports,
                 exports: chunk.exports,
-                parentName: chunk.parentName,
                 modulePath: inferModulePath(chunk.relativePath),
                 packageName: inferPackageName(chunk.relativePath, chunk.content),
                 layerHints: inferLayerHints(chunk.relativePath, chunk.chunkType, chunk.content),
-                chunkIndex: chunk.chunkIndex,
-                totalChunks: chunk.totalChunks,
                 indexedAt: chunk.indexedAt,
+                ...(chunk.name != null ? { name: chunk.name } : {}),
+                ...(chunk.chunkIndex != null ? { chunkIndex: chunk.chunkIndex } : {}),
+                ...(chunk.totalChunks != null ? { totalChunks: chunk.totalChunks } : {}),
               };
               points.push({
                 id: chunk.id,
-                textVector: textVecs[j]!,
-                codeVector: codeVecs[j]!,
-                sparseVector: computeTermFrequencySparseVector(chunk.content),
+                semantic: embedResult.semantic,
+                signature: embedResult.signature,
+                sparse: embedResult.sparse,
                 payload,
               });
             }
@@ -611,48 +675,53 @@ export class IndexingPipeline {
         'Generated cross-cutting concept chunks',
       );
 
-      // Embed and store concept chunks
-      const conceptPoints: VectorPoint[] = [];
-      for (const { chunk } of conceptChunks) {
-        const description = chunk.content.split('\n').slice(0, 5).join(' ');
-        const [textVector, codeVector] = await Promise.all([
-          embeddingProvider.embed(description),
-          embeddingProvider.embed(chunk.content.slice(0, 2000)),
-        ]);
-        const sparseVector = computeTermFrequencySparseVector(chunk.content);
-        const payload: ChunkPayload = {
-          chunkId: chunk.id,
-          filePath: chunk.filePath,
-          relativePath: chunk.relativePath,
-          language: chunk.language,
-          chunkType: chunk.chunkType,
-          name: chunk.name,
-          content: chunk.content,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-          imports: chunk.imports,
-          exports: chunk.exports,
-          indexedAt: new Date().toISOString(),
-        };
-        conceptPoints.push({ id: chunk.id, payload, textVector, codeVector, sparseVector });
-      }
+      // Embed and store concept chunks using ThreeVectorEmbedder
+      const conceptEmbedder = new ThreeVectorEmbedder(embeddingProvider);
       const conceptBatchSize = 100;
-      for (let i = 0; i < conceptPoints.length; i += conceptBatchSize) {
-        const batch = conceptPoints.slice(i, i + conceptBatchSize);
-        await vectorStore.upsertBatch(batch);
+      for (let i = 0; i < conceptChunks.length; i += conceptBatchSize) {
+        const batchMeta = conceptChunks.slice(i, i + conceptBatchSize);
+        const batchChunks = batchMeta.map((m) => m.chunk);
+        const embedResults = await conceptEmbedder.embedBatch(batchChunks);
+        const conceptPoints: VectorPoint[] = [];
+        for (let j = 0; j < batchChunks.length; j++) {
+          const chunk = batchChunks[j]!;
+          const embedResult = embedResults[j]!;
+          // Concept chunks keep content in payload (synthetic — no filesystem file)
+          const payload: ChunkPayload = {
+            chunkId: chunk.id,
+            filePath: chunk.filePath,
+            relativePath: chunk.relativePath,
+            language: chunk.language,
+            chunkType: chunk.chunkType,
+            content: chunk.content,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            imports: chunk.imports,
+            exports: chunk.exports,
+            indexedAt: new Date().toISOString(),
+            ...(chunk.name != null ? { name: chunk.name } : {}),
+          };
+          conceptPoints.push({
+            id: chunk.id,
+            semantic: embedResult.semantic,
+            signature: embedResult.signature,
+            sparse: embedResult.sparse,
+            payload,
+          });
+        }
+        await vectorStore.upsertBatch(conceptPoints);
       }
     }
 
     // Save incremental state
     const currentCommit = await getCurrentCommit(targetProjectPath);
     if (currentCommit) {
-      const isLlmStrategy = chunkingStrategy?.name === 'llm';
       await saveLastIndexedCommit(
         frameworkDir,
         currentCommit,
         collectionName,
         undefined,
-        isLlmStrategy ? PROMPT_CONTENT_HASH : undefined,
+        undefined,
       );
     }
 

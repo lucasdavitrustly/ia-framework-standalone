@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { bm25Rerank, multiHopExpand } from '@ia-framework/retrieval';
 import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
@@ -58,6 +59,13 @@ type Engine = {
   >;
   /** Scroll by name in a specific repo (for cross-repo symbol lookup) */
   scrollByNameInRepo?(name: string, repoId: string): Promise<RetrievalResult[]>;
+  /** T137: Search with interface implementation expansion */
+  searchWithInterfaceExpansion?(query: {
+    text: string;
+    limit?: number;
+    scoreThreshold?: number | undefined;
+    filter?: Record<string, unknown> | undefined;
+  }): Promise<RetrievalResult[]>;
 };
 
 export interface SearchCodebaseInput {
@@ -71,6 +79,14 @@ export interface SearchCodebaseInput {
   use_template?: boolean | undefined;
   /** Filter results to a specific repo by name. When omitted, searches all repos. */
   repo?: string | undefined;
+  /** Filter by stereotype (e.g. 'service', 'repository', 'controller') */
+  stereotype?: string | undefined;
+  /** Filter by architectural layer (e.g. 'controller', 'service', 'repository') */
+  archLayer?: string | undefined;
+  /** Filter by module name (maps to moduleInfo.module) */
+  module?: string | undefined;
+  /** Filter by programming language (e.g. 'java', 'typescript') */
+  language?: string | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -90,6 +106,58 @@ export interface ObservabilityConfig {
   /** Confidence gate: if the best result score is below this, return "no relevant code found"
    *  and skip fallback entirely. Prevents low-quality chunks from being injected. Undefined = disabled. */
   confidenceThreshold?: number | undefined;
+  /**
+   * T058: Read live file content at retrieval time.
+   * Receives (relativePath, startLine, endLine) and returns the code snippet.
+   * Used for top-5 results to guard against indexed content drift.
+   * Falls back to stored Qdrant payload content on error or when not provided.
+   */
+  readFileFn?: (
+    relativePath: string,
+    startLine: number,
+    endLine: number,
+    repoId?: string,
+  ) => Promise<string>;
+  /** Enable session-level dedup cache (T156). Default: not enabled. */
+  sessionCache?: { enabled: boolean } | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Session-level dedup cache (T156)
+// ---------------------------------------------------------------------------
+
+interface SearchCacheEntry {
+  responseText: string;
+  resultCount: number;
+  lastAccess: number;
+}
+
+const SEARCH_CACHE_MAX = 100;
+const searchCache = new Map<string, SearchCacheEntry>();
+let searchCacheAccessCounter = 0;
+
+function buildSearchCacheKey(input: SearchCodebaseInput): string {
+  // JSON-stable hash of the full input (sorted keys for determinism)
+  const normalized = JSON.stringify(input, Object.keys(input).sort());
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 32);
+}
+
+function evictSearchLRU(): void {
+  let oldestKey: string | undefined;
+  let oldestAccess = Infinity;
+  for (const [key, entry] of searchCache) {
+    if (entry.lastAccess < oldestAccess) {
+      oldestAccess = entry.lastAccess;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey) searchCache.delete(oldestKey);
+}
+
+/** Exported for testing: reset the session cache. */
+export function resetSearchSessionCache(): void {
+  searchCache.clear();
+  searchCacheAccessCounter = 0;
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -233,6 +301,7 @@ function buildSearchResponse(
     name: r.name,
     score: r.score,
     ...(r.repoId ? { repo: r.repoId } : {}),
+    ...(r.stale ? { stale: true } : {}),
   }));
 
   return toTextResult(text, {
@@ -245,17 +314,36 @@ function buildSearchResponse(
 }
 
 /**
+ * Format a score value with an appropriate label.
+ * RRF scores are rank-based (~0.01–0.03) and shown as 'rrf: X.XXXX'.
+ * Cosine scores (0-1) are shown as 'score: X.XX'.
+ * @internal
+ */
+function formatScore(result: RetrievalResult): string {
+  return result.scoreType === 'rrf'
+    ? `rrf: ${result.score.toFixed(4)}`
+    : `score: ${result.score.toFixed(2)}`;
+}
+
+/**
  * Format a single RetrievalResult as a markdown section.
  * @internal Exported for testing only.
  */
 export function formatResult(result: RetrievalResult, index: number): string {
   const sourceTag = result.source ? ` [${result.source}]` : '';
   const hierarchyTag = result.expansionSource === 'hierarchy' ? ' [hierarchy]' : '';
+  const staleTag = result.stale ? ' [stale]' : '';
   const lineRange = `:${result.startLine}-${result.endLine}`;
+  const scoreLabel = formatScore(result);
   const header = result.name
-    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`
-    : `### ${index}. ${result.relativePath}${lineRange} — score: ${result.score.toFixed(2)} [${result.matchedVector}]${sourceTag}${hierarchyTag}`;
+    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — ${scoreLabel} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`
+    : `### ${index}. ${result.relativePath}${lineRange} — ${scoreLabel} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`;
   const contextLine = formatRetrievalContext(result);
+
+  // T059: metadata-only when content is empty (results 6-10 per token budget contract)
+  if (!result.content) {
+    return `${header}\n${contextLine}`;
+  }
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
 
@@ -418,12 +506,37 @@ export async function searchCodebaseHandler(
   input: SearchCodebaseInput,
   observability?: ObservabilityConfig,
 ): Promise<ToolOutput> {
+  // ── Session dedup check (T156) ──────────────────────────────────────────────
+  if (observability?.sessionCache?.enabled) {
+    const cacheKey = buildSearchCacheKey(input);
+    const cached = searchCache.get(cacheKey);
+    if (cached) {
+      cached.lastAccess = ++searchCacheAccessCounter;
+      const shortMsg = `Same results as previous identical query (${cached.resultCount} results). Refine your query or use filters to get different results.`;
+      return toTextResult(shortMsg, {
+        answered: true,
+        cached: true,
+        resultCount: cached.resultCount,
+      });
+    }
+  }
+
   const startTime = Date.now();
 
-  // Build repo filter if specified
-  const repoFilter = input.repo
-    ? { must: [{ key: 'repoId', match: { value: input.repo } }] }
-    : undefined;
+  // Build combined Qdrant filter from all filter params (repo, stereotype, archLayer, module, language)
+  const filterConditions: Array<{ key: string; match: { value: string } }> = [];
+  if (input.repo) filterConditions.push({ key: 'repoId', match: { value: input.repo } });
+  if (input.stereotype)
+    filterConditions.push({ key: 'stereotype', match: { value: input.stereotype } });
+  if (input.archLayer)
+    filterConditions.push({ key: 'archLayer', match: { value: input.archLayer } });
+  if (input.module)
+    filterConditions.push({ key: 'moduleInfo.module', match: { value: input.module } });
+  if (input.language) filterConditions.push({ key: 'language', match: { value: input.language } });
+  const combinedFilter = filterConditions.length > 0 ? { must: filterConditions } : undefined;
+
+  // Keep repoFilter alias for backward-compatible usage in keyword/existence/aggregation paths
+  const repoFilter = combinedFilter;
 
   // Query classification gate (Phase 37 — QCC-01, QCC-02)
   const classification = classifyQuery(input.query);
@@ -559,7 +672,7 @@ export async function searchCodebaseHandler(
 
     if (highConfidence.length > 0) {
       const sections = highConfidence.map((r, i) => formatResult(r, i + 1));
-      const text = `## Existence check: "${input.query}"\n\n**Found.** ${highConfidence.length} relevant ${highConfidence.length === 1 ? 'match' : 'matches'} in the codebase (best score: ${highConfidence[0]!.score.toFixed(2)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${highConfidence.length} results | ${latencyMs}ms`;
+      const text = `## Existence check: "${input.query}"\n\n**Found.** ${highConfidence.length} relevant ${highConfidence.length === 1 ? 'match' : 'matches'} in the codebase (best ${formatScore(highConfidence[0]!)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${highConfidence.length} results | ${latencyMs}ms`;
       return toTextResult(text, { answered: true, route: 'existence' });
     } else {
       // Not found — show what the codebase has instead (top results regardless of score)
@@ -634,7 +747,7 @@ export async function searchCodebaseHandler(
     )) {
       const itemLines = items.map((r) => {
         const name = r.name || r.relativePath.split('/').pop() || 'unknown';
-        return `  - **${name}** \`${r.relativePath}\` (score: ${r.score.toFixed(2)})`;
+        return `  - **${name}** \`${r.relativePath}\` (${formatScore(r)})`;
       });
       groupSections.push(`### ${dir}/\n${itemLines.join('\n')}`);
     }
@@ -685,6 +798,25 @@ export async function searchCodebaseHandler(
     if (clampedHops > 0) {
       const hierarchyResults = await expandHierarchy(engine, results, clampedHops);
       results = [...results, ...hierarchyResults];
+    }
+    // T137: Interface implementation expansion: find implementations for interface results
+    if (clampedHops > 0 && engine.searchWithInterfaceExpansion) {
+      const seenIds = new Set(results.map((r) => r.chunkId));
+      const interfaceResults = results.filter((r) => r.chunkType === 'interface');
+      if (interfaceResults.length > 0) {
+        const expandedWithImpls = await engine.searchWithInterfaceExpansion({
+          text: input.query,
+          limit: input.limit ?? 10,
+          scoreThreshold: input.score_threshold,
+          ...(repoFilter ? { filter: repoFilter } : {}),
+        });
+        for (const impl of expandedWithImpls) {
+          if (!seenIds.has(impl.chunkId)) {
+            seenIds.add(impl.chunkId);
+            results.push(impl);
+          }
+        }
+      }
     }
     // Adjacent chunk expansion: auto-expand context for top results that have chunk ordering metadata
     if (engine.getAdjacentChunks && clampedHops > 0) {
@@ -770,14 +902,18 @@ export async function searchCodebaseHandler(
   // Confidence gate: if configured and best result is below threshold, reject immediately
   // This prevents low-quality chunks from being injected even when they pass scoreThreshold.
   // Enhanced with negative-knowledge: show what WAS found so the LLM knows what's available.
-  if (observability?.confidenceThreshold !== undefined && results.length > 0) {
+  // Skip gate for RRF-scored results: RRF rank scores (~0.016–0.033) are not on the same
+  // 0–1 cosine scale the threshold is calibrated for — gating them would reject every
+  // multi-collection semantic search regardless of actual relevance.
+  const allRrf = results.length > 0 && results.every((r) => r.scoreType === 'rrf');
+  if (!allRrf && observability?.confidenceThreshold !== undefined && results.length > 0) {
     const bestScore = Math.max(...results.map((r) => r.score));
     if (bestScore < observability.confidenceThreshold) {
       // Negative-knowledge: surface low-confidence results as "nearby but not matching"
       const nearbyResults = results.sort((a, b) => b.score - a.score).slice(0, 5);
       const nearbySection =
         nearbyResults.length > 0
-          ? `\n\n**What the search DID find** (below confidence threshold ${observability.confidenceThreshold.toFixed(2)}):\n${nearbyResults.map((r) => `- \`${r.relativePath}\` — ${r.name || r.chunkType} (score: ${r.score.toFixed(2)})`).join('\n')}\n\nThese results were too weakly related to be trustworthy. The codebase may not contain what you're looking for, or try rephrasing the query.`
+          ? `\n\n**What the search DID find** (below confidence threshold ${observability.confidenceThreshold.toFixed(2)}):\n${nearbyResults.map((r) => `- \`${r.relativePath}\` — ${r.name || r.chunkType} (${formatScore(r)}) [${r.matchedVector}]${r.source ? ` [${r.source}]` : ''}`).join('\n')}\n\nThese results were too weakly related to be trustworthy. The codebase may not contain what you're looking for, or try rephrasing the query.`
           : '';
 
       const gateText =
@@ -796,7 +932,11 @@ export async function searchCodebaseHandler(
   // Score threshold filtering (client-side, per D-01, D-02, D-03)
   // Hierarchy-expanded and adjacent-expanded results are excluded from threshold
   // since they are structurally-related chunks, not relevance-ranked results.
-  const scoreThreshold = input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5;
+  // For RRF-scored results, the cosine threshold (0.5–0.6) is meaningless — skip it
+  // so RRF results (~0.016–0.033) are not silently discarded before reaching the LLM.
+  const scoreThreshold = allRrf
+    ? 0
+    : (input.score_threshold ?? observability?.defaultScoreThreshold ?? 0.5);
   let thresholdFiltered = false;
   if (scoreThreshold > 0) {
     const isExpansion = (r: RetrievalResult) =>
@@ -874,6 +1014,41 @@ export async function searchCodebaseHandler(
     ? { token_cap_applied: true as const, results_trimmed: resultsTrimmed }
     : undefined;
 
+  // T058: Filesystem read for top-5 results (guards against indexed content drift).
+  // T059: Results 6-10 are metadata-only (content stripped to reduce token usage).
+  // T069: contentHash drift detection — compare stored hash vs live file hash.
+  if (results.length > 0) {
+    const topN = 5;
+    // Step 1: Read live content for top-5 results; detect hash drift
+    if (observability?.readFileFn) {
+      for (let i = 0; i < Math.min(topN, results.length); i++) {
+        try {
+          const liveContent = await observability.readFileFn(
+            results[i]!.relativePath,
+            results[i]!.startLine,
+            results[i]!.endLine,
+            results[i]!.repoId,
+          );
+          // T069: drift detection — compare SHA256 of live content vs stored contentHash
+          let stale: boolean | undefined;
+          if (results[i]!.contentHash) {
+            const liveHash = createHash('sha256').update(liveContent).digest('hex');
+            if (liveHash !== results[i]!.contentHash) {
+              stale = true;
+            }
+          }
+          results[i] = { ...results[i]!, content: liveContent, ...(stale ? { stale } : {}) };
+        } catch {
+          // Silent degradation: fallback to stored payload content
+        }
+      }
+    }
+    // Step 2: Strip content for results 6-10 (metadata-only per contract)
+    for (let i = topN; i < results.length; i++) {
+      results[i] = { ...results[i]!, content: '' };
+    }
+  }
+
   // Zero-result fallback: if primary search returned nothing and fallback not disabled,
   // call searchWithFallback for keyword-based suggestions
   if (results.length === 0 && input.fallback !== false && engine.searchWithFallback) {
@@ -916,10 +1091,10 @@ export async function searchCodebaseHandler(
   // to use this context before exploring files further
   let ragSufficientNote: string | undefined;
   if (results.length >= 3 && results[0]?.score !== undefined && results[0].score > 0.75) {
-    ragSufficientNote = `[Retrieved ${results.length} high-confidence results (best: ${results[0].score.toFixed(2)}). Consider using this context before exploring files further.]`;
+    ragSufficientNote = `[Retrieved ${results.length} high-confidence results (best: ${formatScore(results[0])}). Consider using this context before exploring files further.]`;
   }
 
-  return buildSearchResponse(
+  const response = buildSearchResponse(
     input,
     results,
     ragSufficientNote ?? fallbackNote,
@@ -928,6 +1103,20 @@ export async function searchCodebaseHandler(
     capMeta,
     thresholdFiltered,
   );
+
+  // ── Store in session cache (T156) ──
+  if (observability?.sessionCache?.enabled && results.length > 0) {
+    const cacheKey = buildSearchCacheKey(input);
+    if (searchCache.size >= SEARCH_CACHE_MAX) evictSearchLRU();
+    const responseText = (response.content[0] as { text?: string })?.text ?? '';
+    searchCache.set(cacheKey, {
+      responseText,
+      resultCount: results.length,
+      lastAccess: ++searchCacheAccessCounter,
+    });
+  }
+
+  return response;
 }
 
 /**
@@ -943,8 +1132,11 @@ export function registerSearchCodebaseTool(
     {
       description:
         'Search the indexed codebase using a natural language query. Returns relevant code chunks ranked by similarity. ' +
+        'Query is auto-classified (semantic / keyword / existence / aggregation) and routed accordingly. ' +
+        'Top-5 results include live file content; results 6-10 are metadata-only to reduce token usage. ' +
         'Results can be expanded along the dependency graph to include related files (imports/dependencies). ' +
-        'Use expand_hops=0 to disable expansion, 1 for direct imports, or 2 for transitive dependencies (default).',
+        'Use expand_hops=0 to disable expansion, 1 for direct imports, or 2 for transitive dependencies (default). ' +
+        'Supports optional metadata filters: stereotype, archLayer, module, language for precise retrieval.',
       inputSchema: {
         query: z.string().describe('Natural language search query'),
         limit: z.number().optional().describe('Maximum number of results (default: 10)'),
@@ -974,6 +1166,26 @@ export function registerSearchCodebaseTool(
           .string()
           .optional()
           .describe('Filter results to a specific repo by name. When omitted, searches all repos.'),
+        stereotype: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by architectural stereotype (e.g. 'service', 'repository', 'controller', 'entity', 'dto').",
+          ),
+        archLayer: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by architectural layer (e.g. 'presentation', 'service', 'domain', 'persistence', 'infrastructure').",
+          ),
+        module: z
+          .string()
+          .optional()
+          .describe('Filter by module name (maps to moduleInfo.module in the Qdrant payload).'),
+        language: z
+          .string()
+          .optional()
+          .describe("Filter by programming language (e.g. 'java', 'typescript', 'python')."),
       },
     },
     async (input) => {

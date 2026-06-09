@@ -31,6 +31,18 @@ export const IndexingConfigSchema = z.object({
   embeddingConcurrency: z.number().int().positive().optional(),
   /** LLM chunking configuration (optional — when present, enables LLM-based chunking strategy) */
   llm: LlmConfigSchema.optional(),
+  /** LLM enrichment configuration (optional — enables Ollama metadata enrichment) */
+  enrichment: z
+    .object({
+      provider: z.literal('ollama').default('ollama'),
+      model: z.string().min(1).default('qwen3:8b'),
+      baseUrl: z.string().url().optional(),
+      numCtx: z.number().int().positive().optional(),
+      concurrency: z.number().int().positive().optional(),
+      retryAttempts: z.number().int().min(0).max(10).optional(),
+      skipOnFailure: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const ProjectProfileSchema = z.object({

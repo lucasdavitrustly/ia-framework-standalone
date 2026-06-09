@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { searchCodebaseHandler } from '../search-codebase.js';
-import { searchCodebaseHybridHandler } from '../search-codebase-hybrid.js';
 import type { SearchCodebaseInput } from '../search-codebase.js';
-import type { SearchCodebaseHybridInput } from '../search-codebase-hybrid.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 
 function makeResult(score: number, id = 'chunk-1'): RetrievalResult {
@@ -32,7 +30,9 @@ describe('searchCodebaseHandler — engine call (no server-side threshold)', () 
     const searchWithExpansion = vi.fn().mockResolvedValue([makeResult(0.8)]);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    await searchCodebaseHandler(engine, { query: 'explain how authentication works in the system' });
+    await searchCodebaseHandler(engine, {
+      query: 'explain how authentication works in the system',
+    });
 
     expect(searchWithExpansion).toHaveBeenCalledWith(
       expect.objectContaining({ scoreThreshold: undefined }),
@@ -44,7 +44,10 @@ describe('searchCodebaseHandler — engine call (no server-side threshold)', () 
     const searchWithExpansion = vi.fn().mockResolvedValue([makeResult(0.8)]);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    await searchCodebaseHandler(engine, { query: 'explain how authentication works in detail', score_threshold: 0.5 });
+    await searchCodebaseHandler(engine, {
+      query: 'explain how authentication works in detail',
+      score_threshold: 0.5,
+    });
 
     expect(searchWithExpansion).toHaveBeenCalledWith(
       expect.objectContaining({ scoreThreshold: 0.5 }),
@@ -68,7 +71,9 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
     const searchWithExpansion = vi.fn().mockResolvedValue(results);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    const output = await searchCodebaseHandler(engine, { query: 'explain how the system processes data internally' });
+    const output = await searchCodebaseHandler(engine, {
+      query: 'explain how the system processes data internally',
+    });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     expect(text).toContain('src/c.ts');
@@ -159,49 +164,6 @@ describe('searchCodebaseHandler — client-side score filtering (default 0.5)', 
 });
 
 // ---------------------------------------------------------------------------
-// Hybrid handler: client-side filtering (no 0.5 default — RRF scores differ)
-// ---------------------------------------------------------------------------
-
-describe('searchCodebaseHybridHandler — client-side score filtering', () => {
-  it('filters results by user-supplied score_threshold for hybrid search', async () => {
-    const results = [
-      makeResult(0.01, 'very-low'),
-      makeResult(0.02, 'mid'),
-      makeResult(0.03, 'high'),
-    ];
-    const searchHybrid = vi.fn().mockResolvedValue(results);
-    const engine = { searchHybrid };
-
-    const input: SearchCodebaseHybridInput = {
-      query: 'explain how request handling works internally',
-      score_threshold: 0.025,
-      expand_hops: 0,
-    };
-    const output = await searchCodebaseHybridHandler(engine, input);
-    const text = (output.content[0] as { type: string; text: string }).text;
-
-    expect(text).toContain('src/high.ts');
-    expect(text).not.toContain('src/very-low.ts');
-    expect(text).not.toContain('src/mid.ts');
-  });
-
-  it('does NOT apply 0.5 default threshold to hybrid results (RRF scores are ~0.01-0.03)', async () => {
-    const results = [makeResult(0.02, 'rrf-result')];
-    const searchHybrid = vi.fn().mockResolvedValue(results);
-    const engine = { searchHybrid };
-
-    // No score_threshold provided — hybrid should NOT filter with 0.5 default
-    const output = await searchCodebaseHybridHandler(engine, {
-      query: 'explain how request handling works internally',
-      expand_hops: 0,
-    });
-    const text = (output.content[0] as { type: string; text: string }).text;
-
-    expect(text).toContain('src/rrf-result.ts');
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Anti-hallucination instructional message (Task 2)
 // ---------------------------------------------------------------------------
 
@@ -212,7 +174,9 @@ describe('searchCodebaseHandler — anti-hallucination message when threshold fi
     const engine = { search: vi.fn(), searchWithExpansion };
 
     // Default 0.5 threshold removes all; no searchWithFallback on engine
-    const output = await searchCodebaseHandler(engine, { query: 'explain how authentication works in the system' });
+    const output = await searchCodebaseHandler(engine, {
+      query: 'explain how authentication works in the system',
+    });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     expect(text).toContain('Do not guess or hallucinate');
@@ -235,7 +199,9 @@ describe('searchCodebaseHandler — anti-hallucination message when threshold fi
     const searchWithFallback = vi.fn().mockResolvedValue(fallbackResult);
     const engine = { search: vi.fn(), searchWithExpansion, searchWithFallback };
 
-    const output = await searchCodebaseHandler(engine, { query: 'explain how authentication works in the system' });
+    const output = await searchCodebaseHandler(engine, {
+      query: 'explain how authentication works in the system',
+    });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     // Fallback suggestions returned — no anti-hallucination message needed
@@ -249,29 +215,12 @@ describe('searchCodebaseHandler — anti-hallucination message when threshold fi
     const searchWithExpansion = vi.fn().mockResolvedValue(results);
     const engine = { search: vi.fn(), searchWithExpansion };
 
-    const output = await searchCodebaseHandler(engine, { query: 'explain how request handling works internally' });
+    const output = await searchCodebaseHandler(engine, {
+      query: 'explain how request handling works internally',
+    });
     const text = (output.content[0] as { type: string; text: string }).text;
 
     expect(text).not.toContain('Do not guess or hallucinate');
     expect(output.structuredContent).toMatchObject({ answered: true });
-  });
-});
-
-describe('searchCodebaseHybridHandler — anti-hallucination message', () => {
-  it('shows instructional message when threshold filters all hybrid results and no fallback', async () => {
-    const results = [makeResult(0.005, 'very-low')];
-    const searchHybrid = vi.fn().mockResolvedValue(results);
-    const engine = { searchHybrid };
-
-    // score_threshold=0.01 removes the 0.005 result
-    const output = await searchCodebaseHybridHandler(engine, {
-      query: 'explain how request handling works internally',
-      score_threshold: 0.01,
-      expand_hops: 0,
-    });
-    const text = (output.content[0] as { type: string; text: string }).text;
-
-    expect(text).toContain('Do not guess or hallucinate');
-    expect(output.structuredContent).toMatchObject({ answered: false, threshold_filtered: true });
   });
 });

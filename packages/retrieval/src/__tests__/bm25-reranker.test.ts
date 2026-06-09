@@ -99,4 +99,31 @@ describe('bm25Rerank', () => {
     const reranked = bm25Rerank([low, high], 'a', { topK: 1 });
     expect(reranked[0]!.score).toBe(0.9);
   });
+
+  // ---------------------------------------------------------------------------
+  // T088 (Phase 11 / US6): BM25 must use name/defines/calls when content is empty
+  // ---------------------------------------------------------------------------
+  it('T088: uses name/defines/calls as fallback text when content is empty (lean-payload)', () => {
+    // Lean-payload chunks: content='' but name and defines are populated
+    const relevant = makeResult({
+      content: '',
+      score: 0.6, // lower vector score
+      name: 'PaymentGateway',
+      defines: ['processPayment', 'refundTransaction'],
+    });
+    const irrelevant = makeResult({
+      content: '',
+      score: 0.7, // higher vector score, no matching metadata tokens
+      name: 'UserSessionManager',
+      defines: ['createSession', 'invalidateSession'],
+    });
+
+    // Currently FAILS: tokenize('') = [] → BM25=0 for all → order by vectorScore → UserSessionManager wins
+    // After fix: tokenize(name + defines) → PaymentGateway tokens match 'payment gateway' → wins
+    const reranked = bm25Rerank([irrelevant, relevant], 'payment gateway', {
+      topK: 1,
+      vectorScoreWeight: 0.1, // low weight so BM25 dominates
+    });
+    expect(reranked[0]!.name).toBe('PaymentGateway');
+  });
 });

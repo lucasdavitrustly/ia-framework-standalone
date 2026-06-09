@@ -160,7 +160,7 @@ export function createApp(deps: AppDependencies): Hono {
           source: params.collection === 'llm' ? ('llm' as const) : ('ast' as const),
           ...(p.payload.qualityScore !== undefined ? { qualityScore: p.payload.qualityScore } : {}),
           ...(p.payload.name !== undefined ? { name: p.payload.name } : {}),
-          content: p.payload.content,
+          content: p.payload.content ?? '',
         }));
 
         return { entries, total };

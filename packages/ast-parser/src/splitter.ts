@@ -307,6 +307,9 @@ export function splitOversizedChunks(chunks: CodeChunk[], maxChunkLines?: number
     const lineCount = chunk.endLine - chunk.startLine + 1;
     if (lineCount <= limit) {
       result.push(chunk);
+    } else if (chunk.chunkType === 'function' || chunk.chunkType === 'method') {
+      // T043: Never split mid-body for method/function chunks — semantic integrity.
+      result.push(chunk);
     } else if (chunk.chunkType === 'class') {
       result.push(...splitClassAtMethodBoundaries(chunk, limit));
     } else {
