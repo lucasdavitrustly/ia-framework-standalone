@@ -34,6 +34,48 @@ import { ThreeVectorEmbedder } from './embedder.js';
 
 const logger = createLogger('indexer');
 
+/** Default languages excluded from LLM enrichment (non-code config/build files). */
+export const DEFAULT_EXCLUDE_LANGUAGES = ['xml', 'yaml', 'sql', 'proto'];
+
+/** Default stereotypes excluded from LLM enrichment (low-value for semantic search). */
+export const DEFAULT_EXCLUDE_STEREOTYPES = ['test', 'dto', 'config-block', 'migration'];
+
+/**
+ * Splits chunks into enrichable and skipped sets based on the excludeLanguages
+ * and excludeStereotypes config.
+ * Chunks whose language matches the language exclusion list OR whose stereotype
+ * matches the stereotype exclusion list are skipped from LLM enrichment
+ * but retain all AST metadata for embedding and search.
+ */
+export function filterChunksForEnrichment(
+  chunks: CodeChunk[],
+  config: EnrichmentConfig,
+): { enrichable: CodeChunk[]; skipped: CodeChunk[] } {
+  const excludeLanguages = config.excludeLanguages ?? DEFAULT_EXCLUDE_LANGUAGES;
+  const excludeStereotypes = config.excludeStereotypes ?? DEFAULT_EXCLUDE_STEREOTYPES;
+  const langSet = new Set(excludeLanguages.map((l) => l.toLowerCase()));
+  const stereoSet = new Set(excludeStereotypes.map((s) => s.toLowerCase()));
+
+  if (langSet.size === 0 && stereoSet.size === 0) {
+    return { enrichable: chunks, skipped: [] };
+  }
+
+  const enrichable: CodeChunk[] = [];
+  const skipped: CodeChunk[] = [];
+
+  for (const chunk of chunks) {
+    const lang = (chunk.language ?? '').toLowerCase();
+    const stereo = ((chunk as CodeChunk & { stereotype?: string }).stereotype ?? '').toLowerCase();
+    if (langSet.has(lang) || (stereo && stereoSet.has(stereo))) {
+      skipped.push(chunk);
+    } else {
+      enrichable.push(chunk);
+    }
+  }
+
+  return { enrichable, skipped };
+}
+
 export interface IndexingConfig {
   /** Path to the target project to index */
   targetProjectPath: string;
@@ -115,13 +157,13 @@ export type ProgressCallback = (progress: IndexingProgress) => void;
 
 /**
  * Provider-aware concurrency defaults for embedding batch processing.
- * Ollama: 3 (local model, limited by GPU VRAM)
+ * Ollama: 6 (optimized for Apple Silicon 16GB — embedding is lightweight, no KV cache)
  * OpenAI: 10 (cloud API, higher rate limits)
  */
 function getDefaultConcurrency(providerName: string): number {
   switch (providerName) {
     case 'ollama':
-      return 3;
+      return 6;
     case 'openai':
       return 10;
     default:
@@ -505,19 +547,36 @@ export class IndexingPipeline {
 
     // T081: Run LLM enricher if configured and not skipped.
     // T082: Emit 'enriching' progress stage between parsing and embedding.
+    // NOTE: Pipeline is sequential (enrich all → embed all) because Ollama cannot reliably
+    // hold both the generate model and embed model in memory simultaneously on 16GB devices.
+    // See D-002 in spec for rationale.
     let processedChunks: EnrichedCodeChunk[];
     if (config.enrichmentConfig && !config.skipEnrichment) {
+      // Filter out non-code languages and low-value stereotypes from enrichment (US1, US5)
+      const { enrichable: enrichableChunks, skipped: filteredSkippedChunks } =
+        filterChunksForEnrichment(allChunks, config.enrichmentConfig);
+
+      if (filteredSkippedChunks.length > 0) {
+        logger.info(
+          `Filtered ${filteredSkippedChunks.length} chunks from enrichment (${enrichableChunks.length} enrichable)`,
+        );
+      }
+
       progress.stage = 'enriching';
       progress.batchesTotal = undefined;
       progress.batchesCompleted = undefined;
       onProgress?.({ ...progress });
+
       const enricher = new LlmEnricher(config.enrichmentConfig);
-      processedChunks = await enricher.enrich(allChunks, (ep: EnrichmentProgress) => {
+      const enrichedChunks = await enricher.enrich(enrichableChunks, (ep: EnrichmentProgress) => {
         progress.batchesTotal = ep.batchesTotal;
         progress.batchesCompleted = ep.batchesCompleted;
         progress.currentFile = ep.currentFile;
         onProgress?.({ ...progress });
       });
+
+      // Merge enriched chunks with skipped chunks (skipped retain AST metadata only)
+      processedChunks = [...enrichedChunks, ...(filteredSkippedChunks as EnrichedCodeChunk[])];
     } else {
       processedChunks = allChunks as EnrichedCodeChunk[];
     }

@@ -580,9 +580,9 @@ describe('IndexingPipeline — parallel embedding', () => {
     expect(maxConcurrent).toBeGreaterThan(1); // proves concurrency
   });
 
-  // Test 2: Pipeline defaults to concurrency=3 when embeddingProvider.name is 'ollama'
-  it('defaults to concurrency=3 for ollama provider', async () => {
-    const chunks = Array.from({ length: 6 }, (_, i) =>
+  // Test 2: Pipeline defaults to concurrency=6 when embeddingProvider.name is 'ollama'
+  it('defaults to concurrency=6 for ollama provider', async () => {
+    const chunks = Array.from({ length: 12 }, (_, i) =>
       makeChunk(`chunk-${i}`, join(tmpDir, 'foo.ts')),
     );
     mockParseFile.mockResolvedValue(chunks);
@@ -606,12 +606,12 @@ describe('IndexingPipeline — parallel embedding', () => {
       makeConfig({
         embeddingProvider: ollamaProvider,
         embeddingBatchSize: 1,
-        // No embeddingConcurrency — should default to 3 for 'ollama'
+        // No embeddingConcurrency — should default to 6 for 'ollama'
       }),
     );
 
-    // With 6 batches and concurrency=3, max concurrent embedBatch calls ≤ 6 (3 batches × 2 calls)
-    expect(maxConcurrent).toBeLessThanOrEqual(6);
+    // With 12 batches and concurrency=6, max concurrent embedBatch calls ≤ 12 (6 batches × 2 calls)
+    expect(maxConcurrent).toBeLessThanOrEqual(12);
     expect(maxConcurrent).toBeGreaterThan(2); // proves more than 1 batch concurrent
   });
 

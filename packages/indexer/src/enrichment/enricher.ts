@@ -70,8 +70,8 @@ export class LlmEnricher {
       provider: config.provider,
       model: config.model,
       baseUrl: config.baseUrl ?? 'http://localhost:11434',
-      numCtx: config.numCtx ?? 32768,
-      concurrency: config.concurrency ?? 3,
+      numCtx: config.numCtx ?? 16384,
+      concurrency: config.concurrency ?? 5,
       retryAttempts: config.retryAttempts ?? 2,
       skipOnFailure: config.skipOnFailure ?? true,
     };
@@ -110,7 +110,10 @@ export class LlmEnricher {
     if (isLargeFile) {
       const groups = this.groupByClass(chunks);
       for (const group of groups.values()) {
-        batchGroups.push(group);
+        // Sub-batch any group exceeding BATCH_SIZE to prevent oversized Ollama calls
+        for (let i = 0; i < group.length; i += BATCH_SIZE) {
+          batchGroups.push(group.slice(i, i + BATCH_SIZE));
+        }
       }
     } else {
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
@@ -258,6 +261,7 @@ export class LlmEnricher {
       model: this.config.model,
       prompt,
       stream: false,
+      think: false,
       options: {
         num_ctx: this.config.numCtx,
         temperature: 0.1,

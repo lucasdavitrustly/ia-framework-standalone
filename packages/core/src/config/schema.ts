@@ -41,6 +41,8 @@ export const IndexingConfigSchema = z.object({
       concurrency: z.number().int().positive().optional(),
       retryAttempts: z.number().int().min(0).max(10).optional(),
       skipOnFailure: z.boolean().optional(),
+      excludeLanguages: z.array(z.string().min(1)).optional(),
+      excludeStereotypes: z.array(z.string().min(1)).optional(),
     })
     .optional(),
 });
