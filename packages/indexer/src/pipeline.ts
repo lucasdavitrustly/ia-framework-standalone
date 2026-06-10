@@ -632,10 +632,13 @@ export class IndexingPipeline {
               repoId,
             );
             chunksIndexed += count;
-          } catch {
+          } catch (err) {
             // Retry exhausted — skip batch
             skippedChunks += batch.length;
-            logger.warn({ batchSize: batch.length }, 'Embedding batch skipped after retry failure');
+            logger.warn(
+              { batchSize: batch.length, error: err instanceof Error ? err.message : String(err) },
+              'Embedding batch skipped after retry failure',
+            );
           }
 
           progress.batchesCompleted = (progress.batchesCompleted ?? 0) + 1;

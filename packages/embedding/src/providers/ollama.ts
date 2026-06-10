@@ -43,7 +43,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Ollama embedding error: ${response.status} ${error}`);
+      throw new Error(`Ollama embedding error [model=${this.model}]: ${response.status} ${error}`);
     }
 
     const result = (await response.json()) as OllamaEmbedResponse;
