@@ -337,6 +337,17 @@ Browse available models: https://ollama.com/search
           console.log(`Model: ${config.embedding.model}`);
           console.log(`Enrichment: ${enrichmentConfig ? `${enrichmentConfig.model}` : 'disabled'}`);
           console.log(`Repos: ${reposToIndex.map((r) => r.name).join(', ')}`);
+
+          // T061: Warn about OLLAMA_NUM_PARALLEL when enrichment concurrency > 3
+          if (enrichmentConfig) {
+            const enrichConcurrency = enrichmentConfig.concurrency ?? 5;
+            if (enrichConcurrency > 3) {
+              console.warn(
+                `  ⚠ Enrichment concurrency is ${enrichConcurrency}. For optimal performance, start Ollama with: OLLAMA_NUM_PARALLEL=${enrichConcurrency}`,
+              );
+            }
+          }
+
           console.log('');
 
           const BAR_WIDTH = 20;

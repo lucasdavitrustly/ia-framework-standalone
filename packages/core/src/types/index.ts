@@ -308,6 +308,10 @@ export interface EnrichmentConfig {
   retryAttempts?: number;
   /** If true, skip LLM enrichment when Ollama is unavailable instead of failing (default: true) */
   skipOnFailure?: boolean;
+  /** Languages to exclude from LLM enrichment (default: ["xml", "yaml", "sql", "proto"]) */
+  excludeLanguages?: string[];
+  /** Stereotypes to exclude from LLM enrichment (default: ["test", "dto", "config-block", "migration"]) */
+  excludeStereotypes?: string[];
 }
 
 /**
