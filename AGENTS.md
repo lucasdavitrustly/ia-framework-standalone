@@ -2,6 +2,6 @@
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/009-indexing-performance/plan.md
+at specs/010-ollama-error-detail/plan.md
 
 <!-- SPECKIT END -->

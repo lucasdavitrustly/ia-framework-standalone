@@ -9,6 +9,7 @@ import {
   type EnrichedChunkResponse,
 } from './prompt.js';
 import type { CachedEnrichment } from './cache.js';
+import { formatOllamaError } from '../errors/ollama-errors.js';
 
 /**
  * T027: LLM enricher
@@ -257,7 +258,7 @@ export class LlmEnricher {
 
   private async callOllama(prompt: string): Promise<string> {
     const url = `${this.config.baseUrl}/api/generate`;
-    const body = JSON.stringify({
+    const requestBody = JSON.stringify({
       model: this.config.model,
       prompt,
       stream: false,
@@ -268,17 +269,55 @@ export class LlmEnricher {
       },
     });
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+      });
+    } catch (err) {
+      // Network error (connection refused, timeout, etc.)
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        formatOllamaError({
+          body: message,
+          model: this.config.model,
+          baseUrl: this.config.baseUrl ?? 'http://localhost:11434',
+          phase: 'enrichment',
+        }),
+      );
     }
 
-    const data = (await response.json()) as { response: string };
+    if (!response.ok) {
+      const responseBody = await response.text();
+      throw new Error(
+        formatOllamaError({
+          status: response.status,
+          body: responseBody,
+          model: this.config.model,
+          baseUrl: this.config.baseUrl ?? 'http://localhost:11434',
+          phase: 'enrichment',
+        }),
+      );
+    }
+
+    let data: { response: string };
+    try {
+      data = (await response.json()) as { response: string };
+    } catch {
+      const rawText = await response.text().catch(() => '(unable to read response body)');
+      throw new Error(
+        formatOllamaError({
+          status: response.status,
+          body: rawText,
+          model: this.config.model,
+          baseUrl: this.config.baseUrl ?? 'http://localhost:11434',
+          phase: 'enrichment',
+          parseFailure: true,
+        }),
+      );
+    }
     return data.response;
   }
 

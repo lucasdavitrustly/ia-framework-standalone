@@ -509,6 +509,7 @@ describe('LlmEnricher — graceful degradation (T017)', () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
+      text: async () => '{"error":"internal server error"}',
       json: async () => ({ error: 'internal server error' }),
     } as Response);
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
