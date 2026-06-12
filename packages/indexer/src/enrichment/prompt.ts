@@ -28,7 +28,7 @@ export interface ChunkForPrompt {
 }
 
 export interface EnrichedChunkResponse {
-  id: string;
+  id?: string;
   description: string;
   businessContext: string;
   semanticTags: string[];
@@ -39,6 +39,7 @@ export interface EnrichedChunkResponse {
   }>;
 }
 
+/** @deprecated Use EnrichedChunkResponse[] directly */
 export interface PromptResponse {
   chunks: EnrichedChunkResponse[];
 }
@@ -98,88 +99,77 @@ export const ENRICHMENT_JSON_SCHEMA = {
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 /**
- * Build the enrichment prompt for a batch of chunks.
- *
- * Each chunk's content is shown in a clearly delimited block so the LLM
- * understands the file-level structure. The system prompt instructs the LLM
- * to respond with structured JSON only.
- *
- * @param chunks - Batch of code chunks (max 10 recommended)
- * @param filePath - The file path (for context)
+ * Build a lean enrichment prompt for a batch of chunks.
+ * Uses compact delimiters and minimal instructions (~60 tokens overhead).
+ * Response format: flat JSON array (positional, no IDs).
  */
 export function buildEnrichmentPrompt(chunks: ChunkForPrompt[], filePath: string): string {
   const chunkBlocks = chunks
-    .map((chunk) => {
-      const header = [
-        `=== CHUNK id="${chunk.id}" name="${chunk.name ?? '(unnamed)'}" type="${chunk.chunkType}" ===`,
-      ];
+    .map((chunk, index) => {
+      const meta: string[] = [];
       if (chunk.annotations && chunk.annotations.length > 0) {
-        header.push(`annotations: ${chunk.annotations.join(', ')}`);
+        meta.push(`@${chunk.annotations.join(', @')}`);
       }
       if (chunk.imports && chunk.imports.length > 0) {
-        header.push(
+        meta.push(
           `imports: ${chunk.imports.slice(0, 5).join(', ')}${chunk.imports.length > 5 ? '...' : ''}`,
         );
       }
-      // T121: Include structured annotation metadata for controller/thin-class chunks
       if (chunk.annotationMeta) {
-        const meta = chunk.annotationMeta;
-        if (meta.tagName) {
-          header.push(`API tag: ${meta.tagName}`);
+        const m = chunk.annotationMeta;
+        if (m.tagName) {
+          meta.push(`tag: ${m.tagName}`);
         }
-        if (meta.endpointPaths && meta.endpointPaths.length > 0) {
-          header.push(`API endpoints: ${meta.endpointPaths.join(', ')}`);
+        if (m.endpointPaths && m.endpointPaths.length > 0) {
+          meta.push(`endpoints: ${m.endpointPaths.join(', ')}`);
         }
-        if (meta.httpMethods && meta.httpMethods.length > 0) {
-          header.push(`HTTP methods: ${meta.httpMethods.join(', ')}`);
+        if (m.httpMethods && m.httpMethods.length > 0) {
+          meta.push(`HTTP: ${m.httpMethods.join(', ')}`);
         }
-        if (meta.operationSummaries && meta.operationSummaries.length > 0) {
-          header.push(`operations: ${meta.operationSummaries.join('; ')}`);
+        if (m.operationSummaries && m.operationSummaries.length > 0) {
+          meta.push(`ops: ${m.operationSummaries.join('; ')}`);
         }
       }
-      return [...header, chunk.content, `=== END CHUNK id="${chunk.id}" ===`].join('\n');
+      const metaLine = meta.length > 0 ? `\n${meta.join(' | ')}` : '';
+      return `--- ${index + 1}: ${chunk.name ?? '(unnamed)'} (${chunk.chunkType}) ---${metaLine}\n${chunk.content}`;
     })
     .join('\n\n');
 
-  return `You are a code analysis assistant. Analyze the following ${chunks[0]?.language ?? 'code'} chunks from file "${filePath}" and return enrichment metadata as JSON.
+  return `Enrich these ${chunks[0]?.language ?? 'code'} chunks from "${filePath}". Return JSON array, one object per chunk in order.
+Format: [{"description":"<1 sentence>","businessContext":"<domain>","semanticTags":["<3-7 lowercase>"],"relationships":[{"target":"<file>","type":"uses|implements|extends|configures|produces|consumes|tests"}]}]
 
-For each chunk, provide:
-- description: one concise sentence describing what this code does
-- businessContext: the business domain or use case this belongs to
-- semanticTags: 3-7 lowercase keywords for semantic search (e.g. ["retry","payment","resilience"])
-- relationships: list of dependencies/usages with target filename, relation type, and optional label
-
-Return ONLY valid JSON matching this structure:
-{
-  "chunks": [
-    {
-      "id": "<chunk id>",
-      "description": "...",
-      "businessContext": "...",
-      "semanticTags": ["tag1", "tag2"],
-      "relationships": [{"target": "SomeFile.java", "type": "uses", "label": "optional context"}]
-    }
-  ]
-}
-
-${chunkBlocks}
-
-Respond with JSON only. No markdown, no explanation.`;
+${chunkBlocks}`;
 }
 
 /**
  * Parse the Ollama response into structured enrichment data.
+ * Supports: flat array, legacy {chunks: [...]}, and single-object fallback.
  * Returns null if the response cannot be parsed.
  */
-export function parseEnrichmentResponse(rawResponse: string): PromptResponse | null {
+export function parseEnrichmentResponse(rawResponse: string): EnrichedChunkResponse[] | null {
   try {
-    // Strip <think>...</think> blocks (Ollama chain-of-thought)
+    // Strip <think>...</think> blocks (Ollama chain-of-thought safety net)
     const cleaned = rawResponse.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    // Strip markdown code fences if present
+    // Strip markdown code fences if present (safety net for models that ignore format:'json')
     const stripped = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
-    const parsed = JSON.parse(stripped) as PromptResponse;
-    if (!parsed.chunks || !Array.isArray(parsed.chunks)) return null;
-    return parsed;
+    const parsed = JSON.parse(stripped);
+
+    // New format: flat array
+    if (Array.isArray(parsed)) {
+      return parsed as EnrichedChunkResponse[];
+    }
+
+    // Legacy format: { chunks: [...] }
+    if (parsed && Array.isArray(parsed.chunks)) {
+      return parsed.chunks as EnrichedChunkResponse[];
+    }
+
+    // Single-object fallback: model returned one enrichment object instead of array
+    if (parsed && typeof parsed === 'object' && 'description' in parsed) {
+      return [parsed as EnrichedChunkResponse];
+    }
+
+    return null;
   } catch {
     return null;
   }

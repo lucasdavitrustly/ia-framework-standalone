@@ -92,14 +92,14 @@ describe('LlmEnricher error handling', () => {
       text: async () => '{"error":"context window exceeded"}',
     });
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const result = await skipEnricher.enrich([makeChunk()]);
+    const warnings: string[] = [];
+    const result = await skipEnricher.enrich([makeChunk()], (p) => {
+      if (p.warning) warnings.push(p.warning);
+    });
 
     // Should not throw, should skip
     expect(result).toHaveLength(1); // Returns original chunk unchanged
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('context window exceeded'));
-
-    warnSpy.mockRestore();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('context window exceeded');
   });
 });

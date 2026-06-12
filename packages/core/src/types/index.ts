@@ -148,6 +148,8 @@ export interface IndexingConfig {
   respectGitignore?: boolean | undefined;
   /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
   embeddingConcurrency?: number | undefined;
+  /** Number of chunks per embedding API call (default: 50, range: 1-200). */
+  embeddingBatchSize?: number | undefined;
   /** LLM chunking configuration (optional — model and Ollama URL for LLM-based chunking strategy) */
   llm?: { model: string; ollamaUrl: string } | undefined;
   /** LLM enrichment configuration (optional — enables Ollama metadata enrichment) */
@@ -312,6 +314,18 @@ export interface EnrichmentConfig {
   excludeLanguages?: string[];
   /** Stereotypes to exclude from LLM enrichment (default: ["test", "dto", "config-block", "migration"]) */
   excludeStereotypes?: string[];
+  /** Minimum line count for method/function chunks to qualify for enrichment (default: 6). Set to 1 to disable. */
+  minEnrichmentLines?: number;
+  /** File extensions to exclude from LLM enrichment (e.g., [".js", ".jsx"]). Case-insensitive. */
+  excludeExtensions?: string[];
+  /** Maximum chunks per Ollama enrichment call (default: 20, range: 1-50). Caps the dynamic token-budget batcher. */
+  maxBatchChunks?: number;
+  /** Approximate characters per token for the model's tokenizer (default: 3). Lower = more conservative batching. */
+  charsPerToken?: number;
+  /** Fraction of numCtx allocated to input tokens (default: 0.45, range: 0.2-0.7). Remainder is output headroom. */
+  tokenBudgetRatio?: number;
+  /** Estimated output tokens needed per chunk in the response (default: 300, range: 50-1000). Controls num_predict. */
+  outputTokensPerChunk?: number;
 }
 
 /**
