@@ -18,7 +18,7 @@ function makeChunk(overrides: Partial<CodeChunk & { stereotype?: string }> = {})
     relativePath: 'test/file.ts',
     content: 'function test() { return 1; }',
     startLine: 1,
-    endLine: 3,
+    endLine: 10,
     language: 'typescript',
     chunkType: 'function',
     name: 'test',

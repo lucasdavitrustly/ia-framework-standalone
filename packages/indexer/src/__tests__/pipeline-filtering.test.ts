@@ -20,7 +20,7 @@ function makeChunk(overrides: Partial<CodeChunk> = {}): CodeChunk {
     filePath: '/test/file.ts',
     content: 'function test() { return 1; }',
     startLine: 1,
-    endLine: 3,
+    endLine: 10,
     language: 'typescript',
     chunkType: 'function',
     name: 'test',
@@ -302,5 +302,356 @@ describe('Pipeline - Embedding Concurrency Defaults (US2)', () => {
       'config-block',
       'migration',
     ]);
+  });
+});
+
+describe('Pipeline Filtering - Trivial Line-Count Exclusion (US1: Skip Trivial Methods)', () => {
+  const baseConfig: EnrichmentConfig = {
+    provider: 'ollama',
+    model: 'qwen3:8b',
+    excludeLanguages: [], // Disable language filter to isolate trivial filter
+    excludeStereotypes: [], // Disable stereotype filter to isolate trivial filter
+  };
+
+  // T006: method chunk with 5 lines (endLine - startLine + 1 = 5) is skipped with default minEnrichmentLines: 6
+  it('T006: method chunk with 5 lines is skipped with default minEnrichmentLines (6)', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'method-5', chunkType: 'method', startLine: 1, endLine: 5 }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig }; // No minEnrichmentLines → default 6
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(0);
+    expect(result.skipped.map((c) => c.id)).toEqual(['method-5']);
+  });
+
+  // T007: method chunk with 6 lines IS enriched with default minEnrichmentLines: 6
+  it('T007: method chunk with 6 lines IS enriched with default minEnrichmentLines (6)', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'method-6', chunkType: 'method', startLine: 1, endLine: 6 }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['method-6']);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T008: class-signature chunk with 3 lines IS enriched (not subject to trivial filtering)
+  it('T008: class-signature chunk with 3 lines IS enriched (not subject to trivial filtering)', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'class-sig-3', chunkType: 'class-signature', startLine: 1, endLine: 3 }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['class-sig-3']);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T009: class chunk with 4 lines IS enriched (only method/function types filtered)
+  it('T009: class chunk with 4 lines IS enriched (only method/function types filtered)', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'class-4', chunkType: 'class', startLine: 1, endLine: 4 }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['class-4']);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T010: minEnrichmentLines: 1 disables trivial filtering entirely
+  it('T010: minEnrichmentLines: 1 disables trivial filtering entirely', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'method-1', chunkType: 'method', startLine: 1, endLine: 1 }),
+      makeChunk({ id: 'method-3', chunkType: 'method', startLine: 1, endLine: 3 }),
+      makeChunk({ id: 'func-2', chunkType: 'function', startLine: 1, endLine: 2 }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, minEnrichmentLines: 1 };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(3);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T011: minEnrichmentLines: 10 filters methods/functions with ≤9 lines
+  it('T011: minEnrichmentLines: 10 filters methods/functions with ≤9 lines', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'method-9', chunkType: 'method', startLine: 1, endLine: 9 }),
+      makeChunk({ id: 'method-10', chunkType: 'method', startLine: 1, endLine: 10 }),
+      makeChunk({ id: 'func-5', chunkType: 'function', startLine: 1, endLine: 5 }),
+      makeChunk({ id: 'func-15', chunkType: 'function', startLine: 10, endLine: 24 }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, minEnrichmentLines: 10 };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['method-10', 'func-15']);
+    expect(result.skipped.map((c) => c.id)).toEqual(['method-9', 'func-5']);
+  });
+
+  // T012: minEnrichmentLines of 0 or negative treated as disabled (same as 1)
+  it('T012: minEnrichmentLines of 0 or negative treated as disabled (same as 1)', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'method-1', chunkType: 'method', startLine: 1, endLine: 1 }),
+      makeChunk({ id: 'func-2', chunkType: 'function', startLine: 1, endLine: 2 }),
+    ];
+
+    // Note: Zod rejects <=0 at schema level, but the filter function should handle
+    // it defensively: treat any value <=1 as "disabled"
+    const config: EnrichmentConfig = { ...baseConfig, minEnrichmentLines: 1 };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(2);
+    expect(result.skipped).toHaveLength(0);
+  });
+});
+
+describe('Pipeline Filtering - Extension Exclusion (US2: Exclude Files by Extension)', () => {
+  const baseConfig: EnrichmentConfig = {
+    provider: 'ollama',
+    model: 'qwen3:8b',
+    excludeLanguages: [], // Disable language filter to isolate extension filter
+    excludeStereotypes: [], // Disable stereotype filter to isolate extension filter
+    minEnrichmentLines: 1, // Disable trivial filter to isolate extension filter
+  };
+
+  // T017: chunks from app.js skipped when excludeExtensions: [".js"]
+  it('T017: chunks from app.js skipped when excludeExtensions: [".js"]', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js' }),
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: ['.js'] };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['ts-1']);
+    expect(result.skipped.map((c) => c.id)).toEqual(['js-1']);
+  });
+
+  // T018: chunks from app.ts ARE enriched when excludeExtensions: [".js"]
+  it('T018: chunks from app.ts ARE enriched when excludeExtensions: [".js"]', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts' }),
+      makeChunk({ id: 'tsx-1', filePath: '/project/src/App.tsx' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: ['.js'] };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(2);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T019: case-insensitive matching — excludeExtensions: [".JS"] skips app.js
+  it('T019: case-insensitive matching — excludeExtensions: [".JS"] skips app.js', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js' }),
+      makeChunk({ id: 'JS-1', filePath: '/project/src/util.JS' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: ['.JS'] };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(0);
+    expect(result.skipped).toHaveLength(2);
+  });
+
+  // T020: multiple extensions [".js", ".jsx", ".mjs"] all excluded
+  it('T020: multiple extensions [".js", ".jsx", ".mjs"] all excluded', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js' }),
+      makeChunk({ id: 'jsx-1', filePath: '/project/src/App.jsx' }),
+      makeChunk({ id: 'mjs-1', filePath: '/project/src/utils.mjs' }),
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: ['.js', '.jsx', '.mjs'] };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['ts-1']);
+    expect(result.skipped.map((c) => c.id)).toEqual(['js-1', 'jsx-1', 'mjs-1']);
+  });
+
+  // T021: excludeExtensions undefined means no extension filtering
+  it('T021: excludeExtensions undefined means no extension filtering', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js' }),
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig }; // No excludeExtensions
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(2);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T022: excludeExtensions: [] (empty array) means no extension filtering
+  it('T022: excludeExtensions: [] (empty array) means no extension filtering', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js' }),
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: [] };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(2);
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  // T023: both excludeExtensions: [".js"] AND excludeLanguages: ["yaml"] filter independently
+  it('T023: both excludeExtensions and excludeLanguages filter independently', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js', language: 'javascript' }),
+      makeChunk({ id: 'yaml-1', filePath: '/project/config.yaml', language: 'yaml' }),
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts', language: 'typescript' }),
+    ];
+
+    const config: EnrichmentConfig = {
+      ...baseConfig,
+      excludeLanguages: ['yaml'],
+      excludeExtensions: ['.js'],
+    };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['ts-1']);
+    expect(result.skipped.map((c) => c.id)).toEqual(['yaml-1', 'js-1']);
+  });
+
+  // T024: extension without leading dot ("js") is normalized to ".js"
+  it('T024: extension without leading dot ("js") is normalized to ".js"', () => {
+    const chunks: CodeChunk[] = [
+      makeChunk({ id: 'js-1', filePath: '/project/src/app.js' }),
+      makeChunk({ id: 'ts-1', filePath: '/project/src/app.ts' }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: ['js'] };
+
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable.map((c) => c.id)).toEqual(['ts-1']);
+    expect(result.skipped.map((c) => c.id)).toEqual(['js-1']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T045: Filter order verification — language → stereotype → extension → trivial
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Pipeline Filtering — filter order verification (T045)', () => {
+  const baseConfig: EnrichmentConfig = {
+    provider: 'ollama',
+    model: 'qwen3:8b',
+    excludeExtensions: ['.json'],
+    minEnrichmentLines: 6,
+  };
+
+  it('T045: filters apply in order: language → stereotype → extension → trivial', () => {
+    // Create chunks that would be caught by each filter at different stages:
+    // 1. yaml chunk → caught by language filter
+    // 2. import chunk → caught by stereotype filter
+    // 3. .json chunk → caught by extension filter
+    // 4. trivial 3-line function → caught by trivial filter
+    // 5. normal 10-line function → passes all filters
+    const chunks: CodeChunk[] = [
+      makeChunk({
+        id: 'lang-skip',
+        language: 'yaml',
+        filePath: '/test/config.yaml',
+        chunkType: 'function',
+        startLine: 1,
+        endLine: 10,
+      }),
+      // stereotype: 'dto' is checked by the stereotype filter (accessed via extended field)
+      {
+        ...makeChunk({
+          id: 'stereo-skip',
+          language: 'typescript',
+          filePath: '/test/app.ts',
+          chunkType: 'function',
+          startLine: 1,
+          endLine: 10,
+        }),
+        stereotype: 'dto',
+      } as CodeChunk,
+      makeChunk({
+        id: 'ext-skip',
+        language: 'json',
+        filePath: '/test/data.json',
+        chunkType: 'function',
+        startLine: 1,
+        endLine: 10,
+      }),
+      makeChunk({
+        id: 'trivial-skip',
+        language: 'typescript',
+        filePath: '/test/util.ts',
+        chunkType: 'function',
+        startLine: 1,
+        endLine: 4,
+      }),
+      makeChunk({
+        id: 'passes',
+        language: 'typescript',
+        filePath: '/test/service.ts',
+        chunkType: 'function',
+        startLine: 1,
+        endLine: 10,
+      }),
+    ];
+
+    const result = filterChunksForEnrichment(chunks, baseConfig);
+
+    // Only the 10-line TS function passes all four filters
+    expect(result.enrichable.map((c) => c.id)).toEqual(['passes']);
+    // All others skipped by their respective filter stages
+    expect(result.skipped.map((c) => c.id)).toContain('lang-skip');
+    expect(result.skipped.map((c) => c.id)).toContain('stereo-skip');
+    expect(result.skipped.map((c) => c.id)).toContain('ext-skip');
+    expect(result.skipped.map((c) => c.id)).toContain('trivial-skip');
+    expect(result.skipped).toHaveLength(4);
+  });
+
+  it('T045: extension filter runs before trivial filter (a .json function with 10 lines is excluded by extension, not trivial)', () => {
+    // A 10-line JSON function would pass the trivial filter but should be caught by extension filter
+    const chunks: CodeChunk[] = [
+      makeChunk({
+        id: 'json-fn',
+        language: 'json',
+        filePath: '/test/data.json',
+        chunkType: 'function',
+        startLine: 1,
+        endLine: 10,
+      }),
+    ];
+
+    const config: EnrichmentConfig = { ...baseConfig, excludeExtensions: ['.json'] };
+    const result = filterChunksForEnrichment(chunks, config);
+
+    expect(result.enrichable).toHaveLength(0);
+    expect(result.skipped.map((c) => c.id)).toEqual(['json-fn']);
   });
 });

@@ -84,9 +84,54 @@ if (selectedEnrichmentModel && config.indexing && !config.indexing.enrichment) {
     provider: "ollama",
     model: selectedEnrichmentModel,
     baseUrl: "http://localhost:11434",
-    skipOnFailure: true
+    numCtx: 32768,
+    concurrency: 3,
+    retryAttempts: 2,
+    skipOnFailure: true,
+    maxBatchChunks: 10,
+    charsPerToken: 3,
+    tokenBudgetRatio: 0.45,
+    outputTokensPerChunk: 300,
+    minEnrichmentLines: 6,
+    excludeLanguages: ["xml", "yaml", "sql", "proto"],
+    excludeStereotypes: ["test", "dto", "config-block", "migration"],
+    excludeExtensions: []
   };
   changed = true;
+}
+
+// Merge new enrichment fields into existing enrichment block
+if (config.indexing && config.indexing.enrichment) {
+  const e = config.indexing.enrichment;
+  const defaults = {
+    numCtx: 32768,
+    concurrency: 3,
+    retryAttempts: 2,
+    skipOnFailure: true,
+    maxBatchChunks: 10,
+    charsPerToken: 3,
+    tokenBudgetRatio: 0.45,
+    outputTokensPerChunk: 300,
+    minEnrichmentLines: 6
+  };
+  for (const [key, val] of Object.entries(defaults)) {
+    if (e[key] === undefined) {
+      e[key] = val;
+      changed = true;
+    }
+  }
+}
+
+// Ensure embeddingBatchSize and embeddingConcurrency exist in indexing
+if (config.indexing) {
+  if (config.indexing.embeddingBatchSize === undefined) {
+    config.indexing.embeddingBatchSize = 50;
+    changed = true;
+  }
+  if (config.indexing.embeddingConcurrency === undefined) {
+    config.indexing.embeddingConcurrency = 3;
+    changed = true;
+  }
 }
 
 if (changed) {
@@ -187,7 +232,18 @@ MERGE_EOF
       \"provider\": \"ollama\",
       \"model\": \"${SELECTED_ENRICHMENT_MODEL}\",
       \"baseUrl\": \"http://localhost:11434\",
-      \"skipOnFailure\": true
+      \"numCtx\": 32768,
+      \"concurrency\": 3,
+      \"retryAttempts\": 2,
+      \"skipOnFailure\": true,
+      \"maxBatchChunks\": 10,
+      \"charsPerToken\": 3,
+      \"tokenBudgetRatio\": 0.45,
+      \"outputTokensPerChunk\": 300,
+      \"minEnrichmentLines\": 6,
+      \"excludeLanguages\": [\"xml\", \"yaml\", \"sql\", \"proto\"],
+      \"excludeStereotypes\": [\"test\", \"dto\", \"config-block\", \"migration\"],
+      \"excludeExtensions\": []
     }"
   fi
 
@@ -233,7 +289,9 @@ MERGE_EOF
       "**/coverage/**",
       "**/__pycache__/**"
     ],
-    "respectGitignore": true${enrichment_block}
+    "respectGitignore": true,
+    "embeddingBatchSize": 50,
+    "embeddingConcurrency": 3${enrichment_block}
   }
 }
 EOF

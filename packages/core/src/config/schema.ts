@@ -29,6 +29,8 @@ export const IndexingConfigSchema = z.object({
   respectGitignore: z.boolean().optional(),
   /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
   embeddingConcurrency: z.number().int().positive().optional(),
+  /** Number of chunks per embedding API call (default: 50, range: 1-200). */
+  embeddingBatchSize: z.number().int().min(1).max(200).optional(),
   /** LLM chunking configuration (optional — when present, enables LLM-based chunking strategy) */
   llm: LlmConfigSchema.optional(),
   /** LLM enrichment configuration (optional — enables Ollama metadata enrichment) */
@@ -43,6 +45,12 @@ export const IndexingConfigSchema = z.object({
       skipOnFailure: z.boolean().optional(),
       excludeLanguages: z.array(z.string().min(1)).optional(),
       excludeStereotypes: z.array(z.string().min(1)).optional(),
+      minEnrichmentLines: z.number().int().min(1).optional(),
+      excludeExtensions: z.array(z.string().min(1)).optional(),
+      maxBatchChunks: z.number().int().min(1).max(50).optional(),
+      charsPerToken: z.number().min(1).max(10).optional(),
+      tokenBudgetRatio: z.number().min(0.2).max(0.7).optional(),
+      outputTokensPerChunk: z.number().int().min(50).max(1000).optional(),
     })
     .optional(),
 });

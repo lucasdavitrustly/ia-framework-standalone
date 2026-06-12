@@ -352,7 +352,16 @@ Browse available models: https://ollama.com/search
 
           const BAR_WIDTH = 20;
           let enrichmentStartedAt: number | null = null;
+          let enrichmentWarnings = 0;
           const renderProgress = (progress: IndexingProgress): void => {
+            // Handle warnings: clear progress line, print warning above, then re-render
+            if (progress.warning) {
+              enrichmentWarnings++;
+              process.stdout.write(`\r\x1b[2K`);
+              process.stderr.write(
+                `\x1b[33m  ⚠ [batch ${progress.batchesCompleted}/${progress.batchesTotal}] ${progress.warning}\x1b[0m\n`,
+              );
+            }
             let line: string;
             switch (progress.stage) {
               case 'walking':
@@ -400,7 +409,9 @@ Browse available models: https://ollama.com/search
                   etaStr = `  ~${etaFmt} left`;
                 }
                 const batchStr = total > 0 ? `${completed}/${total}` : '…';
-                line = `  [${bar}] ${String(pct).padStart(3)}%  enriching  ${batchStr} batches  ${elapsedStr}${etaStr}${fileName}`;
+                const failStr =
+                  enrichmentWarnings > 0 ? ` \x1b[33m(${enrichmentWarnings} failed)\x1b[0m` : '';
+                line = `  [${bar}] ${String(pct).padStart(3)}%  enriching  ${batchStr} batches${failStr}  ${elapsedStr}${etaStr}${fileName}`;
                 break;
               }
               case 'embedding': {
@@ -525,6 +536,7 @@ Browse available models: https://ollama.com/search
                   includePatterns: config.indexing?.includePatterns,
                   excludePatterns: config.indexing?.excludePatterns,
                   maxChunkLines: config.indexing?.maxChunkLines,
+                  embeddingBatchSize: config.indexing?.embeddingBatchSize,
                   incremental: !options.force,
                   force: options.force,
                   dependencyGraph,

@@ -54,6 +54,7 @@ interface EnrichmentProgress {
   batchesCompleted: number;
   batchesTotal: number;
   currentFile?: string;
+  warning?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -249,17 +250,19 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
 
   /**
    * When total content length exceeds 70% of numCtx (in tokens, ~chars/4),
-   * the enricher should group chunks by parentName (class) and issue one
-   * Ollama call per class group instead of one flat batch of up to 10.
+   * the enricher should group chunks by parentName (class) and issue separate
+   * Ollama calls per class group with dynamic batching.
    *
-   * Setup: numCtx=100 tokens → threshold = 70 tokens ≈ 280 chars.
-   * We create 4 chunks in 2 classes, each chunk content = 100 chars → total=400 > 280.
-   * Expected: 2 fetch calls (one per class), not 1 flat call.
+   * Setup: numCtx=7500 → threshold = 5250 tokens.
+   * We create 4 chunks in 2 classes, each chunk content = 4000 chars (1333 tokens)
+   * → total=5333 tokens > 5250 threshold.
+   * Budget = 7500*0.45-500 = 2875 tokens → 2 chunks of 1333 tokens fit per batch.
+   * Expected: 2 fetch calls (one per class).
    */
   it('issues one Ollama call per class group when total content exceeds 70% of numCtx', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    const largeContent = 'x'.repeat(100); // 100 chars each
+    const largeContent = 'x'.repeat(4000); // 4000 chars ≈ 1333 tokens each (charsPerToken=3)
 
     const makeClassChunk = (id: string, name: string, parentName: string): TestChunk => ({
       id,
@@ -283,7 +286,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
       makeClassChunk('c4', 'methodD', 'ClassB'),
     ];
 
-    // Total content = 4 * 100 = 400 chars ≈ 100 tokens > 70% of numCtx (100) = 70 tokens
+    // Total content = 4 * 4000 = 16000 chars ≈ 5333 tokens > 70% of 7500 = 5250 tokens
 
     const makePayload = (ids: string[]) =>
       JSON.stringify({
@@ -310,7 +313,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
       provider: 'ollama',
       model: 'qwen3:8b',
       baseUrl: 'http://localhost:11434',
-      numCtx: 100, // tiny context window to force threshold
+      numCtx: 7500, // budget=2875 tokens, fits 2 chunks of 1333 tokens per batch
       skipOnFailure: true,
       retryAttempts: 1,
     });
@@ -327,7 +330,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
   it('uses flat batching (one call) when total content is below the 70% threshold', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    // 2 chunks × 10 chars = 20 chars ≈ 5 tokens, well below 70% of 100 = 70 tokens
+    // 2 chunks × 10 chars = 20 chars ≈ 5 tokens, well below 70% of 5000 = 3500 tokens
     const makeSmallChunk = (id: string): TestChunk => ({
       id,
       filePath: '/repo/src/Tiny.java',
@@ -373,7 +376,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
       provider: 'ollama',
       model: 'qwen3:8b',
       baseUrl: 'http://localhost:11434',
-      numCtx: 100,
+      numCtx: 5000, // budget=2250 tokens, standard path for small content
       skipOnFailure: true,
       retryAttempts: 1,
     });
@@ -387,7 +390,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
   it('groups class-signature chunks with their class name as the group key', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    const largeContent = 'x'.repeat(200);
+    const largeContent = 'x'.repeat(4000); // 1333 tokens each (charsPerToken=3)
 
     const classSignatureChunk: TestChunk = {
       id: 'sig1',
@@ -418,8 +421,40 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
       exports: [],
     };
 
-    // total = 2 * 200 = 400 chars ≈ 100 tokens > 70% of 100 = 70 tokens → class grouping
-    // Both chunks share class 'FooService' → should be ONE Ollama call
+    // Add chunks from another class to trigger isLargeFile threshold
+    const otherChunk1: TestChunk = {
+      id: 'o1',
+      filePath: '/repo/src/Foo.java',
+      relativePath: 'src/Foo.java',
+      language: 'java',
+      chunkType: 'method',
+      name: 'barMethod',
+      parentName: 'BarService',
+      content: largeContent,
+      startLine: 30,
+      endLine: 40,
+      imports: [],
+      exports: [],
+    };
+
+    const otherChunk2: TestChunk = {
+      id: 'o2',
+      filePath: '/repo/src/Foo.java',
+      relativePath: 'src/Foo.java',
+      language: 'java',
+      chunkType: 'method',
+      name: 'barMethod2',
+      parentName: 'BarService',
+      content: largeContent,
+      startLine: 45,
+      endLine: 55,
+      imports: [],
+      exports: [],
+    };
+
+    // total = 4 * 1333 = 5333 tokens > 70% of 7500 = 5250 tokens → class grouping
+    // FooService group: [sig1, m1] → 1 batch (2667 tokens ≤ 2875 budget)
+    // BarService group: [o1, o2] → 1 batch (2667 tokens ≤ 2875 budget)
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -439,6 +474,20 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
               semanticTags: [],
               relationships: [],
             },
+            {
+              id: 'o1',
+              description: 'other',
+              businessContext: '',
+              semanticTags: [],
+              relationships: [],
+            },
+            {
+              id: 'o2',
+              description: 'other2',
+              businessContext: '',
+              semanticTags: [],
+              relationships: [],
+            },
           ],
         }),
       }),
@@ -447,15 +496,20 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
     const enricher = new LlmEnricher!({
       provider: 'ollama',
       model: 'qwen3:8b',
-      numCtx: 100,
+      numCtx: 7500, // budget=2875 tokens
       skipOnFailure: true,
       retryAttempts: 1,
     });
 
-    await enricher.enrich([classSignatureChunk, methodChunk] as unknown as TestChunk[]);
+    await enricher.enrich([
+      classSignatureChunk,
+      methodChunk,
+      otherChunk1,
+      otherChunk2,
+    ] as unknown as TestChunk[]);
 
-    // class-signature + its methods → one group → one call
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    // 2 class groups → 2 calls (FooService: sig1+m1, BarService: o1+o2)
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -493,14 +547,15 @@ describe('LlmEnricher — graceful degradation (T017)', () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
     global.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const enricher = new LlmEnricher!(baseConfig);
-    await enricher.enrich([makeChunk('chunk-1', 'processPayment')]);
+    const warnings: string[] = [];
+    await enricher.enrich([makeChunk('chunk-1', 'processPayment')], (p) => {
+      if (p.warning) warnings.push(p.warning);
+    });
 
-    expect(warnSpy).toHaveBeenCalled();
-    const warnMessage = warnSpy.mock.calls[0]?.join(' ') ?? '';
-    expect(warnMessage.toLowerCase()).toMatch(/ollama|enrichment|unavailable|failed|error/);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.toLowerCase()).toMatch(/ollama|enrichment|unavailable|failed|error/);
   });
 
   it('returns chunks unchanged when skipOnFailure=true and Ollama returns 500', async () => {
@@ -563,8 +618,8 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
   it('T083: onProgress is called once per batch during flat batching', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    // 12 chunks → 2 batches of 10 and 2
-    const chunks = Array.from({ length: 12 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    // 25 chunks → 2 batches (20 + 5) with dynamic batching (MAX_BATCH_CHUNKS=20)
+    const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
     global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
 
     const progressEvents: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
@@ -577,14 +632,14 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
   it('T083: batchesTotal matches the total number of Ollama calls made', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    const chunks = Array.from({ length: 45 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
     global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
 
     const events: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
     const enricher = new LlmEnricher!(baseConfig);
     await enricher.enrich(chunks, (p) => events.push({ ...p }));
 
-    // 25 chunks / 10 per batch = 3 batches
+    // 45 chunks / 20 max per batch = 3 batches (20+20+5)
     expect(events[0]!.batchesTotal).toBe(3);
     expect(events[events.length - 1]!.batchesTotal).toBe(3);
   });
@@ -592,13 +647,14 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
   it('T083: batchesCompleted increments from 1 to batchesTotal', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    const chunks = Array.from({ length: 20 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
     global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
 
     const completed: number[] = [];
     const enricher = new LlmEnricher!(baseConfig);
     await enricher.enrich(chunks, (p) => completed.push(p.batchesCompleted));
 
+    // 25 chunks → 2 batches (20+5)
     expect(completed).toEqual([1, 2]);
   });
 
@@ -631,13 +687,14 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const chunks = Array.from({ length: 20 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    // 25 chunks → 2 batches (20+5) with dynamic batching
+    const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
 
     let callCount = 0;
     global.fetch = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) throw new Error('Network error');
-      return makeOllamaResponse(chunks.slice(10, 20));
+      return makeOllamaResponse(chunks.slice(20, 25));
     });
 
     const completed: number[] = [];
@@ -666,8 +723,8 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
   it('T124: processes batches concurrently when concurrency > 1', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    // Create 30 chunks → 3 batches of 10
-    const chunks = Array.from({ length: 30 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    // Create 45 chunks → 3 batches (20+20+5) with dynamic batching (MAX_BATCH_CHUNKS=20)
+    const chunks = Array.from({ length: 45 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
 
     // Track concurrent in-flight requests
     let concurrent = 0;
@@ -683,7 +740,7 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
         ok: true,
         json: async () => ({
           response: JSON.stringify({
-            chunks: chunks.slice(0, 10).map((c) => ({
+            chunks: chunks.slice(0, 20).map((c) => ({
               id: c.id,
               description: `desc-${c.id}`,
               businessContext: 'ctx',
@@ -707,14 +764,15 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
     expect(maxConcurrent).toBeGreaterThan(1);
     expect(maxConcurrent).toBeLessThanOrEqual(3);
     // Verify all chunks still get enriched
-    expect(result).toHaveLength(30);
+    expect(result).toHaveLength(45);
     expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
   it('T124: respects concurrency=1 (sequential execution)', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    const chunks = Array.from({ length: 20 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    // 25 chunks → 2 batches (20+5) with dynamic batching
+    const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
 
     let concurrent = 0;
     let maxConcurrent = 0;
@@ -728,7 +786,7 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
         ok: true,
         json: async () => ({
           response: JSON.stringify({
-            chunks: chunks.slice(0, 10).map((c) => ({
+            chunks: chunks.slice(0, 20).map((c) => ({
               id: c.id,
               description: `desc-${c.id}`,
               businessContext: 'ctx',
@@ -756,7 +814,8 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
   it('T124: progress events report correct batchesCompleted regardless of execution order', async () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
-    const chunks = Array.from({ length: 30 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
+    // 45 chunks → 3 batches (20+20+5) with dynamic batching
+    const chunks = Array.from({ length: 45 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
 
     global.fetch = vi.fn().mockImplementation(async () => {
       // Random delay to simulate varying Ollama response times
@@ -765,7 +824,7 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
         ok: true,
         json: async () => ({
           response: JSON.stringify({
-            chunks: chunks.slice(0, 10).map((c) => ({
+            chunks: chunks.slice(0, 20).map((c) => ({
               id: c.id,
               description: `desc-${c.id}`,
               businessContext: 'ctx',

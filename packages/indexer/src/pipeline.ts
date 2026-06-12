@@ -7,7 +7,7 @@ import { createLogger } from '@ia-framework/core';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { relative } from 'node:path';
+import { relative, extname } from 'node:path';
 import PQueue from 'p-queue';
 import {
   LlmEnricher,
@@ -40,12 +40,16 @@ export const DEFAULT_EXCLUDE_LANGUAGES = ['xml', 'yaml', 'sql', 'proto'];
 /** Default stereotypes excluded from LLM enrichment (low-value for semantic search). */
 export const DEFAULT_EXCLUDE_STEREOTYPES = ['test', 'dto', 'config-block', 'migration'];
 
+/** Default minimum line count for method/function chunks to qualify for enrichment. */
+export const DEFAULT_MIN_ENRICHMENT_LINES = 6;
+
 /**
- * Splits chunks into enrichable and skipped sets based on the excludeLanguages
- * and excludeStereotypes config.
+ * Splits chunks into enrichable and skipped sets based on the excludeLanguages,
+ * excludeStereotypes, and minEnrichmentLines config.
  * Chunks whose language matches the language exclusion list OR whose stereotype
- * matches the stereotype exclusion list are skipped from LLM enrichment
- * but retain all AST metadata for embedding and search.
+ * matches the stereotype exclusion list are skipped from LLM enrichment.
+ * Method/function chunks below minEnrichmentLines are also skipped.
+ * All skipped chunks retain full AST metadata for embedding and search.
  */
 export function filterChunksForEnrichment(
   chunks: CodeChunk[],
@@ -56,24 +60,72 @@ export function filterChunksForEnrichment(
   const langSet = new Set(excludeLanguages.map((l) => l.toLowerCase()));
   const stereoSet = new Set(excludeStereotypes.map((s) => s.toLowerCase()));
 
-  if (langSet.size === 0 && stereoSet.size === 0) {
-    return { enrichable: chunks, skipped: [] };
-  }
-
   const enrichable: CodeChunk[] = [];
   const skipped: CodeChunk[] = [];
 
-  for (const chunk of chunks) {
-    const lang = (chunk.language ?? '').toLowerCase();
-    const stereo = ((chunk as CodeChunk & { stereotype?: string }).stereotype ?? '').toLowerCase();
-    if (langSet.has(lang) || (stereo && stereoSet.has(stereo))) {
-      skipped.push(chunk);
-    } else {
-      enrichable.push(chunk);
+  // Step 1 & 2: Language and stereotype exclusion
+  if (langSet.size === 0 && stereoSet.size === 0) {
+    enrichable.push(...chunks);
+  } else {
+    for (const chunk of chunks) {
+      const lang = (chunk.language ?? '').toLowerCase();
+      const stereo = (
+        (chunk as CodeChunk & { stereotype?: string }).stereotype ?? ''
+      ).toLowerCase();
+      if (langSet.has(lang) || (stereo && stereoSet.has(stereo))) {
+        skipped.push(chunk);
+      } else {
+        enrichable.push(chunk);
+      }
     }
   }
 
-  return { enrichable, skipped };
+  // Step 3: Extension exclusion
+  const excludeExtensions = config.excludeExtensions;
+  let afterExtension: CodeChunk[];
+  if (!excludeExtensions || excludeExtensions.length === 0) {
+    afterExtension = enrichable;
+  } else {
+    const extSet = new Set(
+      excludeExtensions.map((ext) => {
+        const normalized = ext.startsWith('.') ? ext : `.${ext}`;
+        return normalized.toLowerCase();
+      }),
+    );
+    afterExtension = [];
+    for (const chunk of enrichable) {
+      const fileExt = extname(chunk.filePath).toLowerCase();
+      if (fileExt && extSet.has(fileExt)) {
+        skipped.push(chunk);
+      } else {
+        afterExtension.push(chunk);
+      }
+    }
+  }
+
+  // Step 4: Trivial line-count exclusion (method/function only)
+  const minLines = config.minEnrichmentLines ?? DEFAULT_MIN_ENRICHMENT_LINES;
+  if (minLines <= 1) {
+    // minEnrichmentLines of 1 or less disables trivial filtering
+    return { enrichable: afterExtension, skipped };
+  }
+
+  const afterTrivial: CodeChunk[] = [];
+  for (const chunk of afterExtension) {
+    const type = chunk.chunkType;
+    if (type === 'method' || type === 'function') {
+      const lineCount = (chunk.endLine ?? 0) - (chunk.startLine ?? 0) + 1;
+      if (lineCount < minLines) {
+        skipped.push(chunk);
+      } else {
+        afterTrivial.push(chunk);
+      }
+    } else {
+      afterTrivial.push(chunk);
+    }
+  }
+
+  return { enrichable: afterTrivial, skipped };
 }
 
 export interface IndexingConfig {
@@ -151,6 +203,8 @@ export interface IndexingProgress {
   batchesTotal?: number | undefined;
   /** Number of embedding batches completed so far */
   batchesCompleted?: number | undefined;
+  /** Warning message from a failed batch (when skipOnFailure is true) */
+  warning?: string | undefined;
 }
 
 export type ProgressCallback = (progress: IndexingProgress) => void;
@@ -572,7 +626,9 @@ export class IndexingPipeline {
         progress.batchesTotal = ep.batchesTotal;
         progress.batchesCompleted = ep.batchesCompleted;
         progress.currentFile = ep.currentFile;
+        progress.warning = ep.warning;
         onProgress?.({ ...progress });
+        progress.warning = undefined; // Clear after emitting so it doesn't repeat
       });
 
       // Merge enriched chunks with skipped chunks (skipped retain AST metadata only)
