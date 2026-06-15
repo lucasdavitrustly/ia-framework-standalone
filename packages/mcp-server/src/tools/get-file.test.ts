@@ -171,6 +171,49 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain('live file from core repo');
   });
+
+  test('passes repo prefix into engine.getFile for Qdrant-level filtering', async () => {
+    const chunk = makeChunk({ repoId: 'core' });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockResolvedValue('content');
+
+    await getFileHandler(engine, { path: 'core:src/auth.ts' }, { readFileFn });
+    expect(engine.getFile).toHaveBeenCalledWith('src/auth.ts', 'core');
+  });
+
+  test('derives repo from chunk repoId when no prefix given (single repo)', async () => {
+    // File lives only in repo "payment-gateway"; caller omits the prefix.
+    const chunk = makeChunk({ repoId: 'payment-gateway', relativePath: 'src/svc.ts' });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockResolvedValue('live content from payment-gateway');
+
+    const result = await getFileHandler(engine, { path: 'src/svc.ts' }, { readFileFn });
+    // Must read from the owning repo, NOT the default/first repo (undefined).
+    expect(readFileFn).toHaveBeenCalledWith('src/svc.ts', 'payment-gateway');
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('live content from payment-gateway');
+  });
+
+  test('groups by repo and reads each from its own root when path spans repos (no prefix)', async () => {
+    const chunks = [
+      makeChunk({ chunkId: 'c1', repoId: 'achpro', relativePath: 'src/Foo.java' }),
+      makeChunk({ chunkId: 'c2', repoId: 'paypro', relativePath: 'src/Foo.java' }),
+    ];
+    const engine = { getFile: vi.fn().mockResolvedValue(chunks) };
+    const readFileFn = vi.fn(async (_path: string, repo?: string) => `content of ${repo}`);
+
+    const result = await getFileHandler(engine, { path: 'src/Foo.java' }, { readFileFn });
+    const text = (result.content[0] as { text: string }).text;
+
+    // Both repos are surfaced, each read from its own root.
+    expect(text).toContain('## [achpro]');
+    expect(text).toContain('## [paypro]');
+    expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', 'achpro');
+    expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', 'paypro');
+    expect(text).toContain('content of achpro');
+    expect(text).toContain('content of paypro');
+    expect((result as any).structuredContent.multiRepo).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

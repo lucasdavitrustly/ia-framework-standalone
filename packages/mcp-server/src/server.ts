@@ -31,6 +31,29 @@ export interface McpServerConfig {
 }
 
 /**
+ * Resolve a repo's absolute root path for filesystem reads.
+ *
+ * - When `repoId` is undefined, returns the primary root (single-repo default).
+ * - When `repoId` is given, returns the configured path for that repo.
+ * - When `repoId` is given but not configured, throws — so a typo or stale
+ *   repo prefix surfaces as an error instead of silently reading the wrong
+ *   file from the default repo.
+ */
+export function resolveRepoRoot(
+  repoPathMap: Map<string, string>,
+  primaryRoot: string | undefined,
+  repoId?: string,
+): string | undefined {
+  if (!repoId) return primaryRoot;
+  const root = repoPathMap.get(repoId);
+  if (!root) {
+    const configured = [...repoPathMap.keys()].join(', ') || '(none)';
+    throw new Error(`Unknown repo '${repoId}' — configured repos: ${configured}`);
+  }
+  return root;
+}
+
+/**
  * Create and configure an MCP server with all retrieval tools registered.
  * Returns the McpServer instance — call server.connect(transport) to start.
  *
@@ -53,7 +76,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     ]),
   );
   const resolveRoot = (repoId?: string): string | undefined =>
-    repoId ? (repoPathMap.get(repoId) ?? primaryRoot) : primaryRoot;
+    resolveRepoRoot(repoPathMap, primaryRoot, repoId);
 
   // Filesystem read closure for search_codebase (line-range slicing)
   const searchReadFileFn =

@@ -18,20 +18,39 @@ codebase context during AI-assisted development:
   Parameters: \`query\` (required), \`limit\` (default 10), \`score_threshold\`
   (default 0.5), \`expand_hops\` (0=no expansion, 1=direct imports, 2=transitive),
   \`fallback\` (default true), \`repo\`, \`stereotype\`, \`archLayer\`, \`module\`,
-  \`language\` — optional filters for precise retrieval.
+  \`language\` — optional filters for precise retrieval. The \`repo\` value of a
+  result is the repo name you pass to \`get_file\` as a \`repo:\` prefix.
 - \`get_file\` — Retrieve a file's content and indexed chunk metadata by path.
   Reads live content from the filesystem first; falls back to stored Qdrant
-  content if the file is not accessible. Supports optional \`name\` filter
-  (returns only matching function/class chunks) and \`startLine\`/\`endLine\`
+  content if the file is not accessible. The \`path\` accepts an optional
+  \`repo:\` prefix to target a specific repo, e.g.
+  \`get_file(path="achpro:src/main/java/Foo.java")\`. Supports optional \`name\`
+  filter (returns only matching function/class chunks) and \`startLine\`/\`endLine\`
   range filter for targeted retrieval — use search_codebase results to
   inform targeted get_file calls (e.g., after finding \`Entry.java:166-231 (create)\`,
   call \`get_file\` with \`name: "create"\` or \`startLine: 166, endLine: 231\`).
-  Parameters: \`path\` (required), \`name\` (optional, case-insensitive chunk filter),
-  \`startLine\`/\`endLine\` (optional, 1-indexed line range).
+  Parameters: \`path\` (required, optionally \`repo:path\`), \`name\` (optional,
+  case-insensitive chunk filter), \`startLine\`/\`endLine\` (optional, 1-indexed line range).
 - \`get_dependencies\` — Get dependency graph for a file or module.
   Supports \`path\` (file-level) OR \`module\` (module-level with BFS traversal).
   Returns \`imports\`, \`exports\`, and full \`dependencyEdges\` for graph navigation.
   Parameters: \`path\` OR \`module\` (one required), \`depth\` (BFS hops, default 1).
+
+### Multi-repo path resolution
+
+This project may index more than one repo. File paths are **relative to each
+repo's root**, so the same \`relativePath\` (e.g. \`src/main/java/Foo.java\`) can
+exist in several repos.
+
+- When calling \`get_file\`, prefix the path with the owning repo:
+  \`get_file(path="<repo>:<relativePath>")\`.
+- Get the \`<repo>\` value from the \`repo\` field of \`search_codebase\` results.
+- Without a prefix, \`get_file\` reads from whichever repo the indexed chunks
+  belong to; if the path matches multiple repos, results are returned grouped
+  under \`## [repo]\` headings so you can disambiguate — re-issue the call with
+  the correct \`repo:\` prefix to target one.
+- An unknown \`repo:\` prefix is rejected with an error rather than silently
+  reading the wrong file.
 
 ### When to use
 

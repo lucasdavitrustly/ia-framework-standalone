@@ -785,17 +785,22 @@ export class SearchEngine {
 
   /**
    * Uses a Qdrant filter on relativePath — returns all matching chunks.
+   *
+   * In multi-repo collections the same `relativePath` can exist in several
+   * repos. Pass `repoId` to scope the lookup to a single repo, avoiding
+   * cross-repo chunk bleed.
    */
-  async getFile(relativePath: string): Promise<RetrievalResult[]> {
+  async getFile(relativePath: string, repoId?: string): Promise<RetrievalResult[]> {
     const { embeddingProvider, vectorStore } = this.config;
 
-    // Build a filter for the relativePath
+    // Build a filter for the relativePath, optionally scoped to a repo.
     const filter = {
       must: [
         {
           key: 'relativePath',
           match: { value: relativePath },
         },
+        ...(repoId ? [{ key: 'repoId', match: { value: repoId } }] : []),
       ],
     };
 

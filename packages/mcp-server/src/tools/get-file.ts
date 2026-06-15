@@ -5,7 +5,7 @@ import type { RetrievalResult } from '@ia-framework/retrieval';
 import { formatRetrievalContext } from './result-formatting.js';
 
 type Engine = {
-  getFile(path: string): Promise<RetrievalResult[]>;
+  getFile(path: string, repoId?: string): Promise<RetrievalResult[]>;
   search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
 };
 
@@ -108,7 +108,7 @@ export async function getFileHandler(
   let fallbackNote: string | undefined;
 
   try {
-    results = await engine.getFile(filePath);
+    results = await engine.getFile(filePath, repo);
   } catch (error) {
     if (!engine.search) {
       throw error;
@@ -125,7 +125,9 @@ export async function getFileHandler(
     results = await engine.search({ text: filePath, limit: 5 });
   }
 
-  // Filter by repo if prefix was specified
+  // Defense-in-depth: when a repo prefix was given, ensure only that repo's
+  // chunks survive even if the engine ignored the repoId filter (e.g. search
+  // fallback path, or old-schema collections without repoId).
   if (repo) {
     results = results.filter((r) => r.repoId === repo);
   }
@@ -154,11 +156,30 @@ export async function getFileHandler(
     endLine: r.endLine,
   }));
 
+  // Resolve the repo(s) the matched chunks belong to. When the caller did not
+  // supply a `repo:` prefix, we derive it from the chunk metadata so the
+  // filesystem read targets the correct repo root (not the default/first repo).
+  const distinctRepos = [
+    ...new Set(results.map((r) => r.repoId).filter((id): id is string => !!id)),
+  ];
+  // Single effective repo when the caller gave a prefix OR all chunks agree on
+  // one repo. Undefined only when chunks span multiple repos and no prefix was
+  // given (handled by the multi-repo grouping path below).
+  const effectiveRepo: string | undefined =
+    repo ?? (distinctRepos.length === 1 ? distinctRepos[0] : undefined);
+
+  // ── Multi-repo disambiguation (filesystem-read path) ───────────────────────
+  // No prefix + chunks from >1 repo: read each repo's file from its own root
+  // and return them grouped by repo so the caller can disambiguate.
+  if (readFileFn && !repo && distinctRepos.length > 1) {
+    return buildMultiRepoFileResponse(results, filePath, readFileFn, input, chunks);
+  }
+
   // ── Session dedup check (T155) ──────────────────────────────────────────────
   if (options?.sessionCache && readFileFn && options.statFn) {
     const cacheKey = buildGetFileCacheKey(
       filePath,
-      repo,
+      effectiveRepo,
       input.startLine,
       input.endLine,
       input.name,
@@ -168,7 +189,7 @@ export async function getFileHandler(
     if (cached) {
       // Check file mtime to validate cache
       try {
-        const stat = await options.statFn(filePath, repo);
+        const stat = await options.statFn(filePath, effectiveRepo);
         if (stat.mtimeMs === cached.mtimeMs) {
           // Cache hit — mtime unchanged, return short dedup message
           cached.lastAccess = ++getFileCacheAccessCounter;
@@ -194,13 +215,13 @@ export async function getFileHandler(
       if (!options?.sessionCache || !options.statFn) return;
       const cacheKey = buildGetFileCacheKey(
         filePath,
-        repo,
+        effectiveRepo,
         input.startLine,
         input.endLine,
         input.name,
       );
       try {
-        const stat = await options.statFn(filePath, repo);
+        const stat = await options.statFn(filePath, effectiveRepo);
         if (getFileCache.size >= GET_FILE_CACHE_MAX) evictGetFileLRU();
         getFileCache.set(cacheKey, {
           responseText: text,
@@ -227,7 +248,12 @@ export async function getFileHandler(
           const lang = matchingChunks[0]?.language ?? '';
 
           for (const chunk of matchingChunks.sort((a, b) => a.startLine - b.startLine)) {
-            const chunkContent = await readFileFn(filePath, repo, chunk.startLine, chunk.endLine);
+            const chunkContent = await readFileFn(
+              filePath,
+              effectiveRepo,
+              chunk.startLine,
+              chunk.endLine,
+            );
             const header = chunk.name
               ? `### ${chunk.chunkType}: ${chunk.name} (lines ${chunk.startLine}-${chunk.endLine})`
               : `### Lines ${chunk.startLine}-${chunk.endLine}`;
@@ -261,7 +287,7 @@ export async function getFileHandler(
         }
 
         // No chunks matched the name filter — fall back to full file with a note
-        const fileContent = await readFileFn(filePath, repo);
+        const fileContent = await readFileFn(filePath, effectiveRepo);
         const lang = results[0]?.language ?? '';
         const note = `Note: No chunks matching name "${input.name}" found. Returning full file.`;
         const title = `## File: ${filePath}`;
@@ -280,7 +306,7 @@ export async function getFileHandler(
 
       // ── Line-range filter path: slice file content to specified range ──
       if (input.startLine !== undefined && input.endLine !== undefined) {
-        const fileContent = await readFileFn(filePath, repo);
+        const fileContent = await readFileFn(filePath, effectiveRepo);
         const lines = fileContent.split('\n');
         // Convert to 0-indexed, inclusive of endLine
         const start = Math.max(0, input.startLine - 1);
@@ -302,7 +328,7 @@ export async function getFileHandler(
       }
 
       // ── Default path: return full file content (existing behavior) ──
-      const fileContent = await readFileFn(filePath, repo);
+      const fileContent = await readFileFn(filePath, effectiveRepo);
       const lang = results[0]?.language ?? '';
       const title = `## File: ${filePath}`;
       const text = `${title}\n\n\`\`\`${lang}\n${fileContent}\n\`\`\``;
@@ -325,6 +351,96 @@ export async function getFileHandler(
 
   // ── Stored-content rendering (no readFileFn) ──────────────────────────────
   return buildStoredContentResponse(results, filePath, input.path, fallbackNote, chunks, false);
+}
+
+type ChunkMeta = {
+  repo: string | undefined;
+  path: string | undefined;
+  name: string | undefined;
+  chunkType: string | undefined;
+  startLine: number;
+  endLine: number;
+};
+
+/**
+ * Render a file that exists in multiple repos (no `repo:` prefix supplied).
+ * Reads each repo's copy from its own root and returns them grouped under a
+ * `## [repo]` heading so the caller can disambiguate. Honors the `name` and
+ * `startLine`/`endLine` filters per repo, mirroring the single-repo paths.
+ */
+async function buildMultiRepoFileResponse(
+  results: RetrievalResult[],
+  filePath: string,
+  readFileFn: NonNullable<GetFileOptions['readFileFn']>,
+  input: GetFileInput,
+  chunks: ChunkMeta[],
+): Promise<ToolOutput> {
+  // Group results by repoId, preserving discovery order.
+  const repoGroups = new Map<string, RetrievalResult[]>();
+  for (const r of results) {
+    const key = r.repoId ?? '_default';
+    const group = repoGroups.get(key) ?? [];
+    group.push(r);
+    repoGroups.set(key, group);
+  }
+
+  const nameFilter = input.name?.toLowerCase();
+  const sections: string[] = [];
+
+  for (const [repoKey, groupResults] of repoGroups) {
+    const lang = groupResults[0]?.language ?? '';
+    sections.push(`## [${repoKey}]`);
+
+    try {
+      if (nameFilter) {
+        const matching = groupResults
+          .filter((r) => r.name && r.name.toLowerCase().includes(nameFilter))
+          .sort((a, b) => a.startLine - b.startLine);
+        const toRead = matching.length > 0 ? matching : null;
+        if (toRead) {
+          for (const chunk of toRead) {
+            const content = await readFileFn(filePath, repoKey, chunk.startLine, chunk.endLine);
+            const header = chunk.name
+              ? `### ${chunk.chunkType}: ${chunk.name} (lines ${chunk.startLine}-${chunk.endLine})`
+              : `### Lines ${chunk.startLine}-${chunk.endLine}`;
+            sections.push(`${header}\n\`\`\`${lang}\n${content}\n\`\`\``);
+          }
+          continue;
+        }
+        // No chunk matched name in this repo — fall through to full file.
+        sections.push(
+          `Note: No chunks matching name "${input.name}" in this repo. Returning full file.`,
+        );
+      }
+
+      if (input.startLine !== undefined && input.endLine !== undefined) {
+        const content = await readFileFn(filePath, repoKey, input.startLine, input.endLine);
+        sections.push(
+          `### Lines ${input.startLine}-${input.endLine}\n\`\`\`${lang}\n${content}\n\`\`\``,
+        );
+        continue;
+      }
+
+      const content = await readFileFn(filePath, repoKey);
+      sections.push(`\`\`\`${lang}\n${content}\n\`\`\``);
+    } catch (err) {
+      sections.push(
+        `Note: filesystem read failed for [${repoKey}] (${err instanceof Error ? err.message : String(err)}).`,
+      );
+    }
+  }
+
+  const repoList = [...repoGroups.keys()].join(', ');
+  const note =
+    `Note: "${filePath}" exists in ${repoGroups.size} repos (${repoList}). ` +
+    'Showing all matches grouped by repo — pass a `repo:` prefix ' +
+    `(e.g. get_file(path="${[...repoGroups.keys()][0]}:${filePath}")) to target one.`;
+  const text = `${note}\n\n## File: ${filePath}\n\n${sections.join('\n\n')}`;
+
+  return {
+    content: [{ type: 'text', text }],
+    structuredContent: { answered: true, multiRepo: true, chunks },
+  };
 }
 
 /** Render stored Qdrant chunk content into the standard sectioned layout. */

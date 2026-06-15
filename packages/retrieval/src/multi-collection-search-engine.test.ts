@@ -282,12 +282,29 @@ describe('MultiCollectionSearchEngine', () => {
 
       const results = await engine.getFile('test/file.ts');
 
-      expect(astEngine.getFile).toHaveBeenCalledWith('test/file.ts');
-      expect(llmEngine.getFile).toHaveBeenCalledWith('test/file.ts');
+      expect(astEngine.getFile).toHaveBeenCalledWith('test/file.ts', undefined);
+      expect(llmEngine.getFile).toHaveBeenCalledWith('test/file.ts', undefined);
       expect(results.length).toBe(3); // 2 ast + 1 llm
       const sources = results.map((r: RetrievalResult) => r.source);
       expect(sources).toContain('ast');
       expect(sources).toContain('llm');
+    });
+
+    it('Test 12b: threads repoId to every engine getFile call', async () => {
+      const astEngine = createMockEngine([], undefined, []);
+      const llmEngine = createMockEngine([], undefined, []);
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
+        ],
+      });
+
+      await engine.getFile('test/file.ts', 'payment-gateway');
+
+      expect(astEngine.getFile).toHaveBeenCalledWith('test/file.ts', 'payment-gateway');
+      expect(llmEngine.getFile).toHaveBeenCalledWith('test/file.ts', 'payment-gateway');
     });
 
     it('Test 13: deduplicates by chunkId - keeps first occurrence', async () => {
