@@ -74,7 +74,43 @@ exist in several repos.
 - Raise \`score_threshold\` to 0.7 for precise matches
 - Use \`get_file\` with \`name\` or \`startLine\`/\`endLine\` instead of fetching entire files
 - Skip RAG for tasks that don't need codebase context (doc updates, config changes)
-- Top-5 results include live code; results 6-10 are metadata-only to save tokens`;
+- Top-5 results include live code; results 6-10 are metadata-only to save tokens
+
+### Token-efficient retrieval recipe (concept queries)
+
+For "what is X" / "how does X work" questions, output tokens (tool results)
+dominate cost — not the queries themselves. The biggest waste is whole-file
+\`get_file\` reads and re-fetching content already present in search snippets.
+Follow this recipe to cut output tokens ~50-65% with equal or better accuracy:
+
+1. **Search narrow first:** \`search_codebase(query, repo:<repo>, limit:5,
+   score_threshold:0.6, expand_hops:0)\`. Use \`0.6\` for generic single-noun
+   queries (e.g. "Entry") — \`0.7\` tends to surface satellite types and forces a
+   second search. Tighten to \`0.7\` only for specific multi-term queries.
+   Results 6-10 are metadata-only and rarely change a definitional answer;
+   dependency expansion is unneeded here.
+2. **Never fall back to the generic \`Read\` tool for indexed files.** \`Read\`
+   ignores \`name:\`/\`startLine\`-\`endLine\` filters (pulling whole files) and
+   auto-loads nested \`AGENTS.md\` files as extra context — both defeat the token
+   budget. Stay in \`get_file\` with filters for any indexed source file.
+3. **On a wrong-module or empty \`get_file\` result, re-run \`search_codebase\`**
+   to get the correct anchor path. Do not switch to shell \`find\` + \`Read\` to
+   recover — that combination triggers full-file reads and AGENTS.md
+   auto-loading. Trust the search anchor for the module/path.
+4. **Answer from snippets before fetching:** if the top snippets already
+   contain the class signature + fields, answer directly. Do NOT \`get_file\`
+   content you already received in the search results.
+5. **Fetch the gap, not the file:** use \`get_file(path, name:"<ClassName>")\`
+   or \`startLine\`/\`endLine\` to read only field declarations + method
+   *signatures*. Skip method bodies unless the question is about a specific
+   method's logic.
+6. **Full-read only small files:** enums/records under ~50 lines (e.g.
+   \`EntryType\`, \`EntryStatus\`) are fine to read whole. Aggregates/large
+   classes — always range- or name-filtered.
+7. **Always pass the \`repo:\` prefix on \`get_file\`** to avoid dual-repo
+   ambiguity round-trips (which return avoidable partial payloads).
+8. **Stop on sufficiency:** end retrieval as soon as the question is answered;
+   no completeness sweeps.`;
 
 function getConfigPath(options: { config?: string }): string {
   return (
