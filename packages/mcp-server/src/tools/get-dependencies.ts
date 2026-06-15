@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import { resolveImportToRepo } from '@ia-framework/core';
 import { parseRepoPath } from './get-file.js';
+import { coercedNumber } from './coerce.js';
 
 type Engine = {
   getFile(path: string): Promise<RetrievalResult[]>;
@@ -353,8 +354,7 @@ export function registerGetDependenciesTool(server: McpServer, engine: Engine): 
           .describe(
             'Module name to look up (maps to moduleInfo.module). Mutually exclusive with path.',
           ),
-        depth: z
-          .number()
+        depth: coercedNumber()
           .optional()
           .describe('BFS traversal depth for module queries (default: 1, max: 3).'),
       },

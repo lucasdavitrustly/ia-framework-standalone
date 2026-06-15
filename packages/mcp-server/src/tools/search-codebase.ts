@@ -8,6 +8,7 @@ import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
 import { applyTokenCap } from './token-cap.js';
+import { coercedNumber, coercedBoolean } from './coerce.js';
 import { classifyBudget } from './adaptive-budget.js';
 import { classifyQuery } from '../classification/index.js';
 import type { QueryClassification } from '../classification/index.js';
@@ -1139,25 +1140,21 @@ export function registerSearchCodebaseTool(
         'Supports optional metadata filters: stereotype, archLayer, module, language for precise retrieval.',
       inputSchema: {
         query: z.string().describe('Natural language search query'),
-        limit: z.number().optional().describe('Maximum number of results (default: 10)'),
-        score_threshold: z
-          .number()
+        limit: coercedNumber().optional().describe('Maximum number of results (default: 10)'),
+        score_threshold: coercedNumber()
           .optional()
           .describe('Minimum similarity score 0-1 (default: 0.5). Set to 0 to disable filtering.'),
-        expand_hops: z
-          .number()
+        expand_hops: coercedNumber()
           .optional()
           .describe(
             'Dependency graph expansion hops: 0 = no expansion, 1 = direct imports, 2 = transitive (default)',
           ),
-        fallback: z
-          .boolean()
+        fallback: coercedBoolean()
           .optional()
           .describe(
             'Enable zero-result fallback (default: true). Set false to receive raw empty results without suggestions.',
           ),
-        use_template: z
-          .boolean()
+        use_template: coercedBoolean()
           .optional()
           .describe(
             'Enable prompt template injection for detected query intents (default: true). Set false to disable scaffolding.',

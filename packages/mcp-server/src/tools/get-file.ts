@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import { formatRetrievalContext } from './result-formatting.js';
+import { coercedNumber } from './coerce.js';
 
 type Engine = {
   getFile(path: string, repoId?: string): Promise<RetrievalResult[]>;
@@ -521,14 +522,12 @@ export function registerGetFileTool(
         'Also returns chunk-level metadata (imports, exports, dependency edges, stereotype, archLayer).',
       inputSchema: {
         path: z.string().describe('Relative file path (e.g., "src/auth/middleware.ts")'),
-        startLine: z
-          .number()
+        startLine: coercedNumber()
           .optional()
           .describe(
             'Start line (1-indexed). When provided with endLine, returns only that range from the file.',
           ),
-        endLine: z
-          .number()
+        endLine: coercedNumber()
           .optional()
           .describe(
             'End line (1-indexed). When provided with startLine, returns only that range from the file.',
