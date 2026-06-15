@@ -5,6 +5,7 @@ import { searchCodebaseHandler } from './tools/search-codebase.js';
 import { getFileHandler } from './tools/get-file.js';
 import { getDependenciesHandler } from './tools/get-dependencies.js';
 import { createMcpServer } from './server.js';
+import { resolveRepoRoot } from './server.js';
 
 /** Extract text from a CallToolResult's first content item */
 function getFirstText(output: CallToolResult): string {
@@ -106,7 +107,7 @@ describe('MCP Server Tools', () => {
     test('Test 5: calls searchEngine.getFile() with the provided path', async () => {
       const engine = makeMockEngine([], [makeResult()]);
       await getFileHandler(engine, { path: 'src/auth/middleware.ts' });
-      expect(engine.getFile).toHaveBeenCalledWith('src/auth/middleware.ts');
+      expect(engine.getFile).toHaveBeenCalledWith('src/auth/middleware.ts', undefined);
     });
 
     test('Test 6: formats results as markdown code blocks', async () => {
@@ -185,6 +186,27 @@ describe('MCP Server Tools', () => {
       const engine = makeMockEngine();
       const server = createMcpServer({ searchEngine: engine as never });
       expect(server).toBeDefined();
+    });
+  });
+
+  describe('resolveRepoRoot', () => {
+    const repoMap = new Map<string, string>([
+      ['achpro', '/repos/achpro'],
+      ['paypro', '/repos/paypro'],
+    ]);
+
+    test('returns the configured path for a known repo', () => {
+      expect(resolveRepoRoot(repoMap, '/repos/achpro', 'paypro')).toBe('/repos/paypro');
+    });
+
+    test('returns the primary root when repoId is undefined', () => {
+      expect(resolveRepoRoot(repoMap, '/repos/achpro', undefined)).toBe('/repos/achpro');
+    });
+
+    test('throws on an unknown repo instead of falling back to primary root', () => {
+      expect(() => resolveRepoRoot(repoMap, '/repos/achpro', 'does-not-exist')).toThrow(
+        /Unknown repo 'does-not-exist'/,
+      );
     });
   });
 });

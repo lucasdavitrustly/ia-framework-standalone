@@ -157,6 +157,9 @@ describe('agents inject', () => {
     // New filter params should be documented
     expect(content).toContain('stereotype');
     expect(content).toContain('archLayer');
+    // Multi-repo path rule must be documented
+    expect(content).toContain('Multi-repo path resolution');
+    expect(content).toContain('repo:');
   });
 
   // Test 4: Exits with error when config load fails

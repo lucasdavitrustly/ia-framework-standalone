@@ -162,10 +162,10 @@ export class MultiCollectionSearchEngine {
    * Results are tagged with their engine source and deduplicated by chunkId
    * (first occurrence wins). Sorted by startLine for natural reading order.
    */
-  async getFile(relativePath: string): Promise<RetrievalResult[]> {
+  async getFile(relativePath: string, repoId?: string): Promise<RetrievalResult[]> {
     const allChunkArrays = await Promise.all(
       this.engines.map(async ({ name, engine }) => {
-        const chunks = await engine.getFile(relativePath);
+        const chunks = await engine.getFile(relativePath, repoId);
         return chunks.map((chunk): RetrievalResult => ({ ...chunk, source: name }));
       }),
     );

@@ -170,6 +170,41 @@ describe('SearchEngine', () => {
     expect(results[0]!.relativePath).toBe('src/auth.ts');
   });
 
+  test('Test 7c: getFile(path, repoId) adds a repoId match to the Qdrant filter', async () => {
+    const fileResult = makeMockResult('chunk-file', 0.99, 'text', {
+      relativePath: 'src/auth.ts',
+    });
+    getMockSearch(config).mockResolvedValue([fileResult]);
+
+    await engine.getFile('src/auth.ts', 'achpro');
+
+    const searchCalls = getMockSearch(config).mock.calls as [
+      number[],
+      { filter?: Record<string, unknown> | undefined },
+    ][];
+    const filterUsed = searchCalls[0]![1].filter;
+    const serialized = JSON.stringify(filterUsed);
+    expect(serialized).toContain('relativePath');
+    expect(serialized).toContain('repoId');
+    expect(serialized).toContain('achpro');
+  });
+
+  test('Test 7d: getFile() without repoId does NOT add a repoId match', async () => {
+    const fileResult = makeMockResult('chunk-file', 0.99, 'text', {
+      relativePath: 'src/auth.ts',
+    });
+    getMockSearch(config).mockResolvedValue([fileResult]);
+
+    await engine.getFile('src/auth.ts');
+
+    const searchCalls = getMockSearch(config).mock.calls as [
+      number[],
+      { filter?: Record<string, unknown> | undefined },
+    ][];
+    const filterUsed = searchCalls[0]![1].filter;
+    expect(JSON.stringify(filterUsed)).not.toContain('repoId');
+  });
+
   test('Test 8: search() with scoreThreshold passes it to the semantic vector search', async () => {
     const highScore = makeMockResult('chunk-high', 0.9, 'semantic', { relativePath: 'src/a.ts' });
     const lowScore = makeMockResult('chunk-low', 0.3, 'semantic', { relativePath: 'src/b.ts' });
