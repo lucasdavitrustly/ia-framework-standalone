@@ -76,41 +76,83 @@ exist in several repos.
 - Skip RAG for tasks that don't need codebase context (doc updates, config changes)
 - Top-5 results include live code; results 6-10 are metadata-only to save tokens
 
-### Token-efficient retrieval recipe (concept queries)
+### Token-efficient retrieval (universal rules)
 
-For "what is X" / "how does X work" questions, output tokens (tool results)
-dominate cost — not the queries themselves. The biggest waste is whole-file
-\`get_file\` reads and re-fetching content already present in search snippets.
-Follow this recipe to cut output tokens ~50-65% with equal or better accuracy:
+Output tokens (tool results) dominate cost — not the queries themselves. The
+two biggest wastes are (1) calling \`get_file(path, name:"<ClassName>")\` on a
+large or \`sealed\`/aggregate class — it returns the full \`class-signature\` block
+**plus** duplicated \`$part1/$part2/$partN\` chunks **plus** per-function blocks
+(the same code 2-3×) — and (2) extra round-trips caused by mid-stream discovery.
+Whole-file \`Read\`s and re-fetching content already shown in snippets follow.
+These rules hold for **every** scenario below:
 
-1. **Search narrow first:** \`search_codebase(query, repo:<repo>, limit:5,
-   score_threshold:0.6, expand_hops:0)\`. Use \`0.6\` for generic single-noun
-   queries (e.g. "Entry") — \`0.7\` tends to surface satellite types and forces a
-   second search. Tighten to \`0.7\` only for specific multi-term queries.
-   Results 6-10 are metadata-only and rarely change a definitional answer;
-   dependency expansion is unneeded here.
-2. **Never fall back to the generic \`Read\` tool for indexed files.** \`Read\`
-   ignores \`name:\`/\`startLine\`-\`endLine\` filters (pulling whole files) and
-   auto-loads nested \`AGENTS.md\` files as extra context — both defeat the token
-   budget. Stay in \`get_file\` with filters for any indexed source file.
-3. **On a wrong-module or empty \`get_file\` result, re-run \`search_codebase\`**
-   to get the correct anchor path. Do not switch to shell \`find\` + \`Read\` to
-   recover — that combination triggers full-file reads and AGENTS.md
-   auto-loading. Trust the search anchor for the module/path.
-4. **Answer from snippets before fetching:** if the top snippets already
-   contain the class signature + fields, answer directly. Do NOT \`get_file\`
-   content you already received in the search results.
-5. **Fetch the gap, not the file:** use \`get_file(path, name:"<ClassName>")\`
-   or \`startLine\`/\`endLine\` to read only field declarations + method
-   *signatures*. Skip method bodies unless the question is about a specific
-   method's logic.
-6. **Full-read only small files:** enums/records under ~50 lines (e.g.
-   \`EntryType\`, \`EntryStatus\`) are fine to read whole. Aggregates/large
-   classes — always range- or name-filtered.
-7. **Always pass the \`repo:\` prefix on \`get_file\`** to avoid dual-repo
-   ambiguity round-trips (which return avoidable partial payloads).
-8. **Stop on sufficiency:** end retrieval as soon as the question is answered;
-   no completeness sweeps.`;
+1. **Plan all fetches up front, then batch.** After the first search, write the
+   complete fetch list (paths + line ranges) BEFORE issuing any \`get_file\`, then
+   send them in as few batched messages as possible. The budget is blown by
+   *extra round-trips*, not by any single payload. Hard rule: **no mid-stream
+   discovery** — if you find yourself searching again to locate a parent class
+   or collaborator you could have anticipated, fold it into the up-front plan.
+   Target ≤3 round-trips for a definitional question.
+2. **Answer from snippets before fetching, and read inheritance from the
+   \`[signature]\` snippet.** A \`[signature]\`-tagged result exposes the
+   \`extends\`/\`implements\`/\`permits\` clause — read the parent/sealed-base name
+   straight from it and add the parent's field block to your plan *now*, instead
+   of fetching the child then discovering the parent.
+3. **Prefer \`startLine\`/\`endLine\` over \`name:\`.** Default to reading just the
+   field block + method *signatures* with a line range. **Never use \`name:\` on a
+   large/\`sealed\`/aggregate class** — it triplicates output. Reserve \`name:\` for
+   a single small method whose body you actually need.
+4. **\`get_dependencies\` (graph) instead of re-\`search\` or whole-file reads** for
+   "what's connected / who calls / what breaks" questions — it returns edges, not
+   bodies, and is the cheapest high-value call in the MCP.
+5. **\`rg\` (ripgrep) for exact symbols, \`search_codebase\` for concepts.** For an
+   exact call-site/usage of a known symbol, shell \`rg\` returns just \`file:line\`
+   matches — far cheaper than semantic chunks. Use semantic search only for
+   conceptual queries ("where do we handle retries?").
+6. **Needle lookups skip semantic search.** If you already know the class/method
+   name, use \`glob\` for the file or \`get_file(path, name:X)\` for one small
+   member — don't pay for a semantic query.
+7. **Never the generic \`Read\` tool for indexed files.** \`Read\` ignores
+   \`name:\`/\`startLine\`-\`endLine\` filters (pulling whole files) and auto-loads
+   nested \`AGENTS.md\` files — both defeat the budget. On a wrong-module or empty
+   \`get_file\`, re-run \`search_codebase\` for the right anchor; do **not** fall
+   back to shell \`find\` + \`Read\`.
+8. **Pass \`repo:\` when the name is dual-repo or you're unsure.** Carry the
+   \`[repo]\` tag forward from search anchors. One extra token in the request is
+   cheaper than a duplicated multi-repo response + an ambiguity round-trip.
+9. **Full-read only small files** (enums/records under ~50 lines), and **stop on
+   sufficiency** — end retrieval the moment the question is answered.
+
+### Scenario playbook
+
+Pick the tactic by question type. All scenarios still obey the universal rules.
+
+| Scenario | Strategy |
+|----------|----------|
+| **"What is X?"** (definition) | search (\`limit:5, score_threshold:0.6, expand_hops:0\`) → answer from \`[signature]\` snippet → fetch only field blocks via \`startLine\`/\`endLine\`. Never \`name:\` on a sealed/large class. |
+| **"Who implements / extends X?"** | search \`limit:10\` and read the **metadata-only results 6-10** to enumerate candidates cheaply; or \`get_dependencies(path)\` for reverse edges; or \`expand_hops:2\` to follow the graph. Stop at class signatures — don't fetch each impl body. Narrow with \`stereotype\`. |
+| **"How does X work?" / trace a flow** (the expensive one) | search once for the entry point, then **plan the whole call chain up front** from snippets. Per hop, fetch only the specific method via \`startLine\`/\`endLine\` (\`name:\` OK for one *small* method). Use \`get_dependencies\` to find the next hop instead of re-searching. Cost driver is breadth — don't fetch collaborators you won't cite. |
+| **"Where is X called / used?"** | For an exact symbol, \`rg\` returns \`file:line\` cheaply; \`get_dependencies\` reverse edges also list callers without bodies. Use \`search_codebase\` only for conceptual usage. |
+| **"Find the class/method named X"** (needle) | Skip semantic search — \`glob\` the file or \`get_file(path, name:X)\` for one small member. |
+| **"What breaks if I change X?"** (refactor blast radius) | \`get_dependencies(path or module, depth:2)\` for the edge graph; combine with \`rg\` for exact call-site counts before reading any file. |
+| **Existence / aggregation** ("is there a retry mechanism?") | Auto-routed in \`search_codebase\`. Use \`limit:3-5\`, answer from snippets, stop on sufficiency — no completeness sweep. |
+| **Before editing a file** | \`get_file\` with \`startLine\`/\`endLine\` for just the region you'll edit. Never whole-file \`Read\` of an indexed file. |
+
+### Worked example — "what is an Entry?" done right (~15-25k tokens)
+
+1. \`search_codebase("Entry domain class", repo:"payment-gateway", limit:5,
+   score_threshold:0.6, expand_hops:0)\`. The \`Entry$part1 [signature]\` snippet
+   shows \`final class Entry extends EntryCore\` — so the plan is fixed up front:
+   (a) Entry decl + fields, (b) EntryCore parent fields, (c) the two enums.
+2. Batch plan items (a)+(b) in **one message**:
+   \`get_file(repo:"payment-gateway", path:".../Entry.java", startLine:34, endLine:62)\`
+   + \`get_file(repo:"payment-gateway", path:".../EntryCore.java", startLine:35, endLine:57)\`
+   — fields only, no method bodies. **Do not** \`get_file(name:"EntryCore")\` —
+   that one call triplicates ~500 lines of a \`sealed\` class and is the single
+   biggest budget blow-out.
+3. Batch plan item (c): read the small \`EntryType\` / \`EntryStatus\` enums whole,
+   each with the \`repo:\` prefix (those names exist in two repos).
+4. Three round-trips total. Stop once type + status are covered.`;
 
 function getConfigPath(options: { config?: string }): string {
   return (
