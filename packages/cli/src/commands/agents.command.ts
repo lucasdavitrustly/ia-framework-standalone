@@ -62,6 +62,27 @@ exist in several repos.
 - **Finding all implementations of an interface:** \`search_codebase\` with
   \`expand_hops: 2\` to follow the dependency graph transitively
 
+### Verify with MCP — never assume
+
+Do not assume project facts; confirm them against the indexed codebase before
+reasoning, planning, or editing. When in doubt, check the MCP.
+
+- **Build system & project topology:** never guess Maven vs Gradle, the module
+  list, or dependency wiring. Build manifests are indexed — query them, e.g.
+  \`get_file(path="pom.xml", repo="<repo>")\` (or \`settings.gradle\`/\`build.gradle\`).
+  Prefer this over \`glob\`/\`find\` on disk.
+- **"Does file X exist / where is it?":** ask \`search_codebase\` or \`get_file\`
+  first. \`glob\`/\`find\` over the working dir is error-prone because anchor paths
+  are repo-relative (see Multi-repo path resolution) — a wrong base path returns
+  a misleading empty result that is *not* proof of absence.
+- **Ambiguous filenames across repos** (e.g. \`pom.xml\`, common class names):
+  always pass \`repo:\` to avoid multi-repo dumps and disambiguation round-trips.
+- **Treat negative/empty tool results as "re-query with the right repo/path,"**
+  not as a conclusion. Re-anchor via \`search_codebase\` before falling back to
+  shell tools.
+- Reserve \`bash\` (\`find\`/\`grep\`) and \`glob\` for what the index genuinely cannot
+  answer (on-disk-only files, build output), and only after an MCP check.
+
 ### Filter examples
 
 - Services in payments module: \`{ stereotype: "service", module: "payments" }\`
