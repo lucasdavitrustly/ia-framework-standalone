@@ -3,7 +3,7 @@
 # Usage: ./install.sh
 # 
 # Installs prerequisites, builds the framework, configures services,
-# and sets up OpenCode MCP integration.
+# and sets up AI IDE integrations (MCPs + skills) for all detected IDEs.
 set -euo pipefail
 
 # ──────────────────────────────────────────────────────
@@ -35,8 +35,6 @@ source "${SCRIPT_DIR}/scripts/install-node.sh"
 source "${SCRIPT_DIR}/scripts/install-ollama.sh"
 # shellcheck source=scripts/install-opencode.sh
 source "${SCRIPT_DIR}/scripts/install-opencode.sh"
-# shellcheck source=scripts/install-speckit.sh
-source "${SCRIPT_DIR}/scripts/install-speckit.sh"
 # shellcheck source=scripts/start-services.sh
 source "${SCRIPT_DIR}/scripts/start-services.sh"
 # shellcheck source=scripts/init-config.sh
@@ -59,7 +57,7 @@ fi
 echo -e "${BLUE}${BOLD}"
 echo "╔══════════════════════════════════════╗"
 echo "║   ia-framework installer v0.1.0      ║"
-echo "║   AI codebase context for OpenCode   ║"
+echo "║   AI codebase context for all IDEs   ║"
 echo "╚══════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -118,9 +116,6 @@ else
   echo -e "  ${YELLOW}→${NC} OpenCode not found — installing..."
   install_opencode || echo -e "  ${YELLOW}⚠${NC} OpenCode install skipped — install manually: https://opencode.ai"
 fi
-
-# SpecKit (recommended — soft fail)
-setup_speckit || echo -e "  ${YELLOW}⚠${NC} SpecKit setup skipped — install manually: uv tool install specify-cli"
 
 echo ""
 
@@ -190,9 +185,40 @@ fi
 echo ""
 
 # ──────────────────────────────────────────────────────
-# Step 5: Start services (Qdrant + Dashboard)
+# Step 5: Harness Configuration
+# All interactive prompts complete here before the service-start wait.
 # ──────────────────────────────────────────────────────
-echo -e "${BOLD}Step 5: Start services${NC}"
+echo -e "${BOLD}Step 5: Harness Configuration${NC}"
+CONFIG_FILE="${SCRIPT_DIR}/.ia-framework/project.json"
+
+# Step 5.1: Configure MCPs
+if [ -f "${SCRIPT_DIR}/scripts/configure-mcp.sh" ]; then
+  # shellcheck source=scripts/installer-helpers.sh
+  source "${SCRIPT_DIR}/scripts/installer-helpers.sh"
+  # shellcheck source=scripts/configure-mcp.sh
+  source "${SCRIPT_DIR}/scripts/configure-mcp.sh"
+  configure_mcps "${SCRIPT_DIR}" "${CONFIG_FILE}" || \
+    echo -e "  ${YELLOW}⚠${NC} MCP configuration skipped"
+else
+  echo -e "  ${YELLOW}⚠${NC} configure-mcp.sh not found — MCP setup deferred"
+fi
+echo ""
+
+# Step 5.2: Install Skills
+if [ -f "${SCRIPT_DIR}/scripts/install-skills.sh" ]; then
+  # shellcheck source=scripts/install-skills.sh
+  source "${SCRIPT_DIR}/scripts/install-skills.sh"
+  setup_skills "${SCRIPT_DIR}" || \
+    echo -e "  ${YELLOW}⚠${NC} Skills installation skipped"
+else
+  echo -e "  ${YELLOW}⚠${NC} install-skills.sh not found — skills installation deferred"
+fi
+echo ""
+
+# ──────────────────────────────────────────────────────
+# Step 6: Start services (Qdrant + Dashboard)
+# ──────────────────────────────────────────────────────
+echo -e "${BOLD}Step 6: Start services${NC}"
 if ! start_qdrant "${SCRIPT_DIR}"; then
   echo -e "  ${RED}✗${NC} Failed to start Qdrant. Check Docker is running."
   exit 1
@@ -224,22 +250,6 @@ done
 if curl -sf "http://localhost:${DASHBOARD_PORT:-3000}/api/status" > /dev/null 2>&1; then
   echo ""
   echo -e "  ${GREEN}✓${NC} Dashboard running at http://localhost:${DASHBOARD_PORT:-3000}"
-fi
-echo ""
-
-# ──────────────────────────────────────────────────────
-# Step 6: Configure OpenCode MCP integration
-# ──────────────────────────────────────────────────────
-echo -e "${BOLD}Step 6: Configure OpenCode MCP${NC}"
-# Source the OpenCode configuration script
-if [ -f "${SCRIPT_DIR}/scripts/configure-opencode.sh" ]; then
-  # shellcheck source=scripts/configure-opencode.sh
-  source "${SCRIPT_DIR}/scripts/configure-opencode.sh"
-  CONFIG_FILE="${SCRIPT_DIR}/.ia-framework/project.json"
-  configure_opencode "${SCRIPT_DIR}" "${CONFIG_FILE}" || \
-    echo -e "  ${YELLOW}⚠${NC} OpenCode config skipped — see docs/opencode-setup.md"
-else
-  echo -e "  ${YELLOW}⚠${NC} configure-opencode.sh not found — OpenCode MCP setup deferred"
 fi
 echo ""
 
@@ -276,7 +286,7 @@ echo ""
 echo "Start indexing: Open the dashboard and click 'Start Indexing', or run:"
 echo "  ia-framework index"
 echo ""
-echo "OpenCode MCP: Restart OpenCode to load the ia-framework tools"
+echo "OpenCode MCP: Restart your IDE to load the ia-framework tools"
 echo "Dashboard:    http://localhost:${DASHBOARD_PORT:-3000}"
 echo ""
 echo -e "Config: ${BLUE}${SCRIPT_DIR}/.ia-framework/project.json${NC}"

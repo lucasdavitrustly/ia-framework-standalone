@@ -1,0 +1,16 @@
+{
+  "id": "ia-framework",
+  "name": "ia-framework",
+  "description": "ia-framework RAG/search MCP server — semantic codebase search, file retrieval, dependency graph, and database context tools.",
+  "default": true,
+  "requires_build": true,
+  "command_template": ["sh", "-c", "node {{MCP_BIN}} 2>> {{LOG_FILE}}"],
+  "environment": {
+    "IA_FRAMEWORK_CONFIG": "{{CONFIG_PATH}}"
+  },
+  "per_ide": {
+    "opencode": { "type": "local" },
+    "claude-code": { "type": "local" },
+    "codex": { "type": "local" }
+  }
+}

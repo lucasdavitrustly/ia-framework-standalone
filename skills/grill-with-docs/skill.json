@@ -1,0 +1,13 @@
+{
+  "name": "grill-with-docs",
+  "version": "1.0.0",
+  "description": "Adversarial planning session — challenges your design against your project's domain model, sharpens terminology, and updates CONTEXT.md and ADRs inline as decisions crystallise.",
+  "upstream": "https://github.com/rafaelmgoncalves/ia-framework",
+  "requires_mcps": [],
+  "assets": {
+    "skill": true,
+    "agents": false,
+    "commands": false,
+    "hooks": false
+  }
+}
