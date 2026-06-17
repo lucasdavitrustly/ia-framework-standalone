@@ -1,0 +1,14 @@
+{
+  "id": "context7",
+  "name": "Context7",
+  "description": "Pulls up-to-date library documentation and code examples into the AI's context. Prevents hallucinated APIs.",
+  "default": true,
+  "requires_build": false,
+  "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
+  "environment": {},
+  "per_ide": {
+    "opencode": { "type": "local" },
+    "claude-code": { "type": "local" },
+    "codex": { "type": "local" }
+  }
+}

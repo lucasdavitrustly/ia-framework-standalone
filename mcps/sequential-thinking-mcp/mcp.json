@@ -1,0 +1,13 @@
+{
+  "id": "sequential-thinking",
+  "name": "Sequential Thinking",
+  "description": "Structured multi-step reasoning via model context protocol. Improves complex problem solving and planning quality.",
+  "default": true,
+  "requires_build": false,
+  "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
+  "environment": {},
+  "per_ide": {
+    "opencode": { "type": "local" },
+    "claude-code": { "type": "local" }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "tlc-spec-driven",
+  "version": "2.0.0",
+  "description": "Spec-driven development workflow with 4 adaptive phases (Specify → Design → Tasks → Execute). Auto-sizes depth by complexity. Atomic tasks, requirement traceability, persistent memory across sessions. Replaces SpecKit.",
+  "upstream": "https://github.com/tech-leads-club/agent-skills/tree/main/packages/skills-catalog/skills/(development)/tlc-spec-driven",
+  "requires_mcps": [],
+  "assets": {
+    "skill": true,
+    "agents": false,
+    "commands": false,
+    "hooks": false
+  }
+}

@@ -2,6 +2,10 @@
 # install-speckit.sh — SpecKit CLI (specify) installation module
 # Prerequisites: Python 3.11+ → uv → specify CLI
 # Pattern: check → install → report (matches other install-*.sh modules)
+#
+# RETIRED: SpecKit installation has been removed from install.sh.
+# The project uses tlc-spec-driven (installed via skills system) instead.
+# This file is kept for reference. Do not source from install.sh.
 
 # ──────────────────────────────────────────────────────
 # Check functions

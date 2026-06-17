@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # configure-opencode.sh — Configure OpenCode MCP server integration for ia-framework
 # Provides: configure_opencode() function
+#
+# DEPRECATED: Superseded by scripts/configure-mcp.sh (descriptor-driven, IDE-agnostic).
+# Kept for transition only. Do not extend. Will be removed in a future release.
 
 # ──────────────────────────────────────────────────────
 # configure_opencode

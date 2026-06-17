@@ -2,6 +2,6 @@
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/011-enrichment-call-reduction/plan.md
+at specs/012-mcp-skills-ide-agnostic/plan.md
 
 <!-- SPECKIT END -->

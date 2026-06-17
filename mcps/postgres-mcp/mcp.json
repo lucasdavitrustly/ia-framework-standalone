@@ -1,0 +1,15 @@
+{
+  "id": "postgres",
+  "name": "PostgreSQL",
+  "description": "PostgreSQL database access — run read-only queries against a target project's database for schema inspection and data exploration.",
+  "default": false,
+  "requires_build": false,
+  "command": ["npx", "-y", "@anthropic-ai/mcp-server-postgres"],
+  "environment": {
+    "POSTGRES_CONNECTION_STRING": ""
+  },
+  "per_ide": {
+    "opencode": { "type": "local" },
+    "claude-code": { "type": "local" }
+  }
+}

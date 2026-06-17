@@ -1,0 +1,17 @@
+{
+  "id": "jira",
+  "name": "Jira",
+  "description": "Jira issue management — read and write tickets, search issues, transition statuses. Required by the tab-ticket-reader skill.",
+  "default": false,
+  "requires_build": false,
+  "command": ["npx", "-y", "@anthropic-ai/mcp-server-jira"],
+  "environment": {
+    "JIRA_URL": "",
+    "JIRA_API_TOKEN": "",
+    "JIRA_USER_EMAIL": ""
+  },
+  "per_ide": {
+    "opencode": { "type": "local" },
+    "claude-code": { "type": "local" }
+  }
+}
