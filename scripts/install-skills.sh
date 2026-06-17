@@ -457,7 +457,7 @@ prompt_skill_action() {
 
   case "$state" in
     linked)
-      echo -e "  ${BLUE:-}•${NC:-} ${skill_name} — already linked in all IDEs"
+      echo -e "  ${WHITE:-}•${NC:-} ${skill_name} — already linked in all IDEs" >&2
       local action
       read -rp "    [skip/re-link/unlink] (skip): " action
       action="${action:-skip}"
@@ -468,7 +468,7 @@ prompt_skill_action() {
       esac
       ;;
     broken)
-      echo -e "  ${YELLOW:-}⚠${NC:-} ${skill_name} — broken link detected (source moved?)"
+      echo -e "  ${YELLOW:-}⚠${NC:-} ${skill_name} — broken link detected (source moved?)" >&2
       local action
       read -rp "    [re-link/unlink] (re-link): " action
       action="${action:-re-link}"
@@ -478,7 +478,7 @@ prompt_skill_action() {
       esac
       ;;
     copied)
-      echo -e "  ${YELLOW:-}•${NC:-} ${skill_name} — legacy file-copy install detected"
+      echo -e "  ${YELLOW:-}•${NC:-} ${skill_name} — legacy file-copy install detected" >&2
       local action
       read -rp "    [upgrade-to-link/skip/remove] (upgrade-to-link): " action
       action="${action:-upgrade-to-link}"
