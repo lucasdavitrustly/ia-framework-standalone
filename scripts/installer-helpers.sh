@@ -19,6 +19,8 @@ GREEN="${GREEN:-\033[0;32m}"
 YELLOW="${YELLOW:-\033[1;33m}"
 BLUE="${BLUE:-\033[0;34m}"
 BOLD="${BOLD:-\033[1m}"
+DIM="${DIM:-\033[2m}"
+WHITE="${WHITE:-\033[0;37m}"
 NC="${NC:-\033[0m}"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -113,7 +115,7 @@ prompt_toggle_select() {
       local label="${_PTS_NAMES[$i]}"
       local desc="${_PTS_DESCS[$i]:-}"
       if [ -n "$desc" ]; then
-        printf "    %b %d. %s\n      %b%s%b\n" "$box" "$((i+1))" "$label" "${BLUE}" "$desc" "${NC}"
+        printf "    %b %d. %s\n      %b%s%b\n" "$box" "$((i+1))" "$label" "${DIM:-}" "$desc" "${NC}"
       else
         printf "    %b %d. %s\n" "$box" "$((i+1))" "$label"
       fi
