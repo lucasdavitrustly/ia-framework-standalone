@@ -3,7 +3,7 @@ name: mcp-bench-run
 description: >
   Capture a benchmark run of a prompt WITH the ia-framework MCP enabled.
   Times the run, records token usage and cost, identifies the model, and writes
-  a timestamped report to ./mcp-bench-reports/. Pair with /mcp-bench-baseline
+  a timestamped report under ia-framework's .ia-framework/mcp-bench-reports/. Pair with /mcp-bench-baseline
   (same prompt) and compare via /mcp-bench-judge.
 argument-hint: '"<prompt>"'
 tools:
@@ -42,12 +42,18 @@ Do NOT score quality here — quality is judged later, blind, by /mcp-bench-judg
   and ask whether to continue as a degraded run or stop. If continuing, set
   `mcp_tool_calls = 0` and note the degradation in the report body.
 
-## 3. Record the start time
+## 3. Record the start time and the token start-snapshot
 
 - `T_START` = current UTC time, both as ISO 8601 and epoch milliseconds.
   Use bash: `date -u +%Y-%m-%dT%H:%M:%SZ` and `date +%s%3N` (fallback
   `python3 -c 'import time;print(int(time.time()*1000))'` on macOS if `%3N`
   is unsupported).
+- Capture the session token **start snapshot** now (see
+  `references/session-tokens.md`): resolve the current session id `SID` (most
+  recently updated `session` row whose `directory` = `<CWD>`), then read the
+  assistant-message token sums into `IN0` / `OUT0`. If the DB/`sqlite3`/session
+  is unavailable, mark the snapshot unavailable and proceed (session tokens
+  degrade to `N/A` later).
 
 ## 4. Answer the prompt USING the MCP
 
@@ -79,32 +85,46 @@ Do NOT score quality here — quality is judged later, blind, by /mcp-bench-judg
 
 ## 7. Identify the model
 
-- Determine your own model id, provider, and temperature.
+- Read `MODEL` and `PROVIDER` from the DB end-snapshot (`MAX(modelID)` /
+  `MAX(providerID)` of this session's assistant messages — see
+  `references/session-tokens.md`). If the DB is unavailable, fall back to your
+  own self-knowledge.
+- `TEMPERATURE` is not stored in the DB → `unknown`.
 - These populate the `---LLM-IDENTITY---` block and the front-matter.
 - If you cannot determine a field, write `unknown`.
 
-## 8. Best-effort session tokens
+## 8. Session tokens (DB delta)
 
-- Report your session input/output token counts if you can introspect them;
-  otherwise `N/A`.
+- Capture the token **end snapshot** (`IN1` / `OUT1`) using the query in
+  `references/session-tokens.md`.
+- This run's tokens are the delta:
+  - `SESSION_INPUT_TOKENS  = IN1 - IN0`
+  - `SESSION_OUTPUT_TOKENS = OUT1 - OUT0`
+- Graceful degradation → `N/A` for both if: `sqlite3` is missing, the DB is
+  absent/unreadable, the session id was not resolved, or the delta is negative.
+- NOTE: these are the agent's own session tokens (the delta for this run), kept
+  distinct from the MCP token totals captured in step 6.
 
 ## 9. Compute cost
 
 - Read `references/model-pricing.json` (resolve the skill's references dir).
 - Match `MODEL` case-insensitively, allowing substring match in either direction
   (e.g. env model `bedrock-claude-opus-4-8` matches key `claude-opus-4.8`).
-- `cost_usd = (input_tokens/1e6)*input_per_mtok + (output_tokens/1e6)*output_per_mtok`,
-  using the best available token totals (session tokens preferred; otherwise the
-  MCP token totals). Round to 4 decimals.
-- If the model is not found OR token totals are `N/A`, set `cost_usd = "N/A"` and
-  warn the user.
+- `cost_usd = (SESSION_INPUT_TOKENS/1e6)*input_per_mtok + (SESSION_OUTPUT_TOKENS/1e6)*output_per_mtok`
+  (input + output only — cache tokens are NOT priced). Round to 4 decimals.
+- If the model is not found OR session token totals are `N/A`, set
+  `cost_usd = "N/A"` and warn the user.
 
 ## 10. Write the report
 
-- Ensure `./mcp-bench-reports/` exists (`mkdir -p`).
-- Ensure `.gitignore` contains a `mcp-bench-reports/` line; append it if missing.
+- Resolve `REPORTS_DIR` per `references/reports-dir.md` (prefer
+  `$IA_FRAMEWORK_DIR/mcp-bench-reports`; else derive
+  `<skill_dir>/../../.ia-framework/mcp-bench-reports`). Ensure it exists
+  (`mkdir -p "$REPORTS_DIR"`).
+- Do NOT touch the benchmarked project's `.gitignore` — `REPORTS_DIR` lives under
+  ia-framework's already-ignored `.ia-framework/` runtime dir.
 - Build a model slug: same slug rule applied to `MODEL` (e.g. `claude-opus-4-8`).
-- Filename: `<model-slug>__<PROMPT_SLUG>__mcp__<T_START_ISO with : replaced by ->.md`.
+- Filename: `$REPORTS_DIR/<model-slug>__<PROMPT_SLUG>__mcp__<T_START_ISO with : replaced by ->.md`.
 - Render `references/report-template.md`, substituting every placeholder.
   Set `mcp_enabled: true` and `{{MCP_LABEL}} = MCP`.
 - Write the file with the `write` tool.
@@ -122,7 +142,8 @@ Then remind the user: run `/mcp-bench-baseline "<same prompt>"` then
 1. This command MUST exercise the ia-framework MCP (mcp_enabled = true).
 2. NEVER score quality here.
 3. NEVER overwrite an existing report — the timestamp makes each filename unique.
-4. Reports are local-only; never stage or commit them.
+4. Reports are local-only under ia-framework's `.ia-framework/` (git-ignored); never stage or commit them, and never edit the benchmarked project's `.gitignore`.
 5. Degrade gracefully: a missing dashboard API or unknown model yields N/A, not failure.
 6. Always end your response with the LLM-IDENTITY block.
+7. Read the OpenCode DB with `sqlite3 -readonly` only — never write to it.
 </constraints>

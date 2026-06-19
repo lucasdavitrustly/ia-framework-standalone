@@ -23,16 +23,19 @@ ia-framework MCP improved quality, and at what cost.
 
 ## 1. Resolve the prompt slug
 
+- Resolve `REPORTS_DIR` per `references/reports-dir.md` (prefer
+  `$IA_FRAMEWORK_DIR/mcp-bench-reports`; else derive
+  `<skill_dir>/../../.ia-framework/mcp-bench-reports`).
 - If `$ARGUMENTS` provides a slug, use it.
-- Otherwise glob `mcp-bench-reports/*.md` (EXCLUDING `_judgment__*`), parse the
+- Otherwise glob `"$REPORTS_DIR"/*.md` (EXCLUDING `_judgment__*`), parse the
   `prompt_slug` front-matter from each, and present the distinct slugs (with
   per-side counts) via the `question` tool for the user to pick.
-- If `mcp-bench-reports/` is empty or missing, tell the user to capture runs
+- If `$REPORTS_DIR` is empty or missing, tell the user to capture runs
   first and stop.
 
 ## 2. Glob reports for the slug (LIVE — no cached state)
 
-- Glob `mcp-bench-reports/<slug>__*.md`.
+- Glob `"$REPORTS_DIR"/<slug>__*.md`.
 - **EXCLUDE any file matching `_judgment__*`** — those are prior outputs, not inputs.
 - Parse each report's YAML front-matter: `prompt`, `model`, `provider`,
   `mcp_enabled`, `timestamp`, `latency_ms_total`, `mcp.*`, `tokens.*`, `cost_usd`.
@@ -80,7 +83,7 @@ ia-framework MCP improved quality, and at what cost.
 - Render `references/judge-template.md`, substituting every placeholder, including
   the ranking rows and one blind-score block per run.
 - Output path:
-  `mcp-bench-reports/_judgment__<slug>__<UTC-ISO with : replaced by ->.md`.
+  `$REPORTS_DIR/_judgment__<slug>__<UTC-ISO with : replaced by ->.md`.
 
 ## 8. Write the HTML report
 
@@ -95,7 +98,7 @@ ia-framework MCP improved quality, and at what cost.
   - `TOTAL_TOKENS` per run = session_input + session_output when numeric, else
     fall back to mcp input+output, else `N/A`.
 - Output path:
-  `mcp-bench-reports/_judgment__<slug>__<UTC-ISO with : replaced by ->.html`
+  `$REPORTS_DIR/_judgment__<slug>__<UTC-ISO with : replaced by ->.html`
   (same timestamp as the markdown).
 
 ## 9. Summary line

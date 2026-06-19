@@ -25,7 +25,8 @@ token, and dollar cost.
 ## How it works
 
 1. Run the same prompt with `/mcp-bench-run` and `/mcp-bench-baseline`.
-   Each writes a timestamped `.md` report to `./mcp-bench-reports/`.
+   Each writes a timestamped `.md` report to
+   `<ia-framework-root>/.ia-framework/mcp-bench-reports/`.
 2. Run `/mcp-bench-judge <slug>`. It globs all reports for that prompt, scores
    each response **blind** (model identity hidden) on a 4-dimension rubric,
    reveals the models, ranks best→worst, and emits a human-readable HTML report
@@ -33,7 +34,8 @@ token, and dollar cost.
 
 ## Reports & deletion
 
-- Reports live only in `./mcp-bench-reports/` (git-ignored).
+- Reports live only in `<ia-framework-root>/.ia-framework/mcp-bench-reports/`
+  (git-ignored by ia-framework).
 - There is no database or manifest — the folder is the single source of truth.
 - To erase a report, just delete the file. The judge counts only what exists.
 - Re-running a prompt adds a new report; the judge averages each side

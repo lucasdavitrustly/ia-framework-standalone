@@ -42,9 +42,10 @@ Each capture run records:
 
 ## 1. The folder is the single source of truth
 
-All reports live in `./mcp-bench-reports/` (git-ignored). There is **no manifest,
-no database, no cached counts**. Every command derives state from a live `glob`
-of that folder at the moment it runs.
+All reports live in `<ia-framework-root>/.ia-framework/mcp-bench-reports/`
+(git-ignored by ia-framework; resolution rule in `references/reports-dir.md`).
+There is **no manifest, no database, no cached counts**. Every command derives
+state from a live `glob` of that folder at the moment it runs.
 
 ## 2. Deletion is the erase mechanism
 
