@@ -1,0 +1,35 @@
+{
+  "_comment": "USD pricing per MILLION tokens. Source: Anthropic public pricing (fetched 2026-06-19). Keys are matched case-insensitively against the model id parsed from the LLM-IDENTITY block, allowing substring matches in either direction (e.g. 'bedrock-claude-opus-4-8' matches 'claude-opus-4.8'). Add or edit entries freely. An unknown model yields cost_usd = \"N/A\".",
+  "version": 1,
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "models": {
+    "claude-opus-4.8": { "input_per_mtok": 5, "output_per_mtok": 25 },
+    "bedrock-claude-opus-4-8": { "input_per_mtok": 5, "output_per_mtok": 25 },
+    "claude-opus-4.7": { "input_per_mtok": 5, "output_per_mtok": 25 },
+    "claude-opus-4.6": { "input_per_mtok": 5, "output_per_mtok": 25 },
+    "claude-opus-4.5": { "input_per_mtok": 5, "output_per_mtok": 25 },
+    "claude-opus-4.1": { "input_per_mtok": 15, "output_per_mtok": 75 },
+    "claude-opus-4": { "input_per_mtok": 15, "output_per_mtok": 75 },
+    "claude-sonnet-4.6": { "input_per_mtok": 3, "output_per_mtok": 15 },
+    "claude-sonnet-4.5": { "input_per_mtok": 3, "output_per_mtok": 15 },
+    "claude-sonnet-4": { "input_per_mtok": 3, "output_per_mtok": 15 },
+    "claude-haiku-4.5": { "input_per_mtok": 1, "output_per_mtok": 5 },
+    "claude-fable-5": { "input_per_mtok": 10, "output_per_mtok": 50 },
+    "gpt-5": {
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "_note": "placeholder — fill in current pricing"
+    },
+    "gpt-4o": {
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "_note": "placeholder — fill in current pricing"
+    },
+    "gemini-2.5-pro": {
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "_note": "placeholder — fill in current pricing"
+    }
+  }
+}
