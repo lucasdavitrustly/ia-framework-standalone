@@ -52,6 +52,62 @@ exist in several repos.
 - An unknown \`repo:\` prefix is rejected with an error rather than silently
   reading the wrong file.
 
+### Dependency graph expansion (\`expand_hops\`)
+
+\`expand_hops\` controls how far \`search_codebase\` walks the **dependency graph**
+outward from each direct match. After the initial semantic/keyword hits, the
+engine follows edges — \`imports\`, \`extends\`/superclass chains, and interface
+\`implements\` — to pull related files into the **same response**, so you get the
+matched code *plus* the context it depends on without extra round-trips.
+
+| Value | Meaning | Use when |
+|-------|---------|----------|
+| \`0\` | No expansion — only the direct matches | You know the exact symbol, or a definition you can answer from the \`[signature]\` snippet. Cheapest in tokens. |
+| \`1\` | Direct imports — one level of dependency/superclass/impl edges | You need the match plus its immediate collaborators (e.g. a class and the types it directly uses). |
+| \`2\` | Transitive — follows the chain two levels deep **(default)** | Tracing a flow, or enumerating "who implements/extends X" across the graph. |
+
+**What expansion pulls in (when \`expand_hops > 0\`):**
+
+- **Import edges** — files the matched file imports.
+- **Hierarchy** — walks superclass chains up to N levels (results tagged
+  \`[hierarchy]\`).
+- **Interface implementations** — for an \`interface\` match, finds its
+  implementing classes.
+- **Cross-repo** — expansion follows edges across repository boundaries.
+  **Each repo-boundary crossing costs 1 hop** from the budget: with
+  \`expand_hops=2\` you can cross into another repo (1 hop) then expand 1 more
+  level inside it. Results that came from another repo via expansion are
+  annotated \`[via <repo>]\`.
+
+**Bounds & behaviour you can rely on:**
+
+- The value is **clamped to 0–2** and rounded — passing \`5\` is treated as \`2\`,
+  negatives as \`0\`. There is no way to expand deeper than 2.
+- Omitting \`expand_hops\` uses the server default (\`2\`). You (the agent) set it
+  per call; you cannot raise the ceiling.
+- **Token budget is shared 70/30:** direct results get 70% of the budget,
+  expanded neighbors get the remaining 30%. If direct results already exceed
+  70%, neighbor expansion is suppressed. So a high \`limit\` + \`expand_hops=2\`
+  can crowd out the expansion you asked for — prefer a smaller \`limit\` when you
+  rely on expansion.
+
+**Examples:**
+
+\`\`\`
+# Exact match only — no surrounding context (cheapest)
+search_codebase(query="EntryService.create", expand_hops=0)
+
+# Match + immediate collaborators
+search_codebase(query="payment retry policy", expand_hops=1)
+
+# Trace a flow / enumerate implementations (default behaviour)
+search_codebase(query="how entries are persisted", expand_hops=2)
+\`\`\`
+
+**Rule of thumb:** definitions and needle lookups → \`expand_hops=0\`;
+"who implements / how does this flow work" → \`expand_hops=2\` with a modest
+\`limit\` so the 30% neighbor budget isn't starved.
+
 ### When to use
 
 - **Before modifying code:** \`search_codebase\` to find related files, then
@@ -60,7 +116,8 @@ exist in several repos.
   \`stereotype\` filters to find patterns (e.g., \`stereotype: "service"\`)
 - **Before refactoring:** \`get_dependencies\` to understand the impact surface
 - **Finding all implementations of an interface:** \`search_codebase\` with
-  \`expand_hops: 2\` to follow the dependency graph transitively
+  \`expand_hops: 2\` to follow the dependency graph transitively (see
+  "Dependency graph expansion (\`expand_hops\`)" above for the full mechanics)
 
 ### Verify with MCP — never assume
 

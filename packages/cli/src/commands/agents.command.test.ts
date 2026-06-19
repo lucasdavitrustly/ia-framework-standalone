@@ -160,6 +160,11 @@ describe('agents inject', () => {
     // Multi-repo path rule must be documented
     expect(content).toContain('Multi-repo path resolution');
     expect(content).toContain('repo:');
+    // Dedicated expand_hops section with full mechanics must be documented
+    expect(content).toContain('Dependency graph expansion (`expand_hops`)');
+    expect(content).toContain('clamped to 0–2');
+    expect(content).toContain('70/30');
+    expect(content).toContain('1 hop');
   });
 
   // Test 4: Exits with error when config load fails
