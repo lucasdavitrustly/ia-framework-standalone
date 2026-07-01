@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DbConfigNotFoundError } from '@ia-framework/db-context';
 
 // ── Hoist all mocks ───────────────────────────────────────────────────────────
@@ -66,7 +69,7 @@ vi.mock('@ia-framework/vector-store', () => ({
 }));
 
 // ── Import the command factory after mocks ────────────────────────────────────
-import { dbCommand } from './db.command.js';
+import { dbCommand, writeDbConfig } from './db.command.js';
 
 const baseDbConfig = {
   host: 'localhost',
@@ -245,5 +248,40 @@ describe('db index', () => {
     const { out } = await runSubcommand(['index', '--config', '/path/project.json']);
 
     expect(out.join('\n')).toMatch(/7.*chunk|Indexed.*7/i);
+  });
+});
+
+describe('writeDbConfig', () => {
+  let tmpRoot: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    tmpRoot = await mkdtemp(join(tmpdir(), 'ia-db-'));
+  });
+
+  // Test 10: Creates the .ia-framework parent directory when it does not exist
+  it('creates the parent directory when absent and writes valid db.json', async () => {
+    // Point at a db.json inside a .ia-framework dir that does NOT exist yet
+    const dbConfigPath = join(tmpRoot, '.ia-framework', 'db.json');
+    const config = {
+      host: 'localhost',
+      port: 5432,
+      database: 'testdb',
+      user: 'testuser',
+      password: 'secret',
+      ssl: false,
+    };
+
+    await writeDbConfig(dbConfigPath, config);
+
+    // Directory was created
+    const dirStat = await stat(join(tmpRoot, '.ia-framework'));
+    expect(dirStat.isDirectory()).toBe(true);
+
+    // File contents match the config shape
+    const written = JSON.parse(await readFile(dbConfigPath, 'utf-8'));
+    expect(written).toMatchObject(config);
+
+    await rm(tmpRoot, { recursive: true, force: true });
   });
 });

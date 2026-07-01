@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "JIRA ticket → structured input for spec-driven development. Reads a ticket via Jira MCP, analyses codebase via ia-framework MCP, and formats the result ready for tlc-spec-driven.",
   "upstream": "https://github.com/rafaelmgoncalves/ia-framework",
-  "requires_mcps": ["jira", "ia-framework"],
+  "requires_mcps": ["atlassian", "ia-framework"],
   "assets": {
     "skill": true,
     "agents": true,

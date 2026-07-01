@@ -148,21 +148,35 @@ EOF
 # _resolve_mcp_command MCP_JSON_PATH IA_FRAMEWORK_DIR CONFIG_FILE
 # Outputs the resolved command array as a JSON string.
 # Substitutes {{MCP_BIN}}, {{LOG_FILE}}, {{CONFIG_PATH}} placeholders.
+# For the postgres MCP, also substitutes {{POSTGRES_CONNECTION_STRING}} with a
+# DSN built from .ia-framework/db.json (percent-encoded password).
 # ──────────────────────────────────────────────────────────────────────────────
 _resolve_mcp_command() {
   local mcp_json="$1"
   local ia_dir="$2"
   local config_path="$3"
 
+  # Build the postgres DSN on demand (empty for non-postgres MCPs or when db.json
+  # is absent). Only the placeholder token is substituted, so a non-postgres
+  # command is unaffected.
+  local pg_dsn=""
+  if grep -q '{{POSTGRES_CONNECTION_STRING}}' "$mcp_json" 2>/dev/null; then
+    local _db_json
+    _db_json="$(db_json_path "$ia_dir" "$config_path")"
+    pg_dsn="$(build_postgres_dsn "$_db_json" 2>/dev/null || true)"
+  fi
+
   MCP_JSON_PATH="$mcp_json" \
   IA_FRAMEWORK_DIR="$ia_dir" \
   IA_CONFIG_PATH="$config_path" \
+  IA_POSTGRES_DSN="$pg_dsn" \
   node --input-type=module <<'EOF'
 import { readFileSync } from 'fs';
 import { join } from 'path';
 const mcp = JSON.parse(readFileSync(process.env.MCP_JSON_PATH, 'utf8'));
 const iaDir = process.env.IA_FRAMEWORK_DIR;
 const cfgPath = process.env.IA_CONFIG_PATH;
+const pgDsn = process.env.IA_POSTGRES_DSN ?? '';
 const mcp_bin = join(iaDir, 'packages/mcp-server/dist/bin.js');
 const log_file = join(iaDir, '.ia-framework/logs/mcp-server.log');
 
@@ -171,9 +185,99 @@ const resolved = template.map(s =>
   s.replace('{{MCP_BIN}}', mcp_bin)
    .replace('{{LOG_FILE}}', log_file)
    .replace('{{CONFIG_PATH}}', cfgPath)
+   .replace('{{POSTGRES_CONNECTION_STRING}}', pgDsn)
 );
 process.stdout.write(JSON.stringify(resolved));
 EOF
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# db_json_path IA_FRAMEWORK_DIR CONFIG_FILE
+# Echoes the resolved path to db.json (sibling of project.json).
+# ──────────────────────────────────────────────────────────────────────────────
+db_json_path() {
+  local ia_dir="$1"
+  local config_path="$2"
+  # db.json lives next to project.json (i.e. inside .ia-framework/)
+  local cfg_dir
+  cfg_dir="$(dirname "$config_path")"
+  echo "${cfg_dir}/db.json"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# build_postgres_dsn DB_JSON_PATH
+# Reads db.json and echoes a postgresql:// DSN with the password
+# percent-encoded. Appends ?sslmode=require when ssl is true.
+# Returns non-zero (and echoes nothing) if db.json is missing/invalid.
+# ──────────────────────────────────────────────────────────────────────────────
+build_postgres_dsn() {
+  local db_json="$1"
+  [ -f "$db_json" ] || return 1
+  DB_JSON_PATH="$db_json" node --input-type=module <<'EOF'
+import { readFileSync } from 'fs';
+try {
+  const c = JSON.parse(readFileSync(process.env.DB_JSON_PATH, 'utf8'));
+  const enc = (s) => encodeURIComponent(String(s ?? ''));
+  const host = c.host ?? 'localhost';
+  const port = c.port ?? 5432;
+  const db = c.database ?? '';
+  const user = c.user ?? '';
+  const pass = c.password ?? '';
+  let dsn = `postgresql://${enc(user)}:${enc(pass)}@${host}:${port}/${db}`;
+  if (c.ssl === true) dsn += '?sslmode=require';
+  process.stdout.write(dsn);
+} catch {
+  process.exit(1);
+}
+EOF
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# configure_postgres_db_json IA_FRAMEWORK_DIR CONFIG_FILE
+# Prompts (via the ia-framework CLI) for PostgreSQL connection details and writes
+# .ia-framework/db.json, creating the folder if missing. Idempotent: if db.json
+# exists, asks to keep or overwrite (default keep). Non-interactive safe.
+# Called from configure_mcps when the postgres MCP is selected.
+# ──────────────────────────────────────────────────────────────────────────────
+configure_postgres_db_json() {
+  local ia_dir="$1"
+  local config_path="$2"
+  local db_json
+  db_json="$(db_json_path "$ia_dir" "$config_path")"
+
+  # Non-interactive / CI: never prompt or hang (FR-012).
+  if is_noninteractive; then
+    if [ -f "$db_json" ]; then
+      echo -e "  ${BLUE:-}→${NC:-} PostgreSQL db.json present — using existing config (non-interactive)"
+    else
+      echo -e "  ${YELLOW:-}⚠${NC:-} Non-interactive: skipping PostgreSQL db.json setup. Run 'ia-framework db configure' later."
+    fi
+    return 0
+  fi
+
+  # Idempotency guard: keep existing valid db.json unless user opts to overwrite.
+  if [ -f "$db_json" ]; then
+    if ! prompt_yn "PostgreSQL db.json already exists — overwrite?" N; then
+      echo -e "  ${BLUE:-}→${NC:-} Keeping existing db.json"
+      return 0
+    fi
+  fi
+
+  # Single source of truth for db.json shape/validation: the ia-framework CLI.
+  local cli_bin="${ia_dir}/packages/cli/dist/bin.js"
+  if [ ! -f "$cli_bin" ]; then
+    echo -e "  ${YELLOW:-}⚠${NC:-} ia-framework CLI not built — cannot write db.json now."
+    echo -e "    Run 'pnpm build' then 'ia-framework db configure' to set the PostgreSQL connection."
+    return 0
+  fi
+
+  echo -e "  ${YELLOW:-}→${NC:-} Configure PostgreSQL connection (written to .ia-framework/db.json):"
+  if node "$cli_bin" db configure --config "$config_path"; then
+    echo -e "  ${GREEN:-}✓${NC:-} PostgreSQL connection saved to db.json"
+  else
+    echo -e "  ${YELLOW:-}⚠${NC:-} PostgreSQL configuration skipped or failed — run 'ia-framework db configure' later."
+  fi
+  return 0
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -502,6 +606,18 @@ configure_mcps() {
   fi
 
   echo ""
+
+  # If the postgres MCP is selected, configure the DB connection now so that
+  # .ia-framework/db.json exists (created if missing) and the DSN is available
+  # for the connection-string substitution during install below.
+  local _pg_selected=""
+  for mcp_id in "${SELECTED_MCPS[@]}"; do
+    [ "$mcp_id" = "postgres" ] && _pg_selected="yes"
+  done
+  if [ -n "$_pg_selected" ]; then
+    configure_postgres_db_json "$ia_dir" "$config_path"
+    echo ""
+  fi
 
   # For each selected IDE × each selected MCP
   for ide_id in "${SELECTED_IDES[@]}"; do
