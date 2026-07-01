@@ -2,11 +2,12 @@
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/012-mcp-skills-ide-agnostic/plan.md
+at specs/013-postgres-db-bootstrap/plan.md
 
 <!-- SPECKIT END -->
 
 <!-- ia-framework:rag-start -->
+
 ## Codebase RAG Tools (ia-framework)
 
 This project is indexed by ia-framework. The following MCP tools provide
@@ -59,13 +60,13 @@ exist in several repos.
 outward from each direct match. After the initial semantic/keyword hits, the
 engine follows edges — `imports`, `extends`/superclass chains, and interface
 `implements` — to pull related files into the **same response**, so you get the
-matched code *plus* the context it depends on without extra round-trips.
+matched code _plus_ the context it depends on without extra round-trips.
 
-| Value | Meaning | Use when |
-|-------|---------|----------|
-| `0` | No expansion — only the direct matches | You know the exact symbol, or a definition you can answer from the `[signature]` snippet. Cheapest in tokens. |
-| `1` | Direct imports — one level of dependency/superclass/impl edges | You need the match plus its immediate collaborators (e.g. a class and the types it directly uses). |
-| `2` | Transitive — follows the chain two levels deep **(default)** | Tracing a flow, or enumerating "who implements/extends X" across the graph. |
+| Value | Meaning                                                        | Use when                                                                                                      |
+| ----- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `0`   | No expansion — only the direct matches                         | You know the exact symbol, or a definition you can answer from the `[signature]` snippet. Cheapest in tokens. |
+| `1`   | Direct imports — one level of dependency/superclass/impl edges | You need the match plus its immediate collaborators (e.g. a class and the types it directly uses).            |
+| `2`   | Transitive — follows the chain two levels deep **(default)**   | Tracing a flow, or enumerating "who implements/extends X" across the graph.                                   |
 
 **What expansion pulls in (when `expand_hops > 0`):**
 
@@ -132,7 +133,7 @@ reasoning, planning, or editing. When in doubt, check the MCP.
 - **"Does file X exist / where is it?":** ask `search_codebase` or `get_file`
   first. `glob`/`find` over the working dir is error-prone because anchor paths
   are repo-relative (see Multi-repo path resolution) — a wrong base path returns
-  a misleading empty result that is *not* proof of absence.
+  a misleading empty result that is _not_ proof of absence.
 - **Ambiguous filenames across repos** (e.g. `pom.xml`, common class names):
   always pass `repo:` to avoid multi-repo dumps and disambiguation round-trips.
 - **Treat negative/empty tool results as "re-query with the right repo/path,"**
@@ -168,17 +169,17 @@ These rules hold for **every** scenario below:
 1. **Plan all fetches up front, then batch.** After the first search, write the
    complete fetch list (paths + line ranges) BEFORE issuing any `get_file`, then
    send them in as few batched messages as possible. The budget is blown by
-   *extra round-trips*, not by any single payload. Hard rule: **no mid-stream
+   _extra round-trips_, not by any single payload. Hard rule: **no mid-stream
    discovery** — if you find yourself searching again to locate a parent class
    or collaborator you could have anticipated, fold it into the up-front plan.
    Target ≤3 round-trips for a definitional question.
 2. **Answer from snippets before fetching, and read inheritance from the
    `[signature]` snippet.** A `[signature]`-tagged result exposes the
    `extends`/`implements`/`permits` clause — read the parent/sealed-base name
-   straight from it and add the parent's field block to your plan *now*, instead
+   straight from it and add the parent's field block to your plan _now_, instead
    of fetching the child then discovering the parent.
 3. **Prefer `startLine`/`endLine` over `name:`.** Default to reading just the
-   field block + method *signatures* with a line range. **Never use `name:` on a
+   field block + method _signatures_ with a line range. **Never use `name:` on a
    large/`sealed`/aggregate class** — it triplicates output. Reserve `name:` for
    a single small method whose body you actually need.
 4. **`get_dependencies` (graph) instead of re-`search` or whole-file reads** for
@@ -206,29 +207,29 @@ These rules hold for **every** scenario below:
 
 Pick the tactic by question type. All scenarios still obey the universal rules.
 
-| Scenario | Strategy |
-|----------|----------|
-| **"What is X?"** (definition) | search (`limit:5, score_threshold:0.6, expand_hops:0`) → answer from `[signature]` snippet → fetch only field blocks via `startLine`/`endLine`. Never `name:` on a sealed/large class. |
-| **"Who implements / extends X?"** | search `limit:10` and read the **metadata-only results 6-10** to enumerate candidates cheaply; or `get_dependencies(path)` for reverse edges; or `expand_hops:2` to follow the graph. Stop at class signatures — don't fetch each impl body. Narrow with `stereotype`. |
-| **"How does X work?" / trace a flow** (the expensive one) | search once for the entry point, then **plan the whole call chain up front** from snippets. Per hop, fetch only the specific method via `startLine`/`endLine` (`name:` OK for one *small* method). Use `get_dependencies` to find the next hop instead of re-searching. Cost driver is breadth — don't fetch collaborators you won't cite. |
-| **"Where is X called / used?"** | For an exact symbol, `rg` returns `file:line` cheaply; `get_dependencies` reverse edges also list callers without bodies. Use `search_codebase` only for conceptual usage. |
-| **"Find the class/method named X"** (needle) | Skip semantic search — `glob` the file or `get_file(path, name:X)` for one small member. |
-| **"What breaks if I change X?"** (refactor blast radius) | `get_dependencies(path or module, depth:2)` for the edge graph; combine with `rg` for exact call-site counts before reading any file. |
-| **Existence / aggregation** ("is there a retry mechanism?") | Auto-routed in `search_codebase`. Use `limit:3-5`, answer from snippets, stop on sufficiency — no completeness sweep. |
-| **Before editing a file** | `get_file` with `startLine`/`endLine` for just the region you'll edit. Never whole-file `Read` of an indexed file. |
+| Scenario                                                    | Strategy                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **"What is X?"** (definition)                               | search (`limit:5, score_threshold:0.6, expand_hops:0`) → answer from `[signature]` snippet → fetch only field blocks via `startLine`/`endLine`. Never `name:` on a sealed/large class.                                                                                                                                                     |
+| **"Who implements / extends X?"**                           | search `limit:10` and read the **metadata-only results 6-10** to enumerate candidates cheaply; or `get_dependencies(path)` for reverse edges; or `expand_hops:2` to follow the graph. Stop at class signatures — don't fetch each impl body. Narrow with `stereotype`.                                                                     |
+| **"How does X work?" / trace a flow** (the expensive one)   | search once for the entry point, then **plan the whole call chain up front** from snippets. Per hop, fetch only the specific method via `startLine`/`endLine` (`name:` OK for one _small_ method). Use `get_dependencies` to find the next hop instead of re-searching. Cost driver is breadth — don't fetch collaborators you won't cite. |
+| **"Where is X called / used?"**                             | For an exact symbol, `rg` returns `file:line` cheaply; `get_dependencies` reverse edges also list callers without bodies. Use `search_codebase` only for conceptual usage.                                                                                                                                                                 |
+| **"Find the class/method named X"** (needle)                | Skip semantic search — `glob` the file or `get_file(path, name:X)` for one small member.                                                                                                                                                                                                                                                   |
+| **"What breaks if I change X?"** (refactor blast radius)    | `get_dependencies(path or module, depth:2)` for the edge graph; combine with `rg` for exact call-site counts before reading any file.                                                                                                                                                                                                      |
+| **Existence / aggregation** ("is there a retry mechanism?") | Auto-routed in `search_codebase`. Use `limit:3-5`, answer from snippets, stop on sufficiency — no completeness sweep.                                                                                                                                                                                                                      |
+| **Before editing a file**                                   | `get_file` with `startLine`/`endLine` for just the region you'll edit. Never whole-file `Read` of an indexed file.                                                                                                                                                                                                                         |
 
 ### Worked example — "what is an Entry?" done right (~15-25k tokens)
 
 1. `search_codebase("Entry domain class", repo:"payment-gateway", limit:5,
-   score_threshold:0.6, expand_hops:0)`. The `Entry$part1 [signature]` snippet
+score_threshold:0.6, expand_hops:0)`. The `Entry$part1 [signature]` snippet
    shows `final class Entry extends EntryCore` — so the plan is fixed up front:
    (a) Entry decl + fields, (b) EntryCore parent fields, (c) the two enums.
 2. Batch plan items (a)+(b) in **one message**:
    `get_file(repo:"payment-gateway", path:".../Entry.java", startLine:34, endLine:62)`
-   + `get_file(repo:"payment-gateway", path:".../EntryCore.java", startLine:35, endLine:57)`
-   — fields only, no method bodies. **Do not** `get_file(name:"EntryCore")` —
-   that one call triplicates ~500 lines of a `sealed` class and is the single
-   biggest budget blow-out.
+   - `get_file(repo:"payment-gateway", path:".../EntryCore.java", startLine:35, endLine:57)`
+     — fields only, no method bodies. **Do not** `get_file(name:"EntryCore")` —
+     that one call triplicates ~500 lines of a `sealed` class and is the single
+     biggest budget blow-out.
 3. Batch plan item (c): read the small `EntryType` / `EntryStatus` enums whole,
    each with the `repo:` prefix (those names exist in two repos).
 4. Three round-trips total. Stop once type + status are covered.

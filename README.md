@@ -117,8 +117,9 @@ The installer will:
 5. **Select an embedding model** — shows your locally available Ollama models (with `[embed]` hints for known embedding models), lets you pick one or enter a custom name, and auto-pulls it if needed
 6. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
 7. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
-8. Configure **OpenCode's MCP server** to connect to ia-framework
-9. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
+8. **Configure MCPs (Step 5.1)** — detects your installed IDE(s) and lets you pick which MCPs to install (ia-framework, Context7, Sequential Thinking by default; PostgreSQL and Atlassian opt-in). Selecting **PostgreSQL** prompts for the DB connection and writes `.ia-framework/db.json` (creating the folder if missing).
+9. **Install skills** into the selected IDE(s)
+10. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
 
 After it completes:
 
@@ -469,7 +470,7 @@ ia-framework db configure [options]
   --config <path>    Path to project.json
 ```
 
-Interactive prompt for PostgreSQL connection details (host, port, database, user, password, SSL). Saves to `.ia-framework/db.json`.
+Interactive prompt for PostgreSQL connection details (host, port, database, user, password, SSL). Creates the `.ia-framework/` folder if it does not exist and saves to `.ia-framework/db.json`. Also run automatically by `install.sh` when the PostgreSQL MCP is selected.
 
 ```bash
 ia-framework db connect [options]
@@ -608,63 +609,100 @@ Triggers indexing of the PostgreSQL schema into Qdrant so `search_codebase` can 
 
 ## Extending with MCP Servers
 
-ia-framework's MCP server provides codebase search tools, but OpenCode supports multiple MCP servers simultaneously. You can plug in additional MCP servers to give your AI assistant broader context — database schemas, documentation, structured reasoning, message queues, and more.
+ia-framework's MCP server provides codebase search tools, but OpenCode (and other IDEs) support multiple MCP servers simultaneously. The installer configures MCPs from **descriptors** under `mcps/*/mcp.json` — during `install.sh` Step 5.1 you pick which IDE(s) and which MCP(s) to install, and the installer writes the correct entries into each IDE's config.
 
-### Recommended MCP Integrations
+### Bundled MCP Descriptors
 
-These MCP servers work well alongside ia-framework:
+Each folder under `mcps/` is a descriptor the installer can offer:
 
-| MCP Server                                                                                                  | Purpose                 | What it adds                                                                                   |
-| ----------------------------------------------------------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
-| **[Context7](https://github.com/upstash/context7)**                                                         | Documentation retrieval | Up-to-date docs for any library — no more hallucinated APIs                                    |
-| **[Sequential Thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** | Structured reasoning    | Multi-step problem decomposition for complex tasks                                             |
-| **PostgreSQL** (built-in)                                                                                   | Database context        | Schema-aware SQL queries via ia-framework's `query_database` and `index_database_schema` tools |
+| MCP (id)                                        | Default   | Purpose                 | Command form                                                       |
+| ----------------------------------------------- | --------- | ----------------------- | ------------------------------------------------------------------ |
+| **ia-framework** (`ia-framework`)               | ✅ yes    | Codebase RAG            | Local `mcp-server` binary (`requires_build`)                       |
+| **Context7** (`context7`)                       | ✅ yes    | Documentation retrieval | `npx -y @upstash/context7-mcp@latest`                              |
+| **Sequential Thinking** (`sequential-thinking`) | ✅ yes    | Structured reasoning    | `npx -y @modelcontextprotocol/server-sequential-thinking`          |
+| **PostgreSQL** (`postgres`)                     | ❌ opt-in | Database context        | `npx -y @modelcontextprotocol/server-postgres <DSN>`               |
+| **Atlassian** (`atlassian`)                     | ❌ opt-in | Jira + Confluence       | `npx -y mcp-remote@latest https://mcp.atlassian.com/v1/mcp/authv2` |
 
-### Configuring Additional MCP Servers
+> Descriptors in the repo contain **placeholders only** — never real credentials. The PostgreSQL descriptor ships with a `{{POSTGRES_CONNECTION_STRING}}` token that the installer substitutes at install time.
 
-Add MCP servers to OpenCode's config at `~/.config/opencode/opencode.json`. Each server runs as a separate process and its tools become available alongside ia-framework's tools.
+### PostgreSQL: db.json bootstrap
 
-**Example — adding Context7 and Sequential Thinking alongside ia-framework:**
+When you select the **PostgreSQL** MCP during install, the installer:
+
+1. Prompts for connection details (host, port, database, user, password, SSL).
+2. Creates the `.ia-framework/` folder if it does not exist.
+3. Writes `.ia-framework/db.json` (via `ia-framework db configure`) — this is the single source of truth for the connection, also used by the ia-framework `query_database` / `index_database_schema` tools.
+4. Builds a connection string from those values and substitutes it into the PostgreSQL MCP command written to your IDE config.
+
+Re-running the installer with an existing `db.json` prompts to keep or overwrite (default: keep). In non-interactive/CI runs the prompt is skipped so the installer never hangs.
+
+The resulting OpenCode entry looks like (placeholders shown — your real values are written locally only):
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
+    "postgres": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://USER:PASSWORD@HOST:5432/DB"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+### Atlassian (Jira + Confluence)
+
+The **Atlassian** MCP uses the hosted remote endpoint via `mcp-remote`; authentication is interactive (OAuth on first use), so no tokens are stored in config:
+
+```json
+{
+  "mcp": {
+    "atlassian": {
+      "type": "local",
+      "command": ["npx", "-y", "mcp-remote@latest", "https://mcp.atlassian.com/v1/mcp/authv2"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> This replaces the previous standalone Jira MCP. The `tab-ticket-reader` skill now depends on the `atlassian` MCP.
+
+### Manually configuring MCP servers
+
+You can also edit OpenCode's config directly at `~/.config/opencode/opencode.json`. Each server runs as a separate process and its tools become available alongside ia-framework's tools:
+
+```json
+{
+  "mcp": {
     "ia-framework": {
-      "command": "node",
-      "args": ["/path/to/ia-framework/packages/mcp-server/dist/bin.js"],
-      "env": {
+      "type": "local",
+      "command": ["node", "/path/to/ia-framework/packages/mcp-server/dist/bin.js"],
+      "environment": {
         "IA_FRAMEWORK_CONFIG": "/path/to/ia-framework/.ia-framework/project.json"
-      }
+      },
+      "enabled": true
     },
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
+      "enabled": true
     },
     "sequential-thinking": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "enabled": true
     }
   }
 }
 ```
 
-**Example — adding a PostgreSQL MCP server for direct database access:**
-
-```json
-{
-  "mcpServers": {
-    "postgres": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres"],
-      "env": {
-        "POSTGRES_CONNECTION_STRING": "postgresql://user:pass@localhost:5432/mydb"
-      }
-    }
-  }
-}
-```
-
-> **Note:** ia-framework already includes PostgreSQL support via the `db-context` package (`db configure`, `db index`, `query_database` MCP tool). A separate Postgres MCP server is only needed if you want the general-purpose MCP Postgres tools in addition to ia-framework's schema-indexed approach.
+> **Note:** ia-framework also includes PostgreSQL support via the `db-context` package (`db configure`, `db index`, `query_database` MCP tool). The `postgres` MCP above is the general-purpose Postgres tool that complements ia-framework's schema-indexed approach — both read the same `.ia-framework/db.json` connection you set up during install.
 
 ### Pluggable Architecture
 
@@ -1110,10 +1148,15 @@ The corpus can be bootstrapped with `benchmark init-corpus`, which uses a local 
 
 ## Database Context (Optional)
 
-If your project uses PostgreSQL, ia-framework can index the database schema as additional context:
+If your project uses PostgreSQL, ia-framework can index the database schema as additional context.
+
+**During install:** selecting the **PostgreSQL** MCP in `install.sh` (Step 5.1) prompts for the connection and writes `.ia-framework/db.json` automatically — creating the `.ia-framework/` folder if it does not exist yet. See [PostgreSQL: db.json bootstrap](#postgresql-dbjson-bootstrap).
+
+**Manually / after install** you can configure and index the schema with the CLI:
 
 ```bash
-# Interactive setup — prompts for host, port, database, user, password
+# Interactive setup — prompts for host, port, database, user, password, SSL.
+# Creates the .ia-framework/ folder if missing and writes db.json.
 ia-framework db configure
 
 # Test connection
@@ -1125,6 +1168,11 @@ ia-framework db index
 # Check status
 ia-framework db status
 ```
+
+`ia-framework db configure` writes `.ia-framework/db.json` with the shape
+`{ host, port, database, user, password, ssl }`. This single file is read by the
+CLI and by the `query_database` / `index_database_schema` MCP tools, and is used
+to build the connection string for the `postgres` MCP.
 
 After indexing, `search_codebase` queries will also match table names, column types, and relationships. The `query_database` MCP tool lets the AI run SQL directly.
 

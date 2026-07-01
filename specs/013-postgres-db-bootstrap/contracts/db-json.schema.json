@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ia-framework/contracts/db-json.schema.json",
+  "title": "DatabaseConfig (.ia-framework/db.json)",
+  "description": "PostgreSQL connection config written by `ia-framework db configure` and consumed by db-context. Mirrors DatabaseConfigSchema in packages/db-context/src/types.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["host", "database", "user", "password"],
+  "properties": {
+    "host": { "type": "string", "minLength": 1 },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 5432 },
+    "database": { "type": "string", "minLength": 1 },
+    "user": { "type": "string", "minLength": 1 },
+    "password": { "type": "string" },
+    "ssl": { "type": "boolean" }
+  },
+  "examples": [
+    {
+      "host": "localhost",
+      "port": 5432,
+      "database": "PLACEHOLDER_DB",
+      "user": "PLACEHOLDER_USER",
+      "password": "PLACEHOLDER_PASSWORD",
+      "ssl": false
+    }
+  ]
+}
