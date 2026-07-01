@@ -47,3 +47,6 @@ pnpm-debug.log*
 .ia-framework/
 # Track the benchmark corpus (hand-authored, not runtime generated)
 !.ia-framework/benchmark-queries.json
+
+# mcp-bench reports (local-only benchmark artifacts, never committed)
+mcp-bench-reports/

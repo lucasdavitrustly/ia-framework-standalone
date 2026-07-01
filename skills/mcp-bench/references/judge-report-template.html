@@ -1,0 +1,344 @@
+<!--
+  Human-readable HTML report written by /mcp-bench-judge to
+  mcp-bench-reports/_judgment__{{PROMPT_SLUG}}__{{TIMESTAMP_ISO}}.html
+
+  This file is self-contained (inline CSS, no external assets).
+  Substitute every {{PLACEHOLDER}}. Repeatable regions are marked with
+  <!-- REPEAT:run -->
+...
+<!-- /REPEAT:run -->
+— render one copy per run. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mcp-bench — {{PROMPT_SLUG}}</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        line-height: 1.6;
+        color: #1a1a2e;
+        background: #f8f9fa;
+        padding: 2rem;
+        max-width: 1040px;
+        margin: 0 auto;
+      }
+      .report-header {
+        background: linear-gradient(135deg, #0d6efd, #6610f2);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+      }
+      .report-header h1 {
+        font-size: 1.75rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+      }
+      .report-header .subtitle {
+        opacity: 0.9;
+        font-size: 0.95rem;
+      }
+      .report-header .prompt {
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.15);
+        border-radius: 8px;
+        font-size: 0.9rem;
+      }
+      .report-header .meta {
+        display: flex;
+        gap: 2rem;
+        margin-top: 1rem;
+        font-size: 0.85rem;
+        opacity: 0.85;
+        flex-wrap: wrap;
+      }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+      }
+      .summary-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.25rem;
+        border-left: 4px solid #6c757d;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      .summary-card.winner {
+        border-color: #198754;
+      }
+      .summary-card.delta {
+        border-color: #0d6efd;
+      }
+      .summary-card.cost {
+        border-color: #fd7e14;
+      }
+      .summary-card.speed {
+        border-color: #6610f2;
+      }
+      .summary-card .number {
+        font-size: 1.6rem;
+        font-weight: 700;
+      }
+      .summary-card .label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        color: #6c757d;
+        letter-spacing: 0.05em;
+      }
+      .section {
+        margin-bottom: 2rem;
+      }
+      .section-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #495057;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #e9ecef;
+        margin-bottom: 1rem;
+      }
+      table.ranking {
+        width: 100%;
+        border-collapse: collapse;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      table.ranking th,
+      table.ranking td {
+        padding: 0.7rem 1rem;
+        text-align: left;
+        border-bottom: 1px solid #e9ecef;
+        font-size: 0.9rem;
+      }
+      table.ranking th {
+        background: #f1f3f5;
+        font-weight: 600;
+        color: #495057;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+      }
+      table.ranking tr:last-child td {
+        border-bottom: none;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.15rem 0.55rem;
+        border-radius: 4px;
+      }
+      .badge.mcp {
+        background: #cfe2ff;
+        color: #084298;
+      }
+      .badge.baseline {
+        background: #e2e3e5;
+        color: #41464b;
+      }
+      .run-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        border-left: 4px solid #0d6efd;
+      }
+      .run-card.is-baseline {
+        border-color: #6c757d;
+      }
+      .run-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .run-title {
+        font-weight: 600;
+        font-size: 1.05rem;
+      }
+      .run-quality {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #198754;
+      }
+      .run-metrics {
+        display: flex;
+        gap: 1.5rem;
+        font-size: 0.82rem;
+        color: #6c757d;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+      }
+      .goodbad {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+      @media (max-width: 640px) {
+        .goodbad {
+          grid-template-columns: 1fr;
+        }
+      }
+      .goodbad .good,
+      .goodbad .bad {
+        padding: 0.9rem 1rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+      }
+      .goodbad .good {
+        background: #e8f6ee;
+        border: 1px solid #b7e0c6;
+      }
+      .goodbad .bad {
+        background: #fdeee3;
+        border: 1px solid #f3d2b3;
+      }
+      .goodbad h4 {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.4rem;
+      }
+      .goodbad .good h4 {
+        color: #198754;
+      }
+      .goodbad .bad h4 {
+        color: #b35900;
+      }
+      .goodbad ul {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+      .goodbad li {
+        margin-bottom: 0.3rem;
+      }
+      footer {
+        margin-top: 2.5rem;
+        font-size: 0.78rem;
+        color: #adb5bd;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="report-header">
+      <h1>mcp-bench judgment</h1>
+      <div class="subtitle">
+        ia-framework MCP vs. no-MCP baseline — blind-judged quality &amp; cost
+      </div>
+      <div class="prompt"><strong>Prompt:</strong> {{PROMPT_PLAIN}}</div>
+      <div class="meta">
+        <span>Slug: {{PROMPT_SLUG}}</span>
+        <span>Judged: {{TIMESTAMP_ISO}}</span>
+        <span>Reports: {{TOTAL_REPORTS}} ({{MCP_COUNT}} MCP / {{BASELINE_COUNT}} baseline)</span>
+      </div>
+    </div>
+
+    <div class="summary-grid">
+      <div class="summary-card winner">
+        <div class="label">Best overall</div>
+        <div class="number">{{WINNER_MODEL}}</div>
+        <div>{{WINNER_MCP_LABEL}} · {{WINNER_QUALITY}}/10</div>
+      </div>
+      <div class="summary-card delta">
+        <div class="label">MCP vs baseline quality</div>
+        <div class="number">{{QUALITY_DELTA}}</div>
+        <div>avg MCP {{AVG_MCP_QUALITY}} − baseline {{AVG_BASELINE_QUALITY}}</div>
+      </div>
+      <div class="summary-card cost">
+        <div class="label">Cheapest run</div>
+        <div class="number">{{CHEAPEST_COST}} USD</div>
+        <div>{{CHEAPEST_MODEL}} · {{CHEAPEST_MCP_LABEL}}</div>
+      </div>
+      <div class="summary-card speed">
+        <div class="label">Fastest run</div>
+        <div class="number">{{FASTEST_LATENCY}} ms</div>
+        <div>{{FASTEST_MODEL}} · {{FASTEST_MCP_LABEL}}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Ranking (best → worst)</div>
+      <table class="ranking">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Model</th>
+            <th>Mode</th>
+            <th>Quality</th>
+            <th>Latency</th>
+            <th>Tokens</th>
+            <th>Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- REPEAT:rankrow -->
+          <tr>
+            <td>{{RANK}}</td>
+            <td>{{MODEL}}</td>
+            <td><span class="badge {{MCP_BADGE_CLASS}}">{{MCP_LABEL}}</span></td>
+            <td>{{QUALITY}}/10</td>
+            <td>{{LATENCY_MS}} ms</td>
+            <td>{{TOTAL_TOKENS}}</td>
+            <td>{{COST_USD}} USD</td>
+          </tr>
+          <!-- /REPEAT:rankrow -->
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Per-run analysis — what was good vs. not good</div>
+      <!-- REPEAT:run -->
+      <div class="run-card {{RUN_CARD_CLASS}}">
+        <div class="run-header">
+          <span class="run-title"
+            >{{MODEL}} <span class="badge {{MCP_BADGE_CLASS}}">{{MCP_LABEL}}</span></span
+          >
+          <span class="run-quality">{{QUALITY}}/10</span>
+        </div>
+        <div class="run-metrics">
+          <span>Latency: {{LATENCY_MS}} ms</span>
+          <span>Tokens: {{TOTAL_TOKENS}}</span>
+          <span>Cost: {{COST_USD}} USD</span>
+          <span>Captured: {{TIMESTAMP_ISO}}</span>
+        </div>
+        <div class="goodbad">
+          <div class="good">
+            <h4>✅ What was good</h4>
+            <ul>
+              {{GOOD_ITEMS}}
+            </ul>
+          </div>
+          <div class="bad">
+            <h4>⚠️ What was not good</h4>
+            <ul>
+              {{BAD_ITEMS}}
+            </ul>
+          </div>
+        </div>
+      </div>
+      <!-- /REPEAT:run -->
+    </div>
+
+    <footer>
+      Generated by the <strong>mcp-bench</strong> skill · scores are blind LLM-as-judge against a
+      fixed rubric (not ground-truth) · cost basis model-pricing.json@v1
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "mcp-bench",
+  "version": "0.1.0",
+  "description": "Benchmark the ia-framework MCP on a prompt — captures latency, tokens, cost (USD), model. Compares MCP vs no-MCP baseline and blind-judges quality, emitting a human-readable HTML report.",
+  "upstream": "https://github.com/rafaelmgoncalves/ia-framework",
+  "requires_mcps": ["ia-framework"],
+  "assets": {
+    "skill": true,
+    "agents": false,
+    "commands": true,
+    "hooks": false
+  }
+}
