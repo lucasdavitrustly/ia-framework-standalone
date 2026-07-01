@@ -216,3 +216,125 @@ describe('RepoRegistry.detect()', () => {
     expect(json[0]!.profile?.languages).toContain('typescript');
   });
 });
+
+describe('RepoRegistry.getInjectionTargets() — repos[] (US1)', () => {
+  it('returns only entries flagged injectAgents: true', () => {
+    const config: ProjectConfig = {
+      repos: [
+        { path: '../a', name: 'a', injectAgents: true },
+        { path: '../b', name: 'b' },
+        { path: '../c', name: 'c', injectAgents: true },
+      ],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const targets = RepoRegistry.fromConfig(config, '/home/user/config').getInjectionTargets();
+    expect(targets.map((t) => t.name).sort()).toEqual(['a', 'c']);
+    expect(targets.every((t) => t.indexed)).toBe(true);
+  });
+
+  it('returns all repos when all flagged', () => {
+    const config: ProjectConfig = {
+      repos: [
+        { path: '../a', name: 'a', injectAgents: true },
+        { path: '../b', name: 'b', injectAgents: true },
+      ],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    expect(RepoRegistry.fromConfig(config, '/config').getInjectionTargets()).toHaveLength(2);
+  });
+
+  it('returns empty when none flagged', () => {
+    const config: ProjectConfig = {
+      repos: [{ path: '../a' }, { path: '../b' }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    expect(RepoRegistry.fromConfig(config, '/config').getInjectionTargets()).toEqual([]);
+  });
+
+  it('resolves target paths to absolute relative to configDir', () => {
+    const config: ProjectConfig = {
+      repos: [{ path: '../a', name: 'a', injectAgents: true }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const targets = RepoRegistry.fromConfig(config, '/home/user/config').getInjectionTargets();
+    expect(targets[0]!.path).toBe('/home/user/a');
+  });
+});
+
+describe('RepoRegistry.getInjectionTargets() — legacy (US3)', () => {
+  it('returns the single legacy target as implicitly opted-in', () => {
+    const config: ProjectConfig = {
+      targetProjectPath: '/foo/bar',
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const targets = RepoRegistry.fromConfig(config, '/config').getInjectionTargets();
+    expect(targets).toHaveLength(1);
+    expect(targets[0]!.path).toBe('/foo/bar');
+    expect(targets[0]!.indexed).toBe(true);
+  });
+});
+
+describe('RepoRegistry.getInjectionTargets() — agentInjectionTargets (US5)', () => {
+  it('unions flagged repos with non-indexed agentInjectionTargets', () => {
+    const config: ProjectConfig = {
+      repos: [{ path: '../a', name: 'a', injectAgents: true }],
+      agentInjectionTargets: ['../ops-runbooks'],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const targets = RepoRegistry.fromConfig(config, '/home/user/config').getInjectionTargets();
+    expect(targets).toHaveLength(2);
+    const indexed = targets.find((t) => t.path === '/home/user/a');
+    const extra = targets.find((t) => t.path === '/home/user/ops-runbooks');
+    expect(indexed?.indexed).toBe(true);
+    expect(extra?.indexed).toBe(false);
+  });
+
+  it('de-dupes when an agentInjectionTarget resolves to the same path as a flagged repo', () => {
+    const config: ProjectConfig = {
+      repos: [{ path: '../a', name: 'a', injectAgents: true }],
+      agentInjectionTargets: ['../a'],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const targets = RepoRegistry.fromConfig(config, '/home/user/config').getInjectionTargets();
+    expect(targets).toHaveLength(1);
+    expect(targets[0]!.path).toBe('/home/user/a');
+  });
+
+  it('returns only agentInjectionTargets when no repo is flagged', () => {
+    const config: ProjectConfig = {
+      repos: [{ path: '../a' }],
+      agentInjectionTargets: ['../docs'],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const targets = RepoRegistry.fromConfig(config, '/home/user/config').getInjectionTargets();
+    expect(targets).toHaveLength(1);
+    expect(targets[0]!.path).toBe('/home/user/docs');
+    expect(targets[0]!.indexed).toBe(false);
+  });
+});
+
+describe('RepoRegistry.toJSON() — injectAgents (US1)', () => {
+  it('preserves injectAgents when defined and omits when undefined', () => {
+    const config: ProjectConfig = {
+      repos: [
+        { path: '../a', name: 'a', injectAgents: true },
+        { path: '../b', name: 'b' },
+      ],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    };
+    const json = RepoRegistry.fromConfig(config, '/config').toJSON();
+    const a = json.find((e) => e.name === 'a');
+    const b = json.find((e) => e.name === 'b');
+    expect(a!.injectAgents).toBe(true);
+    expect('injectAgents' in b!).toBe(false);
+  });
+});

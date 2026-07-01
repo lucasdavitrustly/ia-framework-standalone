@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -167,6 +167,48 @@ describe('agents inject', () => {
     expect(content).toContain('1 hop');
   });
 
+  // Test 3d (US4): Context7 + Sequential Thinking guidance present in injected content
+  it('includes Context7 and Sequential Thinking guidance (US4)', async () => {
+    const agentsPath = join(targetDir, 'AGENTS.md');
+    await writeFile(agentsPath, '# Project\n');
+
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
+
+    const content = await readFile(agentsPath, 'utf-8');
+    expect(content).toContain('When to use Context7');
+    expect(content).toContain('When to use Sequential Thinking');
+    // Each section conveys when NOT to use it
+    expect(content).toMatch(/Do NOT use it for/);
+    // Still alongside the RAG tools guidance
+    expect(content).toContain('search_codebase');
+  });
+
+  // Test 3e (US4): re-injecting an old block converges to one block with all guidance
+  it('refreshes an old block to include Context7/Sequential Thinking without duplication (US4)', async () => {
+    const agentsPath = join(targetDir, 'AGENTS.md');
+    const old = [
+      '# Agents',
+      '',
+      RAG_MARKER_START,
+      '## Codebase RAG Tools (ia-framework)',
+      'search_codebase only, no context7 here',
+      RAG_MARKER_END,
+      '',
+    ].join('\n');
+    await writeFile(agentsPath, old);
+
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
+
+    const content = await readFile(agentsPath, 'utf-8');
+    // Exactly one marker block
+    expect(content.split(RAG_MARKER_START).length).toBe(2);
+    expect(content.split(RAG_MARKER_END).length).toBe(2);
+    // Now contains all three guidance areas
+    expect(content).toContain('search_codebase');
+    expect(content).toContain('When to use Context7');
+    expect(content).toContain('When to use Sequential Thinking');
+  });
+
   // Test 4: Exits with error when config load fails
   it('exits with error when config load fails', async () => {
     mockLoadConfig.mockRejectedValue(new Error('config not found'));
@@ -195,6 +237,136 @@ describe('agents inject', () => {
     const markerPos = content.indexOf(RAG_MARKER_START);
     const originalPos = content.indexOf('# Project');
     expect(originalPos).toBeLessThan(markerPos);
+  });
+});
+
+describe('agents inject — target resolution (US1/US2/US3/US5)', () => {
+  let root: string; // acts as config dir
+  let repoA: string;
+  let repoB: string;
+  let extra: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'agents-targets-'));
+    repoA = join(root, 'repo-a');
+    repoB = join(root, 'repo-b');
+    extra = join(root, 'ops-runbooks');
+    await mkdir(repoA);
+    await mkdir(repoB);
+    await mkdir(extra);
+  });
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const configPathArg = ['--config', 'CFG']; // getConfigPath uses this; dirname → cwd, but repos resolve via configDir
+
+  // US1: only flagged repos are injected; unflagged untouched (FR-002/FR-003)
+  it('injects only into repos flagged injectAgents: true', async () => {
+    mockLoadConfig.mockResolvedValue({
+      repos: [
+        { path: repoA, name: 'repo-a', injectAgents: true },
+        { path: repoB, name: 'repo-b' },
+      ],
+      embedding: { provider: 'ollama', model: 'nomic-embed-text' },
+      vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
+    });
+
+    await runSubcommand(['inject', ...configPathArg]);
+
+    // repoA got AGENTS.md; repoB did not
+    const aContent = await readFile(join(repoA, 'AGENTS.md'), 'utf-8');
+    expect(aContent).toContain(RAG_MARKER_START);
+    await expect(readFile(join(repoB, 'AGENTS.md'), 'utf-8')).rejects.toThrow();
+  });
+
+  // US1: idempotent refresh across multiple targets (FR-006)
+  it('refreshes existing blocks in flagged repos without duplication', async () => {
+    await writeFile(
+      join(repoA, 'AGENTS.md'),
+      `x\n${RAG_MARKER_START}\nSTALE_SENTINEL_XYZ\n${RAG_MARKER_END}\n`,
+    );
+    mockLoadConfig.mockResolvedValue({
+      repos: [{ path: repoA, name: 'repo-a', injectAgents: true }],
+      embedding: { provider: 'ollama', model: 'nomic-embed-text' },
+      vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
+    });
+
+    await runSubcommand(['inject', ...configPathArg]);
+
+    const content = await readFile(join(repoA, 'AGENTS.md'), 'utf-8');
+    expect(content).not.toContain('STALE_SENTINEL_XYZ');
+    expect(content.split(RAG_MARKER_START).length).toBe(2);
+  });
+
+  // US2: zero flagged repos → no files written, message printed, exit 0 (FR-004)
+  it('reports no target and writes nothing when no repo is flagged', async () => {
+    mockLoadConfig.mockResolvedValue({
+      repos: [{ path: repoA, name: 'repo-a' }, { path: repoB, name: 'repo-b' }],
+      embedding: { provider: 'ollama', model: 'nomic-embed-text' },
+      vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
+    });
+
+    const { out, exitCode } = await runSubcommand(['inject', ...configPathArg]);
+
+    expect(out.join('\n')).toMatch(/no injection target configured/i);
+    expect(exitCode).toBeUndefined(); // exit 0 (no explicit exit)
+    await expect(readFile(join(repoA, 'AGENTS.md'), 'utf-8')).rejects.toThrow();
+    await expect(readFile(join(repoB, 'AGENTS.md'), 'utf-8')).rejects.toThrow();
+  });
+
+  // US3: legacy targetProjectPath is implicitly opted-in (FR-008)
+  it('injects into the single legacy targetProjectPath target', async () => {
+    mockLoadConfig.mockResolvedValue({
+      targetProjectPath: repoA,
+      embedding: { provider: 'ollama', model: 'nomic-embed-text' },
+      vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
+    });
+
+    await runSubcommand(['inject', ...configPathArg]);
+
+    const content = await readFile(join(repoA, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain(RAG_MARKER_START);
+  });
+
+  // US5: agentInjectionTargets (non-indexed) get injected alongside flagged repos (FR-017/FR-018)
+  it('injects into a non-indexed agentInjectionTargets path without touching unflagged repos', async () => {
+    mockLoadConfig.mockResolvedValue({
+      repos: [
+        { path: repoA, name: 'repo-a', injectAgents: true },
+        { path: repoB, name: 'repo-b' },
+      ],
+      agentInjectionTargets: [extra],
+      embedding: { provider: 'ollama', model: 'nomic-embed-text' },
+      vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
+    });
+
+    await runSubcommand(['inject', ...configPathArg]);
+
+    expect(await readFile(join(repoA, 'AGENTS.md'), 'utf-8')).toContain(RAG_MARKER_START);
+    expect(await readFile(join(extra, 'AGENTS.md'), 'utf-8')).toContain(RAG_MARKER_START);
+    await expect(readFile(join(repoB, 'AGENTS.md'), 'utf-8')).rejects.toThrow();
+  });
+
+  // Polish: per-target summary + continue-on-failure for a missing path (FR-011/FR-012)
+  it('reports per-target summary and continues past a failing target', async () => {
+    const missing = join(root, 'does-not-exist');
+    mockLoadConfig.mockResolvedValue({
+      repos: [{ path: repoA, name: 'repo-a', injectAgents: true }],
+      agentInjectionTargets: [missing],
+      embedding: { provider: 'ollama', model: 'nomic-embed-text' },
+      vectorStore: { host: 'localhost', port: 6333, collectionName: 'test' },
+    });
+
+    const { out, exitCode } = await runSubcommand(['inject', ...configPathArg]);
+
+    // repoA succeeded even though the missing path failed
+    expect(await readFile(join(repoA, 'AGENTS.md'), 'utf-8')).toContain(RAG_MARKER_START);
+    expect(out.join('\n')).toMatch(/failed/i);
+    expect(out.join('\n')).toMatch(/Created:|Injected:|Refreshed:/);
+    expect(exitCode).toBe(1); // failures surface a non-zero exit
   });
 });
 

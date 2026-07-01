@@ -119,7 +119,7 @@ The installer will:
 7. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
 8. **Configure MCPs (Step 5.1)** — detects your installed IDE(s) and lets you pick which MCPs to install (ia-framework, Context7, Sequential Thinking by default; PostgreSQL and Atlassian opt-in). Selecting **PostgreSQL** prompts for the DB connection and writes `.ia-framework/db.json` (creating the folder if missing).
 9. **Install skills** into the selected IDE(s)
-10. **Inject RAG tool guidance** into your target project's `AGENTS.md` / `CLAUDE.md`
+10. **Inject RAG tool guidance** into your designated target(s)' `AGENTS.md` / `CLAUDE.md` (opt-in via `injectAgents` / `agentInjectionTargets`; if none is set yet, the installer prompts you to choose and saves the choice)
 
 After it completes:
 
@@ -333,16 +333,16 @@ Open http://localhost:3000 to see:
 
 ### Step 10: Inject RAG Guidance (Optional)
 
-This adds documentation to your target project telling AI assistants how to use the RAG tools:
+This adds documentation to your designated target(s) telling AI assistants how to use the RAG tools (plus Context7 and Sequential Thinking). Targets are opt-in — set `injectAgents: true` on the repos you want and/or list non-indexed paths in `agentInjectionTargets` (see [Agent Docs Injection](#agent-docs-injection)):
 
 ```bash
-# Auto-detects AGENTS.md or CLAUDE.md in your target project
+# Injects/refreshes all designated targets (repos flagged injectAgents + agentInjectionTargets)
 ia-framework agents inject
 
-# Or target a specific file
+# Or force a specific file (bypasses target resolution)
 ia-framework agents inject --file /path/to/project/CLAUDE.md
 
-# Check injection status
+# Check injection status across all targets
 ia-framework agents check
 ```
 
@@ -521,14 +521,14 @@ ia-framework agents inject [options]
   --config <path>    Path to project.json
 ```
 
-Injects RAG tool guidance into your target project's `AGENTS.md` or `CLAUDE.md`. Auto-detects the file; use `--file` to target a specific path. Idempotent — safe to run multiple times.
+Injects RAG tool guidance into the agent documentation (`AGENTS.md` or `CLAUDE.md`) of every **designated** injection target — repos flagged with `injectAgents: true`, any paths in `agentInjectionTargets` (non-indexed locations are supported), or the legacy single `targetProjectPath`. Auto-detects the file per target; use `--file` to force a single explicit path. Idempotent — safe to run multiple times (refreshes the managed block in place). When no target is designated, it modifies nothing and reports "no injection target configured". Prints a per-target summary (injected / refreshed / created / skipped / failed). See [Agent Docs Injection](#agent-docs-injection) for how to designate targets.
 
 ```bash
 ia-framework agents check [options]
   --config <path>    Path to project.json
 ```
 
-Checks whether RAG guidance has been injected into the target project's agent documentation.
+Checks whether RAG guidance has been injected, reporting per designated injection target which ones already contain the managed block.
 
 ## MCP Tools (Detailed)
 
@@ -846,6 +846,7 @@ Index multiple repositories into a single Qdrant collection. Each repo gets a lo
 | `repos[].name`     | No       | Logical name (auto-derived from `basename(path)` in kebab-case if omitted). Must be lowercase kebab-case.                  |
 | `repos[].provides` | No       | Package names this repo provides (for cross-repo symbol resolution). Auto-detected from `package.json` or pnpm workspaces. |
 | `repos[].profile`  | No       | Per-repo profile override. Auto-detected if not specified.                                                                 |
+| `repos[].injectAgents` | No   | `true` marks this repo as an **agent-docs injection target** (see [Agent Docs Injection](#agent-docs-injection)). Defaults to `false`; absent means not a target (opt-in only).                    |
 
 > **Note:** `targetProjectPath` and `repos` are mutually exclusive — use one or the other, not both.
 
@@ -878,7 +879,119 @@ Use cloud embeddings instead of local Ollama:
 
 Or set the API key via environment variable: `export OPENAI_API_KEY=sk-...`
 
-### Full Configuration Reference
+### Agent Docs Injection
+
+**What it is:** ia-framework can write a managed block of guidance into a project's
+agent documentation file (`AGENTS.md`, or `CLAUDE.md` if that's what the project
+uses). This block tells AI assistants working in that project how to use the
+codebase RAG tools (`search_codebase`, `get_file`, `get_dependencies`) and when to
+reach for **Context7** (up-to-date library/framework docs) and **Sequential
+Thinking** (structured multi-step reasoning). The block is delimited by
+`<!-- ia-framework:rag-start -->` / `<!-- ia-framework:rag-end -->` markers, so
+re-running injection **refreshes it in place** — it never duplicates content.
+
+**Injection is opt-in per repo.** Injection does not happen implicitly. You choose
+targets in `project.json`; nothing is modified unless you designate it.
+
+#### Choosing which repos get the guidance (`injectAgents`)
+
+Set `injectAgents: true` on each `repos[]` entry you want injected. Repos without
+the flag (the default) are left untouched:
+
+```json
+{
+  "repos": [
+    { "path": "../backend-api", "name": "backend-api", "injectAgents": true },
+    { "path": "../frontend-app", "name": "frontend-app", "injectAgents": true },
+    { "path": "../shared-libs", "name": "shared-libs" }
+  ],
+  "embedding": { "provider": "ollama", "model": "nomic-embed-text" },
+  "vectorStore": { "host": "localhost", "port": 6333, "collectionName": "my-platform" }
+}
+```
+
+Here `backend-api` and `frontend-app` get their `AGENTS.md` created/updated;
+`shared-libs` does not.
+
+#### Injecting into a folder/repo that is NOT indexed (`agentInjectionTargets`)
+
+Sometimes the place your agents read guidance from is **not** one of the indexed
+repos — e.g. a workspace/umbrella root that aggregates several sub-repos, a docs
+folder, or a sibling project you only want the guidance in. List those paths in the
+optional top-level `agentInjectionTargets` array. These locations are
+**injection-only — they are never indexed** and are resolved relative to the config
+file directory:
+
+```json
+{
+  "repos": [
+    { "path": "../backend-api", "name": "backend-api", "injectAgents": true }
+  ],
+  "agentInjectionTargets": [
+    "..",                     // the monorepo/workspace root (not indexed)
+    "../ops-runbooks"         // a sibling folder that isn't part of the index
+  ],
+  "embedding": { "provider": "ollama", "model": "nomic-embed-text" },
+  "vectorStore": { "host": "localhost", "port": 6333, "collectionName": "my-platform" }
+}
+```
+
+The full set of injection targets is: flagged `repos[]` **plus**
+`agentInjectionTargets` (plus the legacy `targetProjectPath` when that format is
+used). Injecting into a non-indexed target never triggers indexing and never
+modifies your indexed repos.
+
+**How a non-indexed target is handled:**
+
+- **Path resolution** — each `agentInjectionTargets` entry is resolved to an
+  absolute path **relative to the `project.json` directory** (so `..`, `../foo`,
+  and absolute paths all work).
+- **Doc file per target** — the same precedence applies as for repos: an existing
+  `AGENTS.md` is used, else an existing `CLAUDE.md`, else a new `AGENTS.md` is
+  created at that path.
+- **De-duplication** — if an `agentInjectionTargets` entry points at the same
+  location as a flagged repo, it's injected **once** (the indexed repo wins).
+- **No indexing, no side effects** — these paths are marked injection-only, so the
+  indexer never touches them and no indexed repo is modified as a result.
+- **Reported like any target** — it appears in the per-target summary as
+  `created`/`refreshed`/`failed` (a missing/inaccessible path is `failed`, and the
+  run continues with the rest).
+
+**One-off injection (no config edit):** to inject into a single arbitrary file
+without adding it to `project.json`, use `--file` — it bypasses target resolution
+entirely:
+
+```bash
+ia-framework agents inject --file /path/to/anywhere/AGENTS.md
+```
+
+> **Installer note:** the `install.sh` fallback prompt only lets you pick from
+> repos listed in `repos[]`. To inject into a location that isn't a listed repo,
+> add it to `agentInjectionTargets` in `project.json` (or use `--file` for a
+> one-off), then run `ia-framework agents inject`.
+
+#### Behavior summary
+
+| Situation | What happens |
+| --------- | ------------ |
+| One or more repos have `injectAgents: true` (and/or `agentInjectionTargets` set) | Each designated target's `AGENTS.md`/`CLAUDE.md` is created or refreshed. |
+| No repo is flagged and no extra targets set | The `agents inject` command modifies nothing and reports "no injection target configured". During `install.sh`, you're prompted to pick targets (choice is saved back to `project.json`). |
+| Legacy `targetProjectPath` config | That single target is injected as before (implicitly opted-in). |
+| An `agentInjectionTargets` path (not in `repos[]`) | Injected/refreshed at that path; never indexed; indexed repos unaffected. |
+| An `agentInjectionTargets` path equal to a flagged repo | De-duplicated — injected once. |
+| Target has both `AGENTS.md` and `CLAUDE.md` | Existing `AGENTS.md` wins; otherwise `CLAUDE.md`; otherwise a new `AGENTS.md` is created. |
+| A target path is missing/inaccessible | That target is reported as `failed`; remaining targets still process. |
+
+Run it with:
+
+```bash
+ia-framework agents inject     # inject/refresh all designated targets
+ia-framework agents check      # report which targets already have the guidance
+```
+
+See [Agent Documentation Commands](#agent-documentation-commands) for the full CLI.
+
+
 
 All fields with their defaults:
 
@@ -887,7 +1000,19 @@ All fields with their defaults:
   // --- Project target (pick one) ---
   "targetProjectPath": "/path/to/project", // Single-repo
   // OR
-  "repos": [{ "path": "...", "name": "..." }], // Multi-repo
+  "repos": [
+    {
+      "path": "...", // Repo path (resolved relative to this config file)
+      "name": "...", // Optional logical name (kebab-case; auto-derived from basename)
+      "provides": [], // Optional package names for cross-repo symbol resolution
+      "injectAgents": false, // Optional — true = inject agent docs here (default false, opt-in)
+    },
+  ], // Multi-repo
+
+  // --- Extra agent-docs injection targets (optional, injection-only, NEVER indexed) ---
+  "agentInjectionTargets": [
+    "..", // e.g. workspace/umbrella root or any folder not in repos[]
+  ],
 
   // --- Embedding (required) ---
   "embedding": {
@@ -908,22 +1033,32 @@ All fields with their defaults:
 
   // --- Indexing (optional) ---
   "indexing": {
-    "includePatterns": ["**/*.ts", "**/*.java"],
-    "excludePatterns": ["**/node_modules/**"],
+    "includePatterns": ["**/*.ts", "**/*.java"], // Glob patterns to index (empty = language defaults)
+    "excludePatterns": ["**/node_modules/**"], // Globs to skip
     "maxChunkLines": 200, // Max lines per chunk before splitting
-    "respectGitignore": true,
+    "respectGitignore": true, // Skip files ignored by .gitignore
     "embeddingConcurrency": 3, // Parallel embedding calls (Ollama: 3, OpenAI: 10)
+    "embeddingBatchSize": 50, // Chunks per embedding API call (1-200)
     "enrichment": {
-      // Optional LLM enrichment
-      "provider": "ollama",
-      "model": "qwen3:8b",
-      "baseUrl": "http://localhost:11434",
-      "numCtx": 32768,
-      "concurrency": 3,
-      "retryAttempts": 2,
-      "skipOnFailure": true,
+      // Optional LLM enrichment (Ollama-generated metadata per chunk)
+      "provider": "ollama", // Only "ollama" supported
+      "model": "qwen3:8b", // Ollama completion model (generates text, not embeddings)
+      "baseUrl": "http://localhost:11434", // Ollama API URL
+      "numCtx": 32768, // Context window size (tokens)
+      "concurrency": 3, // Max concurrent enrichment requests
+      "retryAttempts": 2, // Retries on Ollama failure (0-10)
+      "skipOnFailure": true, // Continue indexing if Ollama is down
+      "excludeLanguages": [], // Languages to skip enrichment for (still embedded)
+      "excludeStereotypes": [], // Stereotypes to skip (e.g. ["test", "dto"])
+      "excludeExtensions": [], // File extensions to skip (e.g. [".sql", ".xml"])
+      "minEnrichmentLines": 1, // Skip enrichment for chunks smaller than this
+      "maxBatchChunks": 50, // Max chunks per enrichment batch (1-50)
+      "charsPerToken": 4, // Token estimation ratio (1-10) for batch budgeting
+      "tokenBudgetRatio": 0.5, // Fraction of numCtx used for input (0.2-0.7)
+      "outputTokensPerChunk": 300, // Reserved output tokens per chunk (50-1000)
     },
   },
+
 
   // --- Retrieval tuning (optional) ---
   "retrieval": {
@@ -965,6 +1100,51 @@ All fields with their defaults:
   },
 }
 ```
+
+### Indexing Tuning
+
+The `indexing` block controls **what** gets indexed and **how fast/accurately** the
+pipeline runs. Defaults are sensible for most projects; tune these when indexing is
+too slow, too token-heavy, or when enrichment quality needs adjusting.
+
+**Scope — what gets indexed:**
+
+| Field | Default | When to change |
+| ----- | ------- | -------------- |
+| `includePatterns` | language defaults | Add globs to widen coverage, or narrow to a subset (e.g. `["src/**/*.ts"]`) to skip generated/vendor code. |
+| `excludePatterns` | `node_modules`, `dist`, `build`, `.git`, `coverage` | Add heavy or irrelevant paths (fixtures, snapshots, migrations) to shrink the index and speed up runs. |
+| `respectGitignore` | `true` | Set `false` only if you must index gitignored files. |
+| `maxChunkLines` | unset (natural AST boundaries) | Cap very large functions/classes so chunks stay embed-friendly; smaller = more, tighter chunks. |
+
+**Embedding throughput:**
+
+| Field | Default | Effect |
+| ----- | ------- | ------ |
+| `embeddingConcurrency` | Ollama `3` / OpenAI `10` | Higher = faster embedding but more load on Ollama/your quota. Lower if Ollama is timing out. |
+| `embeddingBatchSize` | `50` (1-200) | Chunks per embedding call. Larger batches reduce round-trips; too large can hit provider limits. |
+
+**Enrichment quality vs. cost** (the LLM step — the most expensive part; skip with `--skip-enrichment`):
+
+| Field | Default | Effect |
+| ----- | ------- | ------ |
+| `concurrency` | `3` | Parallel Ollama enrichment requests. Raise for speed if your GPU/host can handle it. |
+| `numCtx` | `32768` | Model context window. Larger fits more chunks per batch but uses more memory. |
+| `maxBatchChunks` | `50` (1-50) | Upper bound on chunks batched into one enrichment call. |
+| `tokenBudgetRatio` | `0.5` (0.2-0.7) | Fraction of `numCtx` reserved for input; the rest is output headroom. |
+| `outputTokensPerChunk` | `300` (50-1000) | Reserved output budget per chunk — raise for richer descriptions. |
+| `charsPerToken` | `4` (1-10) | Token-estimation ratio used for batch packing. |
+| `minEnrichmentLines` | `1` | Skip enrichment for tiny chunks below this line count (still embedded). |
+| `excludeLanguages` / `excludeStereotypes` / `excludeExtensions` | `[]` | Skip enrichment for whole languages, roles (e.g. `test`, `dto`), or extensions to save time — those chunks are still embedded, just without LLM metadata. |
+| `retryAttempts` | `2` (0-10) | Retries per chunk when Ollama fails. |
+| `skipOnFailure` | `true` | Keep indexing (structured fallback) if Ollama is unavailable, instead of aborting. |
+
+> **Fast path:** for the quickest possible index, run `ia-framework index
+> --skip-enrichment` — it skips the LLM step entirely and still produces
+> triple-vector embeddings and the dependency graph. Add enrichment later with a
+> plain `ia-framework index` (incremental — only changed files re-process).
+
+For retrieval-side tuning (`retrieval` block: `expansionHops`, RRF, reranking,
+multi-hop), see the annotated reference above.
 
 ### Environment Variables
 

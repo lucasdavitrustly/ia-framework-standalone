@@ -289,6 +289,78 @@ describe('ProjectConfigSchema — multi-repo format', () => {
   });
 });
 
+// ─── RepoEntrySchema.injectAgents (US1) ──────────────────────────────────────
+
+describe('RepoEntrySchema — injectAgents', () => {
+  const minimalEmbedding = { provider: 'openai' as const, model: 'text-embedding-3-small' };
+  const minimalVectorStore = { host: 'localhost', port: 6333, collectionName: 'test' };
+
+  it('accepts injectAgents: true on a repo entry', () => {
+    const result = ProjectConfigSchema.parse({
+      repos: [{ path: '../a', injectAgents: true }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.repos?.[0]?.injectAgents).toBe(true);
+  });
+
+  it('is optional — config is valid without injectAgents', () => {
+    const result = ProjectConfigSchema.parse({
+      repos: [{ path: '../a' }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.repos?.[0]?.injectAgents).toBeUndefined();
+  });
+
+  it('rejects a non-boolean injectAgents', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        repos: [{ path: '../a', injectAgents: 'yes' }],
+        embedding: minimalEmbedding,
+        vectorStore: minimalVectorStore,
+      }),
+    ).toThrow();
+  });
+});
+
+// ─── ProjectConfigSchema.agentInjectionTargets (US5) ─────────────────────────
+
+describe('ProjectConfigSchema — agentInjectionTargets', () => {
+  const minimalEmbedding = { provider: 'openai' as const, model: 'text-embedding-3-small' };
+  const minimalVectorStore = { host: 'localhost', port: 6333, collectionName: 'test' };
+
+  it('accepts an optional array of string paths', () => {
+    const result = ProjectConfigSchema.parse({
+      repos: [{ path: '../a' }],
+      agentInjectionTargets: ['..', '../ops-runbooks'],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.agentInjectionTargets).toEqual(['..', '../ops-runbooks']);
+  });
+
+  it('is valid when omitted', () => {
+    const result = ProjectConfigSchema.parse({
+      repos: [{ path: '../a' }],
+      embedding: minimalEmbedding,
+      vectorStore: minimalVectorStore,
+    });
+    expect(result.agentInjectionTargets).toBeUndefined();
+  });
+
+  it('rejects a non-array or non-string entries', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        repos: [{ path: '../a' }],
+        agentInjectionTargets: [123],
+        embedding: minimalEmbedding,
+        vectorStore: minimalVectorStore,
+      }),
+    ).toThrow();
+  });
+});
+
 describe('RetrievalConfigSchema — earlyExitConfidence', () => {
   it('accepts earlyExitConfidence: 0.8 and parses correctly', () => {
     const result = RetrievalConfigSchema.parse({ earlyExitConfidence: 0.8 });

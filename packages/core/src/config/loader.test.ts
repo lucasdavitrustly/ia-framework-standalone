@@ -67,6 +67,30 @@ describe('loadConfig', () => {
     const config = await loadConfig(configPath);
     expect(config.embedding.apiKey).toBeUndefined();
   });
+
+  // US3 (T021): repos[] without injectAgents loads without error
+  it('loads a repos[] config that has no injectAgents field', async () => {
+    const cfg = {
+      repos: [{ path: '../a' }, { path: '../b' }],
+      embedding: validConfig.embedding,
+      vectorStore: validConfig.vectorStore,
+    };
+    await writeFile(configPath, JSON.stringify(cfg));
+    const config = await loadConfig(configPath);
+    expect(config.repos).toHaveLength(2);
+    expect(config.repos?.[0]?.injectAgents).toBeUndefined();
+  });
+
+  // US1 (T026): malformed injectAgents surfaces a clear validation error
+  it('throws a validation error mentioning injectAgents when it is not a boolean', async () => {
+    const cfg = {
+      repos: [{ path: '../a', injectAgents: 'yes' }],
+      embedding: validConfig.embedding,
+      vectorStore: validConfig.vectorStore,
+    };
+    await writeFile(configPath, JSON.stringify(cfg));
+    await expect(loadConfig(configPath)).rejects.toThrow(/injectAgents/i);
+  });
 });
 
 describe('validateConfig', () => {

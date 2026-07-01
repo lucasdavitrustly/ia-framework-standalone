@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ia-framework/contracts/repo-entry.schema.json",
+  "title": "RepoEntry (with injectAgents)",
+  "description": "A single repository entry in project.json repos[]. Extended with the optional injectAgents opt-in flag for agent-docs injection targeting.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path"],
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repository path; resolved to absolute against the config directory at runtime."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Optional kebab-case logical name; derived from basename(path) when omitted. Must be unique across repos."
+    },
+    "provides": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Package names this repo provides (cross-repo symbol resolution)."
+    },
+    "profile": {
+      "type": "object",
+      "description": "Optional per-repo ProjectProfile override."
+    },
+    "injectAgents": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, this repo is an agent-docs injection target. Absent/null is treated as false (opt-in only). Legacy targetProjectPath configs have no repos[] and are implicitly opted-in. Non-indexed targets are configured separately via the top-level agentInjectionTargets array (string[])."
+    }
+  },
+  "examples": [
+    { "path": "../frontend", "injectAgents": true },
+    { "path": "../backend", "name": "backend" },
+    { "path": "../shared", "injectAgents": false }
+  ]
+}

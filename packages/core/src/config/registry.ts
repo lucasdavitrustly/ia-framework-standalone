@@ -9,11 +9,24 @@ function toKebabCase(str: string): string {
     .replace(/^-|-$/g, '');
 }
 
+/**
+ * A resolved agent-docs injection target.
+ * `indexed` is true for indexed repos (flagged repos[] or legacy target) and
+ * false for extra `agentInjectionTargets` paths that are not part of the index.
+ */
+export interface InjectionTarget {
+  path: string;
+  name?: string | undefined;
+  indexed: boolean;
+}
+
 export class RepoRegistry {
   private readonly entries: Map<string, RepoEntry>;
+  private readonly extraInjectionTargets: string[];
 
-  private constructor(entries: RepoEntry[]) {
+  private constructor(entries: RepoEntry[], extraInjectionTargets: string[] = []) {
     this.entries = new Map(entries.map((e) => [e.name!, e]));
+    this.extraInjectionTargets = extraInjectionTargets;
   }
 
   static fromConfig(config: ProjectConfig, configDir: string): RepoRegistry {
@@ -27,7 +40,8 @@ export class RepoRegistry {
       }));
     } else if (config.targetProjectPath) {
       const p = config.targetProjectPath;
-      rawEntries = [{ path: p, name: toKebabCase(basename(p)) }];
+      // Legacy single target is implicitly opted-in for injection.
+      rawEntries = [{ path: p, name: toKebabCase(basename(p)), injectAgents: true }];
     } else {
       throw new Error('Config must have either targetProjectPath or repos[]');
     }
@@ -41,7 +55,10 @@ export class RepoRegistry {
       );
     }
 
-    return new RepoRegistry(rawEntries as RepoEntry[]);
+    // Extra injection-only targets (US5) — resolved to absolute, never indexed.
+    const extra = (config.agentInjectionTargets ?? []).map((p) => resolve(configDir, p));
+
+    return new RepoRegistry(rawEntries as RepoEntry[], extra);
   }
 
   getRepos(): RepoEntry[] {
@@ -54,6 +71,33 @@ export class RepoRegistry {
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * Resolve the set of agent-docs injection targets (US1/US3/US5).
+   * - Indexed targets: repo entries flagged `injectAgents === true` (the legacy
+   *   single target is synthesized as implicitly opted-in).
+   * - Non-indexed targets: paths from `agentInjectionTargets` (already resolved
+   *   to absolute in `fromConfig`).
+   * De-duplicated by absolute path; a path present as both is returned once as indexed.
+   */
+  getInjectionTargets(): InjectionTarget[] {
+    const byPath = new Map<string, InjectionTarget>();
+
+    for (const entry of this.entries.values()) {
+      if (entry.injectAgents === true) {
+        byPath.set(entry.path, { path: entry.path, name: entry.name, indexed: true });
+      }
+    }
+
+    for (const path of this.extraInjectionTargets) {
+      // Do not downgrade an indexed target to non-indexed on collision.
+      if (!byPath.has(path)) {
+        byPath.set(path, { path, indexed: false });
+      }
+    }
+
+    return [...byPath.values()];
   }
 
   /**
@@ -80,6 +124,7 @@ export class RepoRegistry {
       name: entry.name,
       ...(entry.provides !== undefined ? { provides: entry.provides } : {}),
       ...(entry.profile !== undefined ? { profile: entry.profile } : {}),
+      ...(entry.injectAgents !== undefined ? { injectAgents: entry.injectAgents } : {}),
     }));
   }
 }

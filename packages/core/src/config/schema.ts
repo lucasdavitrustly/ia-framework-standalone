@@ -138,12 +138,16 @@ export const RepoEntrySchema = z.object({
     .optional(),
   provides: z.array(z.string()).optional(),
   profile: ProjectProfileSchema.optional(),
+  /** When true, this repo is an agent-docs injection target (opt-in; default false). */
+  injectAgents: z.boolean().optional(),
 });
 
 export const ProjectConfigSchema = z
   .object({
     targetProjectPath: z.string().min(1).optional(),
     repos: z.array(RepoEntrySchema).min(1).optional(),
+    /** Extra injection-only targets (paths) that are NOT indexed (resolved relative to config dir). */
+    agentInjectionTargets: z.array(z.string().min(1)).optional(),
     embedding: EmbeddingProviderConfigSchema,
     vectorStore: VectorStoreConfigSchema,
     indexing: IndexingConfigSchema.optional(),

@@ -258,12 +258,84 @@ echo ""
 # ──────────────────────────────────────────────────────
 echo -e "${BOLD}Step 6.5: Agent documentation${NC}"
 CONFIG_FILE="${SCRIPT_DIR}/.ia-framework/project.json"
-if [ -f "${SCRIPT_DIR}/packages/cli/dist/bin.js" ] && [ -f "$CONFIG_FILE" ]; then
-  echo -e "  ${YELLOW}→${NC} Injecting RAG tools guidance into target project..."
-  if node "${SCRIPT_DIR}/packages/cli/dist/bin.js" agents inject --config "$CONFIG_FILE"; then
-    echo -e "  ${GREEN}✓${NC} Agent documentation updated"
-  else
-    echo -e "  ${YELLOW}⚠${NC} Run 'ia-framework agents inject' later to add RAG guidance"
+CLI_BIN="${SCRIPT_DIR}/packages/cli/dist/bin.js"
+
+if [ -f "$CLI_BIN" ] && [ -f "$CONFIG_FILE" ]; then
+  # Ensure prompt helpers are available (install.sh may run this standalone).
+  if [ -f "${SCRIPT_DIR}/scripts/installer-helpers.sh" ]; then
+    # shellcheck source=scripts/installer-helpers.sh
+    source "${SCRIPT_DIR}/scripts/installer-helpers.sh"
+  fi
+
+  # Classify the config: "legacy" (targetProjectPath), "flagged" (>=1 repo with
+  # injectAgents:true or agentInjectionTargets set), or "unflagged" (repos[] with none).
+  _inject_state="$(node -e '
+    const fs = require("fs");
+    try {
+      const c = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+      if (c.targetProjectPath && !c.repos) { console.log("legacy"); process.exit(0); }
+      const repos = Array.isArray(c.repos) ? c.repos : [];
+      const flagged = repos.some((r) => r && r.injectAgents === true);
+      const extras = Array.isArray(c.agentInjectionTargets) && c.agentInjectionTargets.length > 0;
+      console.log(flagged || extras ? "flagged" : "unflagged");
+    } catch (e) { console.log("error"); }
+  ' "$CONFIG_FILE" 2>/dev/null)"
+
+  if [ "$_inject_state" = "unflagged" ]; then
+    # Zero repos flagged — offer a fallback selection (US2 / FR-010).
+    # Populate the toggle-select globals from repo names.
+    _repo_names_raw="$(node -e '
+      const fs = require("fs");
+      const c = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+      const path = require("path");
+      for (const r of (c.repos || [])) {
+        const name = r.name || path.basename(r.path);
+        console.log(name);
+      }
+    ' "$CONFIG_FILE" 2>/dev/null)"
+
+    _PTS_IDS=(); _PTS_NAMES=(); _PTS_DESCS=(); _PTS_PRESEL=()
+    while IFS= read -r _n; do
+      [ -n "$_n" ] || continue
+      _PTS_IDS+=( "$_n" ); _PTS_NAMES+=( "$_n" ); _PTS_DESCS+=( "inject agent docs into this repo" )
+    done <<< "$_repo_names_raw"
+
+    if [ "${#_PTS_IDS[@]}" -gt 0 ] && command -v prompt_toggle_select >/dev/null 2>&1; then
+      echo -e "  ${YELLOW}→${NC} No repos are marked for agent-docs injection yet."
+      _selected=""
+      prompt_toggle_select "Select repos to inject agent docs into" "_selected"
+      if [ -n "$_selected" ]; then
+        # Persist injectAgents:true for the chosen repos back to project.json (US2 / T019).
+        node -e '
+          const fs = require("fs");
+          const path = require("path");
+          const cfgPath = process.argv[1];
+          const chosen = new Set(process.argv.slice(2));
+          const c = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+          for (const r of (c.repos || [])) {
+            const name = r.name || path.basename(r.path);
+            if (chosen.has(name)) r.injectAgents = true;
+          }
+          fs.writeFileSync(cfgPath, JSON.stringify(c, null, 2) + "\n");
+        ' "$CONFIG_FILE" $_selected
+        echo -e "  ${GREEN}✓${NC} Saved injection targets to project.json"
+        _inject_state="flagged"
+      else
+        echo -e "  ${YELLOW}⚠${NC} No targets selected — skipping injection."
+        echo -e "     Enable later by setting \"injectAgents\": true on a repo, then run 'ia-framework agents inject'."
+      fi
+    fi
+  fi
+
+  if [ "$_inject_state" = "flagged" ] || [ "$_inject_state" = "legacy" ]; then
+    echo -e "  ${YELLOW}→${NC} Injecting RAG tools guidance into designated target(s)..."
+    if node "$CLI_BIN" agents inject --config "$CONFIG_FILE"; then
+      echo -e "  ${GREEN}✓${NC} Agent documentation updated"
+    else
+      echo -e "  ${YELLOW}⚠${NC} Run 'ia-framework agents inject' later to add RAG guidance"
+    fi
+  elif [ "$_inject_state" = "error" ]; then
+    echo -e "  ${YELLOW}⚠${NC} Could not read project.json — run 'ia-framework agents inject' after setup"
   fi
 else
   echo -e "  ${YELLOW}⚠${NC} Agent docs injection deferred — run 'ia-framework agents inject' after setup"

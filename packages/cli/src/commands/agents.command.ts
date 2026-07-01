@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import { readFile, writeFile, access } from 'node:fs/promises';
-import { join } from 'node:path';
-import { loadConfig } from '@ia-framework/core';
+import { join, dirname } from 'node:path';
+import { loadConfig, RepoRegistry } from '@ia-framework/core';
+import type { InjectionTarget } from '@ia-framework/core';
 
 export const RAG_MARKER_START = '<!-- ia-framework:rag-start -->';
 export const RAG_MARKER_END = '<!-- ia-framework:rag-end -->';
@@ -230,7 +231,37 @@ Pick the tactic by question type. All scenarios still obey the universal rules.
    biggest budget blow-out.
 3. Batch plan item (c): read the small \`EntryType\` / \`EntryStatus\` enums whole,
    each with the \`repo:\` prefix (those names exist in two repos).
-4. Three round-trips total. Stop once type + status are covered.`;
+4. Three round-trips total. Stop once type + status are covered.
+
+## When to use Context7
+
+Context7 provides up-to-date documentation for libraries, frameworks, SDKs, APIs,
+and CLI tools. Use it whenever a task depends on a specific library's current API,
+configuration, version migration, or CLI usage — even for well-known libraries —
+because training data may lag behind recent releases.
+
+- **Use it for**: library/framework API syntax, configuration options, setup and
+  installation steps, version/migration questions, and library-specific debugging.
+- **How**: resolve the library ID first (from the library name), then query the
+  specific task. Prefer Context7 over generic web search for any library-specific
+  documentation question.
+- **Do NOT use it for**: refactoring, writing scripts from scratch, debugging your
+  own business logic, code review, or general programming concepts unrelated to a
+  specific library.
+
+## When to use Sequential Thinking
+
+Sequential Thinking supports structured, multi-step, and revisable reasoning. Use
+it when a problem benefits from explicit, adjustable steps rather than a single
+answer.
+
+- **Use it for**: breaking complex problems into steps, planning/design work that
+  may need revision, analysis that might require course-correction, and multi-step
+  tasks where earlier conclusions may be reconsidered as understanding deepens.
+- **How**: express the reasoning as a sequence of thoughts, revising or adding
+  steps as needed, and converge on a single verified conclusion.
+- **Do NOT use it for**: trivial, single-step changes (e.g. a one-line edit, a
+  wording tweak) where the extra structure adds no value.`;
 
 function getConfigPath(options: { config?: string }): string {
   return (
@@ -238,40 +269,6 @@ function getConfigPath(options: { config?: string }): string {
     process.env['IA_FRAMEWORK_CONFIG'] ||
     join(process.cwd(), '.ia-framework', 'project.json')
   );
-}
-
-/**
- * Inject RAG guidance content into a file using marker-based idempotency.
- * If markers already exist, replaces content between them.
- * If no markers exist, appends to end of file.
- * If file doesn't exist, creates it with the content.
- */
-async function injectIntoFile(filePath: string): Promise<void> {
-  const block = `${RAG_MARKER_START}\n${RAG_CONTENT}\n${RAG_MARKER_END}`;
-
-  let existing = '';
-  try {
-    existing = await readFile(filePath, 'utf-8');
-  } catch {
-    // File doesn't exist — create with just the block
-    await writeFile(filePath, `${block}\n`);
-    return;
-  }
-
-  // Check for existing markers — replace if found
-  const startIdx = existing.indexOf(RAG_MARKER_START);
-  const endIdx = existing.indexOf(RAG_MARKER_END);
-
-  if (startIdx !== -1 && endIdx !== -1) {
-    // Replace between markers (inclusive)
-    const before = existing.slice(0, startIdx);
-    const after = existing.slice(endIdx + RAG_MARKER_END.length);
-    await writeFile(filePath, `${before}${block}${after}`);
-  } else {
-    // Append to end
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
-    await writeFile(filePath, `${existing}${separator}${block}\n`);
-  }
 }
 
 /**
@@ -286,13 +283,71 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Resolve the agent doc file for a target directory:
+ * existing AGENTS.md → existing CLAUDE.md → default to creating AGENTS.md.
+ */
+async function resolveAgentDocFile(projectRoot: string): Promise<string> {
+  const agentsPath = join(projectRoot, 'AGENTS.md');
+  const claudePath = join(projectRoot, 'CLAUDE.md');
+  if (await fileExists(agentsPath)) return agentsPath;
+  if (await fileExists(claudePath)) return claudePath;
+  return agentsPath;
+}
+
+type InjectionStatus = 'injected' | 'refreshed' | 'created' | 'skipped' | 'failed';
+
+interface InjectionOutcome {
+  target: string;
+  file?: string | undefined;
+  status: InjectionStatus;
+  error?: string | undefined;
+}
+
+/**
+ * Inject into a single file and report whether it was created, injected (new
+ * markers into an existing file), or refreshed (markers already present).
+ */
+async function injectIntoFileWithStatus(filePath: string): Promise<InjectionStatus> {
+  const block = `${RAG_MARKER_START}\n${RAG_CONTENT}\n${RAG_MARKER_END}`;
+
+  let existing = '';
+  try {
+    existing = await readFile(filePath, 'utf-8');
+  } catch {
+    await writeFile(filePath, `${block}\n`);
+    return 'created';
+  }
+
+  const startIdx = existing.indexOf(RAG_MARKER_START);
+  const endIdx = existing.indexOf(RAG_MARKER_END);
+
+  if (startIdx !== -1 && endIdx !== -1) {
+    const before = existing.slice(0, startIdx);
+    const after = existing.slice(endIdx + RAG_MARKER_END.length);
+    await writeFile(filePath, `${before}${block}${after}`);
+    return 'refreshed';
+  }
+
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+  await writeFile(filePath, `${existing}${separator}${block}\n`);
+  return 'injected';
+}
+
+/**
+ * Resolve the configured directory that project.json paths are relative to.
+ */
+function configDirFor(configPath: string): string {
+  return dirname(configPath);
+}
+
 // ── inject subcommand ─────────────────────────────────────────────────────────
 
 function injectSubcommand(): Command {
   return new Command('inject')
     .description('Inject RAG tools guidance into target project agent documentation')
     .option('-c, --config <path>', 'Path to project.json config', '')
-    .option('--file <path>', 'Target file path (overrides auto-detection)')
+    .option('--file <path>', 'Target file path (overrides target resolution)')
     .action(async (options: { config: string; file?: string }) => {
       const configPath = getConfigPath(options);
 
@@ -305,32 +360,68 @@ function injectSubcommand(): Command {
         return;
       }
 
-      let targetFile: string;
-
+      // --file forces a single explicit target, bypassing resolution.
       if (options.file) {
-        targetFile = options.file;
-      } else {
-        // Resolve project root: support both new repos[] format and legacy targetProjectPath
-        const projectRoot = config.targetProjectPath ?? config.repos?.[0]?.path ?? process.cwd();
-        // Auto-detect: AGENTS.md first, then CLAUDE.md
-        const agentsPath = join(projectRoot, 'AGENTS.md');
-        const claudePath = join(projectRoot, 'CLAUDE.md');
+        try {
+          const status = await injectIntoFileWithStatus(options.file);
+          console.log(`RAG guidance ${status}: ${options.file}`);
+        } catch (err) {
+          console.error(`Failed to inject: ${String(err)}`);
+          process.exit(1);
+        }
+        return;
+      }
 
-        if (await fileExists(agentsPath)) {
-          targetFile = agentsPath;
-        } else if (await fileExists(claudePath)) {
-          targetFile = claudePath;
-        } else {
-          // Default to creating AGENTS.md
-          targetFile = agentsPath;
+      // Resolve designated targets from the config (repos[] flags + legacy + extras).
+      let targets: InjectionTarget[];
+      try {
+        targets = RepoRegistry.fromConfig(config, configDirFor(configPath)).getInjectionTargets();
+      } catch (err) {
+        console.error(`Failed to resolve injection targets: ${String(err)}`);
+        process.exit(1);
+        return;
+      }
+
+      if (targets.length === 0) {
+        console.log(
+          'No injection target configured. Set "injectAgents": true on a repo in ' +
+            'project.json (or add "agentInjectionTargets"), or run the installer to choose.',
+        );
+        return;
+      }
+
+      const outcomes: InjectionOutcome[] = [];
+      for (const target of targets) {
+        try {
+          const file = await resolveAgentDocFile(target.path);
+          const status = await injectIntoFileWithStatus(file);
+          outcomes.push({ target: target.path, file, status });
+        } catch (err) {
+          outcomes.push({ target: target.path, status: 'failed', error: String(err) });
         }
       }
 
-      try {
-        await injectIntoFile(targetFile);
-        console.log(`RAG guidance injected into ${targetFile}`);
-      } catch (err) {
-        console.error(`Failed to inject: ${String(err)}`);
+      // Per-target summary (FR-011).
+      for (const o of outcomes) {
+        if (o.status === 'failed') {
+          console.log(`  ${o.target} — failed (${o.error ?? 'unknown error'})`);
+        } else {
+          console.log(`  ${o.target} — ${o.status} (${o.file ?? ''})`);
+        }
+      }
+      const counts = outcomes.reduce<Record<InjectionStatus, number>>(
+        (acc, o) => {
+          acc[o.status] += 1;
+          return acc;
+        },
+        { injected: 0, refreshed: 0, created: 0, skipped: 0, failed: 0 },
+      );
+      console.log(
+        `Injected: ${counts.injected}  Refreshed: ${counts.refreshed}  ` +
+          `Created: ${counts.created}  Skipped: ${counts.skipped}  Failed: ${counts.failed}`,
+      );
+
+      if (counts.failed > 0) {
         process.exit(1);
       }
     });
@@ -354,27 +445,45 @@ function checkSubcommand(): Command {
         return;
       }
 
+      let targets: InjectionTarget[];
+      try {
+        targets = RepoRegistry.fromConfig(config, configDirFor(configPath)).getInjectionTargets();
+      } catch (err) {
+        console.error(`Failed to resolve injection targets: ${String(err)}`);
+        process.exit(1);
+        return;
+      }
+
+      if (targets.length === 0) {
+        console.log('No injection target configured. Run: ia-framework agents inject');
+        return;
+      }
+
       const candidates = ['AGENTS.md', 'CLAUDE.md'];
-      const found: string[] = [];
+      let anyFound = false;
 
-      // Resolve project root: support both new repos[] format and legacy targetProjectPath
-      const projectRoot = config.targetProjectPath ?? config.repos?.[0]?.path ?? process.cwd();
-
-      for (const name of candidates) {
-        const filePath = join(projectRoot, name);
-        try {
-          const content = await readFile(filePath, 'utf-8');
-          if (content.includes(RAG_MARKER_START)) {
-            found.push(name);
+      for (const target of targets) {
+        const foundHere: string[] = [];
+        for (const name of candidates) {
+          const filePath = join(target.path, name);
+          try {
+            const content = await readFile(filePath, 'utf-8');
+            if (content.includes(RAG_MARKER_START)) {
+              foundHere.push(name);
+            }
+          } catch {
+            // File doesn't exist — skip
           }
-        } catch {
-          // File doesn't exist — skip
+        }
+        if (foundHere.length > 0) {
+          anyFound = true;
+          console.log(`  ${target.path} — found in: ${foundHere.join(', ')}`);
+        } else {
+          console.log(`  ${target.path} — not injected`);
         }
       }
 
-      if (found.length > 0) {
-        console.log(`RAG guidance found in: ${found.join(', ')}`);
-      } else {
+      if (!anyFound) {
         console.log('RAG guidance not found. Run: ia-framework agents inject');
       }
     });

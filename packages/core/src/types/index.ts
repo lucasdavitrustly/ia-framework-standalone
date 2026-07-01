@@ -196,6 +196,11 @@ export interface RepoEntry {
   provides?: string[] | undefined;
   /** Optional per-repo profile override */
   profile?: ProjectProfile | undefined;
+  /**
+   * When true, this repo is an agent-docs injection target (AGENTS.md / CLAUDE.md).
+   * Defaults to false; absent/undefined is treated as false (opt-in only).
+   */
+  injectAgents?: boolean | undefined;
 }
 
 // ============================================================
@@ -336,6 +341,11 @@ export interface ProjectConfig {
   targetProjectPath?: string | undefined;
   /** Multi-repo format: array of repo entries */
   repos?: RepoEntry[] | undefined;
+  /**
+   * Extra agent-docs injection targets that are NOT part of the index.
+   * Paths are resolved relative to the config file directory and are never indexed.
+   */
+  agentInjectionTargets?: string[] | undefined;
   /** Embedding provider configuration */
   embedding: EmbeddingProviderConfig;
   /** Vector store (Qdrant) configuration */
