@@ -227,8 +227,10 @@ describe('IndexingPipeline', () => {
 
     await pipeline.run(makeConfig({ incremental: true }));
 
-    // T095 fix: deleteByFilter is called with relativePath (not absolute filePath)
-    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ relativePath: 'foo.ts' });
+    // T095 fix: deleteByFilter is called with proper Qdrant filter for relativePath
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({
+      must: [{ key: 'relativePath', match: { value: 'foo.ts' } }],
+    });
     // Should call parseFile for the changed file
     expect(mockParseFile).toHaveBeenCalledWith(changedFile, expect.any(Object));
   });
@@ -241,8 +243,10 @@ describe('IndexingPipeline', () => {
 
     await pipeline.run(makeConfig({ incremental: true }));
 
-    // After fix: deleteByFilter must use relativePath, not the deprecated absolute filePath
-    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({ relativePath: expectedRelativePath });
+    // After fix: deleteByFilter must use proper Qdrant filter format, not raw key-value
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({
+      must: [{ key: 'relativePath', match: { value: expectedRelativePath } }],
+    });
     expect(vectorStore.deleteByFilter).not.toHaveBeenCalledWith({ filePath: changedFile });
   });
 

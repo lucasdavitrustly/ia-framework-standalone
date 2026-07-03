@@ -469,7 +469,9 @@ export class IndexingPipeline {
         const changedFiles = await getChangedFiles(targetProjectPath, lastCommit);
         // Delete old chunks for changed files before re-indexing
         for (const filePath of changedFiles) {
-          await vectorStore.deleteByFilter({ relativePath: relative(targetProjectPath, filePath) });
+          await vectorStore.deleteByFilter({
+            must: [{ key: 'relativePath', match: { value: relative(targetProjectPath, filePath) } }],
+          });
           if (dependencyGraph) {
             dependencyGraph.deleteEdgesForFile(filePath);
           }
