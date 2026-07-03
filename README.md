@@ -286,17 +286,19 @@ ia-framework search "database connection pool" --limit 5
 
 ### Step 8: Connect to OpenCode
 
-Add the MCP server to OpenCode's config at `~/.config/opencode/opencode.json`:
+Add the MCP server to OpenCode's config at `~/.config/opencode/opencode.jsonc` (or `opencode.json` for older versions):
 
-```json
+```jsonc
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "ia-framework": {
-      "command": "node",
-      "args": ["/path/to/ia-framework/packages/mcp-server/dist/bin.js"],
-      "env": {
+      "type": "local",
+      "command": ["node", "/path/to/ia-framework/packages/mcp-server/dist/bin.js"],
+      "environment": {
         "IA_FRAMEWORK_CONFIG": "/path/to/ia-framework/.ia-framework/project.json"
-      }
+      },
+      "enabled": true
     }
   }
 }
@@ -311,6 +313,63 @@ Restart OpenCode. The following tools are now available to your AI assistant:
 | `get_dependencies`      | Get imports/exports for a file or BFS module dependency traversal                                    |
 | `query_database`        | Execute SQL against a configured PostgreSQL database                                                 |
 | `index_database_schema` | Index database schema into Qdrant for search                                                         |
+
+### Step 8.1: Trustly LLM Gateway (Amazon Bedrock)
+
+The installer automatically configures the **Trustly-Claude** provider with Amazon Bedrock models. If you ran `./install.sh`, this is already done. To configure manually:
+
+**Available Models:**
+
+| Model ID | Display Name |
+|----------|-------------|
+| `bedrock-claude-sonnet-4-6` | Claude Sonnet 4.6 (Trustly Bedrock) |
+| `bedrock-claude-opus-4-8` | Claude Opus 4.8 (Trustly Bedrock) |
+| `bedrock-claude-haiku-4-5` | Claude Haiku 4.5 (Trustly Bedrock) |
+
+**Gateway URL:** `https://gateway.prd.devtools.trustly.cloud`
+
+**Manual Configuration** — add this to `~/.config/opencode/opencode.jsonc`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "Trustly-Claude": {
+      "options": {
+        "baseURL": "https://gateway.prd.devtools.trustly.cloud",
+        "apiKey": "YOUR_TRUSTLY_API_TOKEN"
+      },
+      "models": {
+        "bedrock-claude-sonnet-4-6": { "name": "Claude Sonnet 4.6 (Trustly Bedrock)" },
+        "bedrock-claude-opus-4-8": { "name": "Claude Opus 4.8 (Trustly Bedrock)" },
+        "bedrock-claude-haiku-4-5": { "name": "Claude Haiku 4.5 (Trustly Bedrock)" }
+      }
+    }
+  }
+}
+```
+
+**Obtaining an API Token:**
+- Contact the DevTools team or check your organization's internal documentation for the Trustly LLM Gateway token.
+- The token is passed as `apiKey` in the provider options.
+- An empty string is valid during setup — OpenCode will report an auth error until a real token is set.
+
+> **Note:** The installer writes configuration to both `opencode.jsonc` (primary) and `opencode.json` (backward compatibility). If you edit manually, update `opencode.jsonc` — it takes precedence.
+
+### OpenCode JSONC Configuration
+
+OpenCode supports two configuration file formats:
+
+| File | Format | Purpose |
+|------|--------|---------|
+| `~/.config/opencode/opencode.jsonc` | JSON with Comments | **Primary** — newer OpenCode versions read this file |
+| `~/.config/opencode/opencode.json` | Standard JSON | **Legacy** — maintained for backward compatibility |
+
+The ia-framework installer writes to **both** files automatically (dual-write). When editing manually, prefer `opencode.jsonc` — it supports `//` comments for documentation and is the canonical source for newer OpenCode versions.
+
+The `$schema` field (`https://opencode.ai/config.json`) provides editor autocompletion and validation.
+
+Top-level keys: `$schema`, `provider`, `mcp`, `permission`, `plugin`.
 
 ### Step 9: Start the Dashboard (Optional)
 
@@ -675,10 +734,11 @@ The **Atlassian** MCP uses the hosted remote endpoint via `mcp-remote`; authenti
 
 ### Manually configuring MCP servers
 
-You can also edit OpenCode's config directly at `~/.config/opencode/opencode.json`. Each server runs as a separate process and its tools become available alongside ia-framework's tools:
+You can also edit OpenCode's config directly at `~/.config/opencode/opencode.jsonc` (or `opencode.json` for older versions). Each server runs as a separate process and its tools become available alongside ia-framework's tools:
 
-```json
+```jsonc
 {
+  "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "ia-framework": {
       "type": "local",

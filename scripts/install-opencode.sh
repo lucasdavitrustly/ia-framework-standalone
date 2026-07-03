@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # install-opencode.sh — Install OpenCode CLI with platform-aware method selection
-# Provides: install_opencode() function
+# Provides: install_opencode(), configure_trustly_provider() functions
 #
 # Installation methods (from https://opencode.ai/download):
 #   - curl -fsSL https://opencode.ai/install | bash  (universal)
@@ -13,7 +13,7 @@
 #   - macOS: brew (if available), fallback curl
 #   - Linux: curl
 #
-# Non-interactive mode: set IA_NON_INTERACTIVE=1 or pipe stdin (non-TTY)
+# Non-interactive mode: set NON_INTERACTIVE=1 or pipe stdin (non-TTY)
 
 # ──────────────────────────────────────────────────────
 # install_opencode
@@ -130,5 +130,145 @@ install_opencode() {
   fi
 
   echo -e "  ${GREEN:-}✓${NC:-} OpenCode ready: $(opencode --version 2>/dev/null | head -1)"
+  return 0
+}
+
+# ──────────────────────────────────────────────────────
+# configure_trustly_provider
+# Configures the Trustly-Claude LLM provider in opencode.jsonc (and opencode.json).
+# Adds Amazon Bedrock Claude models with the Trustly gateway URL.
+# Prompts for API token interactively; uses empty string in non-interactive mode.
+#
+# Idempotent: if Trustly-Claude provider already exists, skips by default
+# (interactive mode offers keep/overwrite choice).
+# ──────────────────────────────────────────────────────
+configure_trustly_provider() {
+  echo -e "  ${YELLOW:-}→${NC:-} Configuring Trustly LLM Gateway (Amazon Bedrock)..."
+
+  # Resolve config paths (respect XDG_CONFIG_HOME)
+  local config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode"
+  local jsonc_file="${config_dir}/opencode.jsonc"
+  local json_file="${config_dir}/opencode.json"
+
+  mkdir -p "$config_dir"
+
+  # Migration: seed .jsonc from .json if .jsonc doesn't exist yet
+  if [ ! -f "$jsonc_file" ] && [ -f "$json_file" ]; then
+    _seed_jsonc_from_json "$jsonc_file" "$json_file"
+    echo -e "  ${BLUE:-}ℹ${NC:-} Migrated existing opencode.json → opencode.jsonc"
+  fi
+
+  # Ensure .jsonc exists
+  [ -f "$jsonc_file" ] || echo '{"$schema":"https://opencode.ai/config.json"}' > "$jsonc_file"
+
+  # Validate .jsonc is parseable; backup if malformed
+  if ! _read_jsonc "$jsonc_file" > /dev/null 2>&1; then
+    _backup_malformed_jsonc "$jsonc_file"
+  fi
+
+  # Check if Trustly-Claude provider already exists
+  local has_provider
+  has_provider=$(TRUSTLY_CHECK_FILE="$jsonc_file" node -e '
+    const { readFileSync } = require("fs");
+    const f = process.env.TRUSTLY_CHECK_FILE;
+    try {
+      const raw = readFileSync(f, "utf8");
+      const stripped = raw.replace(/("(?:[^"\\\\]|\\\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || "");
+      const cfg = JSON.parse(stripped);
+      process.stdout.write(cfg.provider && cfg.provider["Trustly-Claude"] ? "yes" : "no");
+    } catch { process.stdout.write("no"); }
+  ')
+
+  if [[ "$has_provider" == "yes" ]]; then
+    if is_noninteractive; then
+      echo -e "  ${BLUE:-}→${NC:-} Trustly-Claude provider already configured — skipping"
+      return 0
+    fi
+    if ! prompt_yn "Trustly-Claude provider already exists — overwrite?" N; then
+      echo -e "  ${BLUE:-}→${NC:-} Keeping existing Trustly-Claude configuration"
+      return 0
+    fi
+  fi
+
+  # Prompt for API token
+  local api_token=""
+  if is_noninteractive; then
+    echo -e "  ${BLUE:-}ℹ${NC:-} Non-interactive mode — using empty API token (update later in opencode.jsonc)"
+  else
+    echo ""
+    echo -e "  ${BOLD:-}Trustly API Token${NC:-}"
+    echo -e "  Enter your Trustly LLM Gateway API token."
+    echo -e "  (Leave empty to configure later)"
+    echo ""
+    printf "  Token: "
+    read -r api_token < /dev/tty || api_token=""
+  fi
+
+  # Write Trustly-Claude provider to .jsonc
+  TRUSTLY_CONFIG_FILE="$jsonc_file" \
+  TRUSTLY_API_TOKEN="$api_token" \
+  node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const f = process.env.TRUSTLY_CONFIG_FILE;
+const token = process.env.TRUSTLY_API_TOKEN || '';
+
+// Read and parse JSONC
+const raw = readFileSync(f, 'utf8');
+const stripped = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || '');
+let cfg = {};
+try { cfg = JSON.parse(stripped); } catch {}
+
+cfg['$schema'] ??= 'https://opencode.ai/config.json';
+cfg.provider ??= {};
+
+cfg.provider['Trustly-Claude'] = {
+  options: {
+    baseURL: 'https://gateway.prd.devtools.trustly.cloud',
+    apiKey: token
+  },
+  models: {
+    'bedrock-claude-sonnet-4-6': { name: 'Claude Sonnet 4.6 (Trustly Bedrock)' },
+    'bedrock-claude-opus-4-8': { name: 'Claude Opus 4.8 (Trustly Bedrock)' },
+    'bedrock-claude-haiku-4-5': { name: 'Claude Haiku 4.5 (Trustly Bedrock)' }
+  }
+};
+
+writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+
+  # Dual-write: also write provider to legacy .json file
+  [ -f "$json_file" ] || echo '{}' > "$json_file"
+  TRUSTLY_CONFIG_FILE="$json_file" \
+  TRUSTLY_API_TOKEN="$api_token" \
+  node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const f = process.env.TRUSTLY_CONFIG_FILE;
+const token = process.env.TRUSTLY_API_TOKEN || '';
+
+let cfg = {};
+try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch {}
+
+cfg.provider ??= {};
+cfg.provider['Trustly-Claude'] = {
+  options: {
+    baseURL: 'https://gateway.prd.devtools.trustly.cloud',
+    apiKey: token
+  },
+  models: {
+    'bedrock-claude-sonnet-4-6': { name: 'Claude Sonnet 4.6 (Trustly Bedrock)' },
+    'bedrock-claude-opus-4-8': { name: 'Claude Opus 4.8 (Trustly Bedrock)' },
+    'bedrock-claude-haiku-4-5': { name: 'Claude Haiku 4.5 (Trustly Bedrock)' }
+  }
+};
+
+writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+
+  if [[ -n "$api_token" ]]; then
+    echo -e "  ${GREEN:-}✓${NC:-} Trustly-Claude provider configured with API token"
+  else
+    echo -e "  ${GREEN:-}✓${NC:-} Trustly-Claude provider configured (token empty — update in ~/.config/opencode/opencode.jsonc)"
+  fi
+  echo -e "  ${BLUE:-}ℹ${NC:-} Models: bedrock-claude-sonnet-4-6, bedrock-claude-opus-4-8, bedrock-claude-haiku-4-5"
   return 0
 }

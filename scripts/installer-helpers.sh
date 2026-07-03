@@ -264,7 +264,16 @@ detect_ides() {
     # Source and check
     # shellcheck source=/dev/null
     source "$descriptor"
+    # Check primary detect path OR legacy path (for backward compat with opencode.json)
+    local _detected=false
     if [ -f "${IDE_DETECT_PATH}" ] || [ -d "${IDE_DETECT_PATH}" ]; then
+      _detected=true
+    elif [ -n "${IDE_DETECT_PATH_LEGACY:-}" ]; then
+      if [ -f "${IDE_DETECT_PATH_LEGACY}" ] || [ -d "${IDE_DETECT_PATH_LEGACY}" ]; then
+        _detected=true
+      fi
+    fi
+    if [ "$_detected" = "true" ]; then
       DETECTED_IDES+=("${IDE_ID}")
       DETECTED_IDE_NAMES+=("${IDE_NAME}")
     fi

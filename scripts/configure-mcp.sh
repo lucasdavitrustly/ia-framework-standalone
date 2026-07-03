@@ -104,6 +104,68 @@ EOF
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# _read_jsonc FILE
+# Reads a JSONC file, strips single-line (//) and multi-line (/* */) comments,
+# and outputs clean JSON to stdout. Returns non-zero if the file doesn't exist
+# or the stripped content is not valid JSON.
+# ──────────────────────────────────────────────────────────────────────────────
+_read_jsonc() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  JSONC_FILE="$file" node --input-type=module <<'EOF'
+import { readFileSync } from 'fs';
+const raw = readFileSync(process.env.JSONC_FILE, 'utf8');
+// Strip single-line comments (// ...) and multi-line comments (/* ... */)
+// but not inside JSON strings
+const stripped = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || '');
+try {
+  const obj = JSON.parse(stripped);
+  process.stdout.write(JSON.stringify(obj));
+} catch {
+  process.exit(1);
+}
+EOF
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _seed_jsonc_from_json JSONC_FILE JSON_FILE
+# If JSONC_FILE doesn't exist but JSON_FILE does, copies JSON_FILE content to
+# JSONC_FILE as the migration seed. Adds $schema if missing.
+# ──────────────────────────────────────────────────────────────────────────────
+_seed_jsonc_from_json() {
+  local jsonc_file="$1"
+  local json_file="$2"
+
+  # Only seed if .jsonc is absent and .json exists
+  [ ! -f "$jsonc_file" ] || return 0
+  [ -f "$json_file" ] || return 0
+
+  SEED_SRC="$json_file" SEED_DST="$jsonc_file" node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
+const src = process.env.SEED_SRC;
+const dst = process.env.SEED_DST;
+let cfg = {};
+try { cfg = JSON.parse(readFileSync(src, 'utf8')); } catch { cfg = {}; }
+cfg['$schema'] ??= 'https://opencode.ai/config.json';
+mkdirSync(dirname(dst), { recursive: true });
+writeFileSync(dst, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _backup_malformed_jsonc FILE
+# Backs up a malformed JSONC file as FILE.bak.<timestamp> and creates a fresh one.
+# ──────────────────────────────────────────────────────────────────────────────
+_backup_malformed_jsonc() {
+  local file="$1"
+  local bak="${file}.bak.$(date +%s)"
+  cp "$file" "$bak"
+  echo -e "  ${YELLOW:-}⚠${NC:-} Malformed ${file} backed up to ${bak} — creating fresh config"
+  echo '{"$schema":"https://opencode.ai/config.json"}' > "$file"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # detect_mcp_state MCP_ID IDE_MCP_CONFIG IDE_MCP_FORMAT
 # Outputs: configured | absent
 # ──────────────────────────────────────────────────────────────────────────────
@@ -112,10 +174,61 @@ detect_mcp_state() {
   local config_file="$2"
   local format="$3"
 
+  # For opencode-json format, check .jsonc primary, fallback to .json
+  if [[ "$format" == "opencode-json" ]]; then
+    local legacy_file="${config_file%.jsonc}.json"
+    if [[ "$config_file" == "$legacy_file" ]]; then
+      legacy_file="$(dirname "$config_file")/opencode.json"
+    fi
+
+    # Check primary .jsonc first
+    if [ -f "$config_file" ]; then
+      local result
+      result=$(MCP_STATE_CHECK_ID="$mcp_id" \
+      MCP_STATE_CHECK_FILE="$config_file" \
+      node -e '
+        const { readFileSync } = require("fs");
+        const f = process.env.MCP_STATE_CHECK_FILE;
+        const id = process.env.MCP_STATE_CHECK_ID;
+        try {
+          const raw = readFileSync(f, "utf8");
+          const stripped = raw.replace(/("(?:[^"\\\\]|\\\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || "");
+          const cfg = JSON.parse(stripped);
+          const mcpKey = cfg.mcp || {};
+          process.stdout.write(mcpKey[id] ? "configured" : "absent");
+        } catch(e) { process.stdout.write("absent"); }
+      ')
+      if [[ "$result" == "configured" ]]; then
+        echo "configured"
+        return
+      fi
+    fi
+
+    # Fallback: check legacy .json
+    if [ -f "$legacy_file" ]; then
+      MCP_STATE_CHECK_ID="$mcp_id" \
+      MCP_STATE_CHECK_FILE="$legacy_file" \
+      node --input-type=module <<'EOF'
+import { readFileSync } from 'fs';
+const f = process.env.MCP_STATE_CHECK_FILE;
+const id = process.env.MCP_STATE_CHECK_ID;
+try {
+  const cfg = JSON.parse(readFileSync(f, 'utf8'));
+  const mcpKey = cfg.mcp ?? {};
+  process.stdout.write(mcpKey[id] ? 'configured' : 'absent');
+} catch { process.stdout.write('absent'); }
+EOF
+      return
+    fi
+
+    echo "absent"
+    return
+  fi
+
   [ -f "$config_file" ] || { echo "absent"; return; }
 
   case "$format" in
-    opencode-json|claude-json|vscode-json)
+    claude-json|vscode-json)
       MCP_STATE_CHECK_ID="$mcp_id" \
       MCP_STATE_CHECK_FILE="$config_file" \
       node --input-type=module <<'EOF'
@@ -282,21 +395,80 @@ configure_postgres_db_json() {
 
 # ──────────────────────────────────────────────────────────────────────────────
 # install_mcp_opencode MCP_JSON_PATH IDE_MCP_CONFIG IA_FRAMEWORK_DIR CONFIG_FILE
+# Dual-writes MCP entry to both opencode.jsonc (primary) and opencode.json (legacy).
+# If .jsonc doesn't exist but .json does, seeds .jsonc from .json first (migration).
 # ──────────────────────────────────────────────────────────────────────────────
 install_mcp_opencode() {
   local mcp_json="$1"
-  local config_file="$2"
+  local config_file="$2"   # This is now IDE_MCP_CONFIG = opencode.jsonc
   local ia_dir="$3"
   local config_path="$4"
 
+  # Derive legacy .json path from .jsonc path
+  local legacy_file="${config_file%.jsonc}.json"
+  # If config_file doesn't end in .jsonc (edge case), compute legacy from directory
+  if [[ "$config_file" == "$legacy_file" ]]; then
+    legacy_file="$(dirname "$config_file")/opencode.json"
+  fi
+
   mkdir -p "$(dirname "$config_file")"
-  [ -f "$config_file" ] || echo '{}' > "$config_file"
+
+  # Migration: seed .jsonc from .json if .jsonc absent
+  _seed_jsonc_from_json "$config_file" "$legacy_file"
+
+  # Ensure both files exist
+  [ -f "$config_file" ] || echo '{"$schema":"https://opencode.ai/config.json"}' > "$config_file"
+  [ -f "$legacy_file" ] || echo '{}' > "$legacy_file"
+
+  # Validate .jsonc is parseable; backup if malformed
+  if ! _read_jsonc "$config_file" > /dev/null 2>&1; then
+    _backup_malformed_jsonc "$config_file"
+  fi
 
   local resolved_cmd
   resolved_cmd=$(_resolve_mcp_command "$mcp_json" "$ia_dir" "$config_path")
 
+  # Write to primary .jsonc file
   MCP_JSON_PATH="$mcp_json" \
   MCP_CONFIG_FILE="$config_file" \
+  MCP_RESOLVED_CMD="$resolved_cmd" \
+  IA_FRAMEWORK_DIR="$ia_dir" \
+  IA_CONFIG_PATH="$config_path" \
+  node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const mcp = JSON.parse(readFileSync(process.env.MCP_JSON_PATH, 'utf8'));
+const f = process.env.MCP_CONFIG_FILE;
+const resolvedCmd = JSON.parse(process.env.MCP_RESOLVED_CMD);
+
+// Read JSONC: strip comments before parsing
+const raw = readFileSync(f, 'utf8');
+const stripped = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || '');
+let cfg = {};
+try { cfg = JSON.parse(stripped); } catch {}
+cfg['$schema'] ??= 'https://opencode.ai/config.json';
+cfg.mcp ??= {};
+
+const entry = { type: 'local', command: resolvedCmd, enabled: true };
+if (mcp.environment && Object.keys(mcp.environment).length > 0) {
+  const iaDir = process.env.IA_FRAMEWORK_DIR;
+  const cfgPath = process.env.IA_CONFIG_PATH;
+  const env = {};
+  for (const [k, v] of Object.entries(mcp.environment)) {
+    env[k] = v
+      .replace('{{IA_FRAMEWORK_DIR}}', iaDir)
+      .replace('{{CONFIG_PATH}}', cfgPath)
+      .replace('{{MCP_BIN}}', `${iaDir}/packages/mcp-server/dist/bin.js`);
+  }
+  if (Object.keys(env).some(k => env[k])) entry.environment = env;
+}
+
+cfg.mcp[mcp.id] = entry;
+writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+
+  # Dual-write: also write to legacy .json file
+  MCP_JSON_PATH="$mcp_json" \
+  MCP_CONFIG_FILE="$legacy_file" \
   MCP_RESOLVED_CMD="$resolved_cmd" \
   IA_FRAMEWORK_DIR="$ia_dir" \
   IA_CONFIG_PATH="$config_path" \
@@ -312,7 +484,6 @@ cfg.mcp ??= {};
 
 const entry = { type: 'local', command: resolvedCmd, enabled: true };
 if (mcp.environment && Object.keys(mcp.environment).length > 0) {
-  // Resolve env vars (substitute placeholders)
   const iaDir = process.env.IA_FRAMEWORK_DIR;
   const cfgPath = process.env.IA_CONFIG_PATH;
   const env = {};
@@ -462,8 +633,27 @@ uninstall_mcp() {
 
   case "$format" in
     opencode-json)
+      # Remove from primary .jsonc file (handles comments)
       MCP_REMOVE_ID="$mcp_id" MCP_CONFIG_FILE="$config_file" \
       node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const f = process.env.MCP_CONFIG_FILE;
+const id = process.env.MCP_REMOVE_ID;
+const raw = readFileSync(f, 'utf8');
+const stripped = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || '');
+let cfg = {};
+try { cfg = JSON.parse(stripped); } catch { process.exit(0); }
+if (cfg.mcp) delete cfg.mcp[id];
+writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+      # Also remove from legacy .json file
+      local legacy_file="${config_file%.jsonc}.json"
+      if [[ "$config_file" == "$legacy_file" ]]; then
+        legacy_file="$(dirname "$config_file")/opencode.json"
+      fi
+      if [ -f "$legacy_file" ]; then
+        MCP_REMOVE_ID="$mcp_id" MCP_CONFIG_FILE="$legacy_file" \
+        node --input-type=module <<'EOF'
 import { readFileSync, writeFileSync } from 'fs';
 const f = process.env.MCP_CONFIG_FILE;
 const id = process.env.MCP_REMOVE_ID;
@@ -472,6 +662,7 @@ try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch { process.exit(0); }
 if (cfg.mcp) delete cfg.mcp[id];
 writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
 EOF
+      fi
       ;;
     claude-json)
       MCP_REMOVE_ID="$mcp_id" MCP_CONFIG_FILE="$config_file" \

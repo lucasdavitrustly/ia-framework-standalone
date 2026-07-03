@@ -215,6 +215,22 @@ else
 fi
 echo ""
 
+# Step 5.3: Configure Trustly LLM provider
+echo -e "${BOLD}Step 5.3: Trustly LLM Gateway${NC}"
+if [ -f "${SCRIPT_DIR}/scripts/install-opencode.sh" ]; then
+  # shellcheck source=scripts/install-opencode.sh
+  source "${SCRIPT_DIR}/scripts/install-opencode.sh"
+  # Ensure configure-mcp.sh helpers are available (_seed_jsonc_from_json, _read_jsonc, etc.)
+  if [ -f "${SCRIPT_DIR}/scripts/configure-mcp.sh" ]; then
+    source "${SCRIPT_DIR}/scripts/configure-mcp.sh"
+  fi
+  configure_trustly_provider || \
+    echo -e "  ${YELLOW}⚠${NC} Trustly provider configuration skipped"
+else
+  echo -e "  ${YELLOW}⚠${NC} install-opencode.sh not found — Trustly provider setup deferred"
+fi
+echo ""
+
 # ──────────────────────────────────────────────────────
 # Step 6: Start services (Qdrant + Dashboard)
 # ──────────────────────────────────────────────────────
@@ -359,6 +375,7 @@ echo "Start indexing: Open the dashboard and click 'Start Indexing', or run:"
 echo "  ia-framework index"
 echo ""
 echo "OpenCode MCP: Restart your IDE to load the ia-framework tools"
+echo "Trustly LLM:  Models configured in ~/.config/opencode/opencode.jsonc"
 echo "Dashboard:    http://localhost:${DASHBOARD_PORT:-3000}"
 echo ""
 echo -e "Config: ${BLUE}${SCRIPT_DIR}/.ia-framework/project.json${NC}"

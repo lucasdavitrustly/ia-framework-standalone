@@ -5,13 +5,15 @@
 
 IDE_ID="opencode"
 IDE_NAME="OpenCode"
-IDE_DETECT_PATH="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode/opencode.json"
+IDE_DETECT_PATH="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode/opencode.jsonc"
+IDE_DETECT_PATH_LEGACY="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode/opencode.json"
 IDE_GLOBAL_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode"
 IDE_SKILLS_DIR="${IDE_GLOBAL_DIR}/skills"
 IDE_AGENTS_DIR="${IDE_GLOBAL_DIR}/agents"
 IDE_COMMANDS_DIR="${IDE_GLOBAL_DIR}/command"   # singular — confirmed from live filesystem
 IDE_HOOKS_DIR="${IDE_GLOBAL_DIR}/hooks"
-IDE_MCP_CONFIG="${IDE_GLOBAL_DIR}/opencode.json"
+IDE_MCP_CONFIG="${IDE_GLOBAL_DIR}/opencode.jsonc"
+IDE_MCP_CONFIG_LEGACY="${IDE_GLOBAL_DIR}/opencode.json"
 IDE_MCP_FORMAT="opencode-json"
 IDE_AGENT_FORMAT="md"
 IDE_SUPPORTS_SYMLINK="true"
