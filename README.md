@@ -8,9 +8,9 @@ A local RAG (Retrieval-Augmented Generation) framework that gives AI coding assi
 
 ```
 Your Project                  ia-framework                    OpenCode
-┌──────────────┐    index    ┌───────────────┐    MCP     ┌──────────────┐
-│ TypeScript    │ ─────────► │ AST Parser    │ ────────── │ search_      │
-│ Java / Proto │            │ LLM Enrich   │  3 tools   │   codebase   │
+┌──────────────┐    index   ┌───────────────┐    MCP     ┌──────────────┐
+│ TypeScript   │ ─────────► │ AST Parser    │ ────────── │ search_      │
+│ Java / Proto │            │ LLM Enrich    │  3 tools   │   codebase   │
 │ YAML / XML   │            │ Triple-Vector │            │ get_file     │
 │ SQL / ...    │            │ Qdrant (lean) │            │ get_deps     │
 └──────────────┘            └───────────────┘            └──────────────┘
