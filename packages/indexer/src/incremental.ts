@@ -116,19 +116,47 @@ export async function getCurrentCommit(projectPath: string): Promise<string | nu
   }
 }
 
-export async function getChangedFiles(projectPath: string, sinceCommit: string): Promise<string[]> {
+export interface ChangedFiles {
+  /** Files that were added, copied, modified, or renamed (new path) — exist on disk, need re-parsing. */
+  toProcess: string[];
+  /** Files that were deleted or renamed (old path) — no longer on disk, need removal from vector store. */
+  toDelete: string[];
+}
+
+export async function getChangedFiles(projectPath: string, sinceCommit: string): Promise<ChangedFiles> {
+  const result: ChangedFiles = { toProcess: [], toDelete: [] };
+
   try {
-    const { stdout } = await execFileAsync(
+    // Files to re-parse: Added, Copied, Modified, Renamed (new name)
+    const { stdout: processStdout } = await execFileAsync(
       'git',
-      ['diff', '--name-only', `${sinceCommit}...HEAD`],
+      ['diff', '--name-only', '--diff-filter=ACMR', `${sinceCommit}...HEAD`],
       { cwd: projectPath },
     );
-    return stdout
+    result.toProcess = processStdout
       .trim()
       .split('\n')
       .filter(Boolean)
       .map((f) => join(projectPath, f));
   } catch {
-    return [];
+    // If git command fails, return empty — caller will fall back to full index
   }
+
+  try {
+    // Files to remove from store: Deleted (and old paths of Renames)
+    const { stdout: deleteStdout } = await execFileAsync(
+      'git',
+      ['diff', '--name-only', '--diff-filter=D', `${sinceCommit}...HEAD`],
+      { cwd: projectPath },
+    );
+    result.toDelete = deleteStdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((f) => join(projectPath, f));
+  } catch {
+    // If git command fails, skip deletions
+  }
+
+  return result;
 }

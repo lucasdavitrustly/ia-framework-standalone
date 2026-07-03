@@ -466,9 +466,9 @@ export class IndexingPipeline {
           excludePatterns,
         });
       } else if (lastCommit) {
-        const changedFiles = await getChangedFiles(targetProjectPath, lastCommit);
-        // Delete old chunks for changed files before re-indexing
-        for (const filePath of changedFiles) {
+        const { toProcess, toDelete } = await getChangedFiles(targetProjectPath, lastCommit);
+        // Delete old chunks for deleted files and files that will be re-indexed
+        for (const filePath of [...toDelete, ...toProcess]) {
           await vectorStore.deleteByFilter({
             must: [{ key: 'relativePath', match: { value: relative(targetProjectPath, filePath) } }],
           });
@@ -476,7 +476,8 @@ export class IndexingPipeline {
             dependencyGraph.deleteEdgesForFile(filePath);
           }
         }
-        filesToProcess = changedFiles;
+        // Only parse files that still exist on disk (excludes deleted files)
+        filesToProcess = toProcess;
       } else {
         // No prior state — full index
         filesToProcess = await walkFiles({

@@ -62,7 +62,7 @@ vi.mock('@ia-framework/ast-parser', () => ({
 
 vi.mock('./incremental.js', () => ({
   getLastIndexedCommit: mockGetLastIndexedCommit,
-  getChangedFiles: vi.fn().mockResolvedValue([]),
+  getChangedFiles: vi.fn().mockResolvedValue({ toProcess: [], toDelete: [] }),
   getCurrentCommit: mockGetCurrentCommit,
   saveLastIndexedCommit: mockSaveLastIndexedCommit,
   getLastPromptContentHash: vi.fn().mockResolvedValue(null),

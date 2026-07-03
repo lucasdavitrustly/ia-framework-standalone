@@ -223,7 +223,7 @@ describe('IndexingPipeline', () => {
   it('Test 6: run() with incremental=true only processes changed files', async () => {
     const changedFile = join(tmpDir, 'foo.ts');
     mockGetLastIndexedCommit.mockResolvedValue('old-commit-hash');
-    mockGetChangedFiles.mockResolvedValue([changedFile]);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [changedFile], toDelete: [] });
 
     await pipeline.run(makeConfig({ incremental: true }));
 
@@ -239,7 +239,7 @@ describe('IndexingPipeline', () => {
     const changedFile = join(tmpDir, 'foo.ts');
     const expectedRelativePath = relative(tmpDir, changedFile); // = 'foo.ts'
     mockGetLastIndexedCommit.mockResolvedValue('old-commit-hash');
-    mockGetChangedFiles.mockResolvedValue([changedFile]);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [changedFile], toDelete: [] });
 
     await pipeline.run(makeConfig({ incremental: true }));
 
@@ -913,7 +913,7 @@ describe('IndexingPipeline — dependencyGraph', () => {
   it('calls deleteEdgesForFile during incremental indexing before re-indexing', async () => {
     const changedFile = join(tmpDir, 'foo.ts');
     mockGetLastIndexedCommit.mockResolvedValue('old-commit');
-    mockGetChangedFiles.mockResolvedValue([changedFile]);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [changedFile], toDelete: [] });
     mockParseFile.mockResolvedValue([
       {
         id: 'chunk-1',
@@ -1081,7 +1081,7 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
 
   it('does not force re-index when prompt hash matches', async () => {
     mockGetLastIndexedCommit.mockResolvedValue('abc123');
-    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [], toDelete: [] });
     mockGetLastPromptContentHash.mockResolvedValue('test-hash-abc');
 
     const llmStrategy = {
@@ -1098,7 +1098,7 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
 
   it('does not check prompt hash for AST strategy', async () => {
     mockGetLastIndexedCommit.mockResolvedValue('abc123');
-    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [], toDelete: [] });
     mockGetLastPromptContentHash.mockResolvedValue(null);
 
     const result = await pipeline.run(makeConfig({ incremental: true }));
@@ -1123,7 +1123,7 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
 
   it('treats null stored prompt hash as first-time (no force re-index)', async () => {
     mockGetLastIndexedCommit.mockResolvedValue('abc123');
-    mockGetChangedFiles.mockResolvedValue([]);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [], toDelete: [] });
     mockGetLastPromptContentHash.mockResolvedValue(null);
 
     const llmStrategy = {
