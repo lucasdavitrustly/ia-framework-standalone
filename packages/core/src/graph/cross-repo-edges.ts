@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { createDatabase, type SqliteDatabase } from '../sqlite/index.js';
 
 export interface CrossRepoEdge {
   id?: number;
@@ -11,10 +11,10 @@ export interface CrossRepoEdge {
 }
 
 export class CrossRepoEdgeStore {
-  private db: Database.Database;
+  private db: SqliteDatabase;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
+    this.db = createDatabase(dbPath).db;
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cross_repo_edges (
