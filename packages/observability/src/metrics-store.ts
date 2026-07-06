@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { createDatabase, type SqliteDatabase } from '@ia-framework/core';
 import type {
   RagEvent,
   SessionStats,
@@ -21,10 +21,10 @@ import type {
  * All operations are synchronous — no async/await needed.
  */
 export class MetricsStore {
-  private readonly db: Database.Database;
+  private readonly db: SqliteDatabase;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
+    this.db = createDatabase(dbPath).db;
     this.initialize();
   }
 

@@ -68,3 +68,12 @@ export type {
   ModuleGraph,
   ModuleGraphJSON,
 } from './maven/index.js';
+
+// SQLite adapter (backend-agnostic: node:sqlite primary, better-sqlite3 fallback)
+export { createDatabase, detectSqliteBackend } from './sqlite/index.js';
+export type {
+  SqliteDatabase,
+  SqliteStatement,
+  SqliteBackend,
+  SqliteDatabaseHandle,
+} from './sqlite/index.js';

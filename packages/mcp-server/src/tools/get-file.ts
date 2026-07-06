@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 import { formatRetrievalContext } from './result-formatting.js';
 import { coercedNumber } from './coerce.js';
+import { withDegradation, type ServerCapabilities } from '../capabilities.js';
 
 type Engine = {
   getFile(path: string, repoId?: string): Promise<RetrievalResult[]>;
@@ -28,6 +29,8 @@ export interface GetFileOptions {
   statFn?: (path: string, repo?: string) => Promise<{ mtimeMs: number }>;
   /** Enable session-level dedup cache. Default: false. */
   sessionCache?: boolean;
+  /** Runtime capabilities — degradation surfaced in response structuredContent. */
+  capabilities?: ServerCapabilities | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -491,7 +494,19 @@ function buildStoredContentResponse(
 
   const title = fallbackNote ? `## Indexed evidence for: ${inputPath}` : `## File: ${filePath}`;
   const conclusion = `Conclusion: returning ${results.length} indexed ${results.length === 1 ? 'section' : 'sections'} for ${inputPath}.`;
-  const text = `${conclusion}\n\n${fallbackNote ? `${fallbackNote}\n\n` : ''}${title}\n\n${allSections.join('\n\n')}`;
+
+  // Detect lean-payload case: filesystem read failed AND stored chunk content
+  // is empty, so we have nothing useful to return. Give the caller actionable
+  // diagnostics rather than a silent empty response.
+  const allContentEmpty = results.every((r) => !r.content || r.content.trim() === '');
+  const leanPayloadNote =
+    fsReadFailed && allContentEmpty
+      ? `\n\n> Warning: the file could not be read from the filesystem and the index holds no stored content for it (lean-payload schema). ` +
+        `Likely causes: (a) the repo path is misconfigured in .ia-framework/project.json, (b) the file was moved or deleted, or ` +
+        `(c) the working directory does not resolve to the project root. Verify the configured repo root and the file path.`
+      : '';
+
+  const text = `${conclusion}${leanPayloadNote}\n\n${fallbackNote ? `${fallbackNote}\n\n` : ''}${title}\n\n${allSections.join('\n\n')}`;
 
   const usedFallback = fsReadFailed || !!fallbackNote;
 
@@ -541,7 +556,13 @@ export function registerGetFileTool(
       },
     },
     async (input) => {
-      return getFileHandler(engine, input, options);
+      const result = await getFileHandler(engine, input, options);
+      // Surface degradation (unavailable features) via structuredContent.
+      const merged = withDegradation(
+        result.structuredContent as Record<string, unknown> | undefined,
+        options?.capabilities,
+      );
+      return merged ? { ...result, structuredContent: merged } : result;
     },
   );
 }

@@ -14,8 +14,10 @@
  * Exits with error if no collections are found.
  */
 import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadConfig, createLogger, RepoRegistry } from '@ia-framework/core';
+import { loadConfig, createLogger, RepoRegistry, detectSqliteBackend } from '@ia-framework/core';
 import { createEmbeddingProvider, CachingEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
@@ -27,13 +29,67 @@ import {
 import type { CollectionEngine } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 import { createMcpServer } from './server.js';
+import { createCapabilities, serverMode, type ServerCapabilities } from './capabilities.js';
 
 const logger = createLogger('mcp-server');
 
+/**
+ * Discover the .ia-framework/project.json config path in a CWD-independent way.
+ *
+ * Resolution order:
+ *  1. IA_FRAMEWORK_CONFIG env var (explicit, absolute) — highest priority.
+ *  2. Walk up from this binary's own location (import.meta.url) looking for
+ *     .ia-framework/project.json — robust when the MCP host spawns the server
+ *     with a working directory other than the project root.
+ *  3. process.cwd()/.ia-framework/project.json — last-resort legacy behavior.
+ *
+ * Returns the resolved path and the method used (for diagnostics).
+ */
+function discoverConfigPath(): { configPath: string; method: string } {
+  const envPath = process.env['IA_FRAMEWORK_CONFIG'];
+  if (envPath) {
+    return { configPath: envPath, method: 'env:IA_FRAMEWORK_CONFIG' };
+  }
+
+  // Walk up from the binary's directory looking for .ia-framework/project.json.
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    // Bound the walk to avoid infinite loops on odd filesystems.
+    for (let i = 0; i < 20; i++) {
+      const candidate = join(dir, '.ia-framework', 'project.json');
+      if (existsSync(candidate)) {
+        return { configPath: candidate, method: 'import.meta.url-walkup' };
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // fileURLToPath may fail in exotic bundling scenarios — fall through to cwd.
+  }
+
+  return {
+    configPath: join(process.cwd(), '.ia-framework', 'project.json'),
+    method: 'process.cwd()',
+  };
+}
+
 async function main(): Promise<void> {
-  // Load config from .ia-framework/project.json (searches from cwd)
-  const configPath =
-    process.env['IA_FRAMEWORK_CONFIG'] ?? join(process.cwd(), '.ia-framework', 'project.json');
+  // Capabilities snapshot — populated as backends/features initialize.
+  const runtimeVersion = process.versions.node;
+  const capabilities: ServerCapabilities = createCapabilities(runtimeVersion);
+
+  // Detect the SQLite backend up front for diagnostics.
+  const sqliteBackend = detectSqliteBackend();
+  capabilities.sqliteBackend = sqliteBackend ?? 'none';
+  logger.info(
+    { runtimeVersion, sqliteBackend: capabilities.sqliteBackend },
+    'Runtime detected; SQLite backend selected',
+  );
+
+  // Load config from .ia-framework/project.json (CWD-independent discovery).
+  const { configPath, method: configDiscoveryMethod } = discoverConfigPath();
+  logger.info({ configPath, configDiscoveryMethod }, 'Config path resolved');
 
   const config = await loadConfig(configPath);
 
@@ -63,9 +119,15 @@ async function main(): Promise<void> {
       getNeighborFiles: (filePaths: string[], hops: 1 | 2) =>
         Promise.resolve(graph.getNeighborFiles(filePaths, hops)),
     };
+    capabilities.dependencyGraphAvailable = true;
     logger.info({ graphDbPath }, 'Dependency graph loaded for search expansion');
-  } catch {
-    logger.info({ graphDbPath }, 'Dependency graph not available — expansion disabled');
+  } catch (err) {
+    capabilities.dependencyGraphAvailable = false;
+    capabilities.degradedFeatures.push('dependency_graph_expansion');
+    capabilities.degradedReasons.push(
+      `Dependency graph expansion unavailable: ${String(err)}. Results may include fewer related files.`,
+    );
+    logger.warn({ graphDbPath, err: String(err) }, 'Dependency graph not available — expansion disabled');
   }
 
   // Discover active collections — convention: {base} for AST, {base}-llm for LLM
@@ -122,9 +184,24 @@ async function main(): Promise<void> {
     ...(dependencyGraph !== undefined ? { dependencyGraph } : {}),
   });
 
-  // Set up observability — metrics stored in .ia-framework/metrics.sqlite
+  // Set up observability — metrics stored in .ia-framework/metrics.sqlite.
+  // Wrapped in try/catch: on the extreme edge case where NO SQLite backend is
+  // available (Node < 22.5 AND better-sqlite3 missing), the server still starts
+  // with metrics disabled rather than crashing.
   const metricsDbPath = join(frameworkDir, 'metrics.sqlite');
-  const metricsStore = new MetricsStore(metricsDbPath);
+  let metricsStore: MetricsStore | undefined;
+  try {
+    metricsStore = new MetricsStore(metricsDbPath);
+    capabilities.metricsStoreAvailable = true;
+    logger.info({ metricsDbPath }, 'Metrics store initialized');
+  } catch (err) {
+    capabilities.metricsStoreAvailable = false;
+    capabilities.degradedFeatures.push('metrics_collection');
+    capabilities.degradedReasons.push(
+      `Metrics collection disabled: ${String(err)}. Observability data will not be recorded.`,
+    );
+    logger.warn({ metricsDbPath, err: String(err) }, 'Metrics store unavailable — metrics disabled');
+  }
   const tokenCounter = new TokenCounter();
   const sessionId = generateSessionId();
 
@@ -141,7 +218,7 @@ async function main(): Promise<void> {
 
   const server = createMcpServer({
     searchEngine,
-    metricsStore,
+    ...(metricsStore ? { metricsStore } : {}),
     tokenCounter,
     sessionId,
     configPath,
@@ -149,12 +226,21 @@ async function main(): Promise<void> {
     defaultExpansionHops: expansionHops,
     projectRoot: resolvedRepos[0]?.path,
     repos: resolvedRepos,
+    capabilities,
   });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  logger.info('MCP server started (stdio transport)');
+  // Startup summary — reports overall mode and any unavailable features.
+  logger.info(
+    {
+      mode: serverMode(capabilities),
+      sqliteBackend: capabilities.sqliteBackend,
+      degradedFeatures: capabilities.degradedFeatures,
+    },
+    `MCP server started (stdio transport) — mode=${serverMode(capabilities)}`,
+  );
 }
 
 main().catch((err: unknown) => {

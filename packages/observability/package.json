@@ -21,6 +21,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@ia-framework/core": "workspace:*"
+  },
+  "optionalDependencies": {
     "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {

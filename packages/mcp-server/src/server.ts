@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readFile, stat } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
 import { registerGetFileTool } from './tools/get-file.js';
@@ -9,6 +10,7 @@ import { registerIndexDatabaseSchemaTool } from './tools/index-database-schema.j
 import { withRequestLogging, type RequestLoggerDeps } from './request-logger.js';
 import type { SearchEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
+import type { ServerCapabilities } from './capabilities.js';
 
 export interface McpServerConfig {
   searchEngine: SearchEngine | MultiCollectionSearchEngine;
@@ -28,6 +30,8 @@ export interface McpServerConfig {
   projectRoot?: string | undefined;
   /** Resolved repo list for multi-repo filesystem reads (name → absolute path) */
   repos?: Array<{ name: string; path: string }> | undefined;
+  /** Runtime capabilities snapshot — surfaces degradation via tool responses */
+  capabilities?: ServerCapabilities | undefined;
 }
 
 /**
@@ -53,6 +57,37 @@ export function resolveRepoRoot(
   return root;
 }
 
+/** Per-repo filesystem accessibility, computed at startup. */
+export interface RepoAccessibility {
+  path: string;
+  accessible: boolean;
+  error?: string;
+}
+
+/**
+ * Validate that each resolved repo path exists as an accessible directory.
+ * Does not throw — returns a map so the server can start with partial access
+ * and surface inaccessible repos in diagnostics/tool responses.
+ */
+export function validateRepoPaths(
+  repoPathMap: Map<string, string>,
+): Map<string, RepoAccessibility> {
+  const result = new Map<string, RepoAccessibility>();
+  for (const [name, path] of repoPathMap) {
+    try {
+      const s = statSync(path);
+      if (s.isDirectory()) {
+        result.set(name, { path, accessible: true });
+      } else {
+        result.set(name, { path, accessible: false, error: 'path is not a directory' });
+      }
+    } catch (err) {
+      result.set(name, { path, accessible: false, error: String(err) });
+    }
+  }
+  return result;
+}
+
 /**
  * Create and configure an MCP server with all retrieval tools registered.
  * Returns the McpServer instance — call server.connect(transport) to start.
@@ -75,8 +110,33 @@ export function createMcpServer(config: McpServerConfig): McpServer {
       r.path,
     ]),
   );
+
+  // Validate repo paths at startup — mark inaccessible repos without aborting.
+  const repoAccessibility = validateRepoPaths(repoPathMap);
+  for (const [name, info] of repoAccessibility) {
+    if (!info.accessible) {
+      config.capabilities?.degradedFeatures.push(`filesystem_read:${name}`);
+      config.capabilities?.degradedReasons.push(
+        `Repo '${name}' filesystem read unavailable: ${info.error ?? 'path inaccessible'} (path: ${info.path}). Falling back to indexed content only.`,
+      );
+    }
+  }
+
   const resolveRoot = (repoId?: string): string | undefined =>
     resolveRepoRoot(repoPathMap, primaryRoot, repoId);
+
+  /** Throw a descriptive error if the target repo path is known-inaccessible. */
+  const assertAccessible = (repoId?: string): void => {
+    const name = repoId ?? (primaryRoot ? '_default' : undefined);
+    if (!name) return;
+    const info = repoAccessibility.get(name);
+    if (info && !info.accessible) {
+      throw new Error(
+        `Repo '${name}' path is not accessible: ${info.error ?? 'unknown'} (resolved: ${info.path}). ` +
+          `Check the repo path in .ia-framework/project.json.`,
+      );
+    }
+  };
 
   // Filesystem read closure for search_codebase (line-range slicing)
   const searchReadFileFn =
@@ -87,6 +147,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
           endLine: number,
           repoId?: string,
         ): Promise<string> => {
+          assertAccessible(repoId);
           const root = resolveRoot(repoId);
           if (!root) throw new Error('No project root configured for filesystem read');
           const raw = await readFile(join(root, relativePath), 'utf-8');
@@ -104,6 +165,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
           startLine?: number,
           endLine?: number,
         ): Promise<string> => {
+          assertAccessible(repo);
           const root = resolveRoot(repo);
           if (!root) throw new Error('No project root configured for filesystem read');
           const raw = await readFile(join(root, filePath), 'utf-8');
@@ -124,6 +186,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
     defaultScoreThreshold: 0.4,
     ...(searchReadFileFn ? { readFileFn: searchReadFileFn } : {}),
     sessionCache: { enabled: true },
+    ...(config.capabilities ? { capabilities: config.capabilities } : {}),
   });
 
   // Build statFn closure for get_file session dedup (mtime-based cache invalidation)
@@ -140,6 +203,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
   registerGetFileTool(server, config.searchEngine, {
     ...(getFileReadFileFn ? { readFileFn: getFileReadFileFn } : {}),
     ...(getFileStatFn ? { statFn: getFileStatFn, sessionCache: true } : {}),
+    ...(config.capabilities ? { capabilities: config.capabilities } : {}),
   });
   registerGetDependenciesTool(server, config.searchEngine);
 

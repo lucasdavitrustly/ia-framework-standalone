@@ -12,6 +12,7 @@ import { coercedNumber, coercedBoolean } from './coerce.js';
 import { classifyBudget } from './adaptive-budget.js';
 import { classifyQuery } from '../classification/index.js';
 import type { QueryClassification } from '../classification/index.js';
+import { withDegradation, type ServerCapabilities } from '../capabilities.js';
 
 type Engine = {
   search(query: {
@@ -121,6 +122,8 @@ export interface ObservabilityConfig {
   ) => Promise<string>;
   /** Enable session-level dedup cache (T156). Default: not enabled. */
   sessionCache?: { enabled: boolean } | undefined;
+  /** Runtime capabilities — degradation surfaced in response structuredContent. */
+  capabilities?: ServerCapabilities | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,7 +1189,12 @@ export function registerSearchCodebaseTool(
       },
     },
     async (input) => {
-      return searchCodebaseHandler(engine, input, observability);
+      const result = await searchCodebaseHandler(engine, input, observability);
+      const merged = withDegradation(
+        result.structuredContent as Record<string, unknown> | undefined,
+        observability?.capabilities,
+      );
+      return merged ? { ...result, structuredContent: merged } : result;
     },
   );
 }

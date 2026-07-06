@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { createDatabase, type SqliteDatabase } from '@ia-framework/core';
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
@@ -83,10 +83,10 @@ export function resolveJavaImport(importSpec: string, fileManifest: string[]): s
  * Schema (v2): adds edge_type and collection columns; target_file is nullable.
  */
 export class DependencyGraph {
-  private readonly db: Database.Database;
+  private readonly db: SqliteDatabase;
 
   constructor(config: DependencyGraphConfig) {
-    this.db = new Database(config.dbPath);
+    this.db = createDatabase(config.dbPath).db;
   }
 
   /** Initialize the SQLite schema (idempotent). Migrates from v1 schema if needed. */

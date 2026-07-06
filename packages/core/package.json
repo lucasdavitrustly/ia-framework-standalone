@@ -21,10 +21,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "better-sqlite3": "^12.8.0",
     "fast-xml-parser": "^5.7.2",
     "pino": "^9.0.0",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
