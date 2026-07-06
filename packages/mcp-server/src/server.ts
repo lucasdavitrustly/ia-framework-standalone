@@ -4,6 +4,7 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerSearchCodebaseTool } from './tools/search-codebase.js';
 import { registerGetFileTool } from './tools/get-file.js';
+import type { RepoResolution } from './tools/get-file.js';
 import { registerGetDependenciesTool } from './tools/get-dependencies.js';
 import { registerQueryDatabaseTool } from './tools/query-database.js';
 import { registerIndexDatabaseSchemaTool } from './tools/index-database-schema.js';
@@ -86,6 +87,61 @@ export function validateRepoPaths(
     }
   }
   return result;
+}
+
+/**
+ * Build the cross-repo existence-check capability for `get_file` (feature 017).
+ *
+ * Given the configured repo→root map, per-repo accessibility, and a
+ * repo-scoped `readFileFn`, returns a function that attempts an EXACT-JOIN read
+ * of a relative path against every configured repository root, in configuration
+ * order. Inaccessible repos are skipped and reported (never read). No recursive
+ * directory scan is performed — at most one read attempt per repo (FR-002,
+ * FR-007, FR-011).
+ */
+export function buildResolveFileAcrossRepos(
+  repoPathMap: Map<string, string>,
+  repoAccessibility: Map<string, RepoAccessibility>,
+  readFileFn: (
+    path: string,
+    repo?: string,
+    startLine?: number,
+    endLine?: number,
+  ) => Promise<string>,
+): (
+  relativePath: string,
+  opts?: { startLine?: number; endLine?: number },
+) => Promise<RepoResolution[]> {
+  return async (relativePath, opts) => {
+    const resolutions: RepoResolution[] = [];
+    // Preserve configuration order.
+    for (const repo of repoPathMap.keys()) {
+      const access = repoAccessibility.get(repo);
+      if (access && !access.accessible) {
+        resolutions.push({
+          repo,
+          found: false,
+          skipped: true,
+          error: access.error ?? 'path inaccessible',
+        });
+        continue;
+      }
+      try {
+        const content =
+          opts?.startLine !== undefined && opts?.endLine !== undefined
+            ? await readFileFn(relativePath, repo, opts.startLine, opts.endLine)
+            : await readFileFn(relativePath, repo);
+        resolutions.push({ repo, found: true, content });
+      } catch (err) {
+        resolutions.push({
+          repo,
+          found: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return resolutions;
+  };
 }
 
 /**
@@ -202,6 +258,15 @@ export function createMcpServer(config: McpServerConfig): McpServer {
 
   registerGetFileTool(server, config.searchEngine, {
     ...(getFileReadFileFn ? { readFileFn: getFileReadFileFn } : {}),
+    ...(getFileReadFileFn
+      ? {
+          resolveFileAcrossRepos: buildResolveFileAcrossRepos(
+            repoPathMap,
+            repoAccessibility,
+            getFileReadFileFn,
+          ),
+        }
+      : {}),
     ...(getFileStatFn ? { statFn: getFileStatFn, sessionCache: true } : {}),
     ...(config.capabilities ? { capabilities: config.capabilities } : {}),
   });

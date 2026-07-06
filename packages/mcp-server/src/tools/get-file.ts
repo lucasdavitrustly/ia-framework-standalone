@@ -18,6 +18,26 @@ export interface GetFileInput {
   name?: string | undefined;
 }
 
+/**
+ * Outcome of an exact-join existence check for a single repository (feature 017).
+ * Produced by the injected {@link GetFileOptions.resolveFileAcrossRepos} capability.
+ */
+export interface RepoResolution {
+  /** Repository name (id used as the `repo:` prefix). */
+  repo: string;
+  /** Whether `repoRoot + relativePath` was found and read successfully. */
+  found: boolean;
+  /** File content (full or sliced range) when `found`. */
+  content?: string | undefined;
+  /** True when the repo was inaccessible and therefore not checked. */
+  skipped?: boolean | undefined;
+  /** Read/skip failure reason. */
+  error?: string | undefined;
+}
+
+/** Default number of on-disk matches above which a candidate list replaces content. */
+export const DEFAULT_DISAMBIGUATION_THRESHOLD = 3;
+
 export interface GetFileOptions {
   readFileFn?: (
     path: string,
@@ -27,6 +47,22 @@ export interface GetFileOptions {
   ) => Promise<string>;
   /** Optional stat function for mtime-based cache invalidation. Returns { mtimeMs: number }. */
   statFn?: (path: string, repo?: string) => Promise<{ mtimeMs: number }>;
+  /**
+   * Cross-repo existence-check capability (feature 017). When the index yields
+   * no chunk and no `repo:` prefix was given, the handler calls this to locate
+   * the relative path via an exact join against each configured repository root.
+   * Inaccessible repos are reported with `skipped: true`. Implementations MUST
+   * NOT perform a recursive directory scan.
+   */
+  resolveFileAcrossRepos?: (
+    relativePath: string,
+    opts?: { startLine?: number; endLine?: number },
+  ) => Promise<RepoResolution[]>;
+  /**
+   * Match count above which the handler returns a content-free candidate list
+   * instead of grouped file content. Default {@link DEFAULT_DISAMBIGUATION_THRESHOLD}.
+   */
+  disambiguationThreshold?: number | undefined;
   /** Enable session-level dedup cache. Default: false. */
   sessionCache?: boolean;
   /** Runtime capabilities — degradation surfaced in response structuredContent. */
@@ -137,6 +173,20 @@ export async function getFileHandler(
   }
 
   if (results.length === 0) {
+    // ── Feature 017: cross-repo existence-check fallback ──────────────────────
+    // When the index yields no chunk and no `repo:` prefix was supplied, try to
+    // locate the file on disk under each configured repo (exact join, no scan)
+    // before giving up. Skipped when a prefix was given (engine.getFile already
+    // scoped/validated the repo) or the capability is unavailable.
+    if (!repo && options?.resolveFileAcrossRepos) {
+      return buildCrossRepoFallbackResponse(
+        options.resolveFileAcrossRepos,
+        filePath,
+        input,
+        options.disambiguationThreshold ?? DEFAULT_DISAMBIGUATION_THRESHOLD,
+      );
+    }
+
     return {
       content: [
         {
@@ -284,6 +334,7 @@ export async function getFileHandler(
             content: [{ type: 'text', text }],
             structuredContent: {
               answered: true,
+              resolvedVia: 'index',
               content: sections.map((s) => s.split('\n').slice(1).join('\n')).join('\n'),
               chunks: filteredChunks,
             },
@@ -302,6 +353,7 @@ export async function getFileHandler(
           content: [{ type: 'text', text }],
           structuredContent: {
             answered: true,
+            resolvedVia: 'index',
             content: fileContent,
             chunks,
           },
@@ -325,6 +377,7 @@ export async function getFileHandler(
           content: [{ type: 'text', text }],
           structuredContent: {
             answered: true,
+            resolvedVia: 'index',
             content: slicedContent,
             chunks,
           },
@@ -342,6 +395,7 @@ export async function getFileHandler(
         content: [{ type: 'text', text }],
         structuredContent: {
           answered: true,
+          resolvedVia: 'index',
           content: fileContent,
           chunks,
         },
@@ -365,6 +419,99 @@ type ChunkMeta = {
   startLine: number;
   endLine: number;
 };
+
+/**
+ * Feature 017: build the response for the cross-repo existence-check fallback.
+ *
+ * Invoked when the index yielded no chunk and no `repo:` prefix was supplied.
+ * Tiers by on-disk match count:
+ *  - 0 matches  → not-found diagnostic (repos searched, resolved path, causes).
+ *  - 1 match    → return that repo's content, flagged `resolvedVia: filesystem-fallback`.
+ *  - 2..threshold → grouped copies per repo (`multiRepo: true`).
+ *  - > threshold → content-free candidate list of `repo:path` options.
+ */
+async function buildCrossRepoFallbackResponse(
+  resolveFileAcrossRepos: NonNullable<GetFileOptions['resolveFileAcrossRepos']>,
+  filePath: string,
+  input: GetFileInput,
+  threshold: number,
+): Promise<ToolOutput> {
+  const hasRange = input.startLine !== undefined && input.endLine !== undefined;
+  const resolutions = await resolveFileAcrossRepos(
+    filePath,
+    hasRange ? { startLine: input.startLine!, endLine: input.endLine! } : undefined,
+  );
+
+  const matches = resolutions.filter((r) => r.found && r.content !== undefined);
+  const reposSearched = resolutions.map((r) => r.repo);
+
+  // ── 0 matches → not-found diagnostic ──────────────────────────────────────
+  if (matches.length === 0) {
+    const skipped = resolutions.filter((r) => r.skipped);
+    const skippedNote =
+      skipped.length > 0
+        ? `\nSkipped (inaccessible): ${skipped.map((s) => `${s.repo} (${s.error ?? 'unknown'})`).join(', ')}.`
+        : '';
+    const text =
+      `No file found for: ${filePath}\n\n` +
+      `Repositories searched (exact path match): ${reposSearched.join(', ') || '(none configured)'}.${skippedNote}\n\n` +
+      'Likely causes:\n' +
+      '- The path differs from the indexed/actual path (leading segment, casing, or separator mismatch).\n' +
+      '- The file was moved or deleted.\n' +
+      '- A repository root is misconfigured in .ia-framework/project.json.\n\n' +
+      `To target a specific repository, retry with a \`repo:\` prefix, e.g. get_file(path="${reposSearched[0] ?? 'repo'}:${filePath}").`;
+    return {
+      content: [{ type: 'text', text }],
+      structuredContent: { answered: false, reposSearched },
+    };
+  }
+
+  // ── 1 match → return content ──────────────────────────────────────────────
+  if (matches.length === 1) {
+    const m = matches[0]!;
+    const rangeSuffix = hasRange ? ` (lines ${input.startLine}-${input.endLine})` : '';
+    const title = `## File: ${filePath}${rangeSuffix} [${m.repo}]`;
+    const text = `${title}\n\n\`\`\`\n${m.content}\n\`\`\``;
+    return {
+      content: [{ type: 'text', text }],
+      structuredContent: {
+        answered: true,
+        resolvedVia: 'filesystem-fallback',
+        content: m.content,
+        repo: m.repo,
+      },
+    };
+  }
+
+  // ── > threshold → content-free candidate list ─────────────────────────────
+  if (matches.length > threshold) {
+    const candidates = matches.map((m) => `${m.repo}:${filePath}`);
+    const text =
+      `"${filePath}" exists in ${matches.length} repositories.\n\n` +
+      'To avoid returning every copy, re-issue the call with a repo prefix to target one:\n' +
+      candidates.map((c) => `- get_file(path="${c}")`).join('\n');
+    return {
+      content: [{ type: 'text', text }],
+      structuredContent: { answered: false, resolvedVia: 'filesystem-fallback', candidates },
+    };
+  }
+
+  // ── 2..threshold → grouped copies ─────────────────────────────────────────
+  const sections: string[] = [];
+  for (const m of matches) {
+    sections.push(`## [${m.repo}]\n\`\`\`\n${m.content}\n\`\`\``);
+  }
+  const repoList = matches.map((m) => m.repo).join(', ');
+  const note =
+    `Note: "${filePath}" exists in ${matches.length} repos (${repoList}). ` +
+    'Showing all matches grouped by repo — pass a `repo:` prefix ' +
+    `(e.g. get_file(path="${matches[0]!.repo}:${filePath}")) to target one.`;
+  const text = `${note}\n\n## File: ${filePath}\n\n${sections.join('\n\n')}`;
+  return {
+    content: [{ type: 'text', text }],
+    structuredContent: { answered: true, multiRepo: true, resolvedVia: 'filesystem-fallback' },
+  };
+}
 
 /**
  * Render a file that exists in multiple repos (no `repo:` prefix supplied).
@@ -534,6 +681,8 @@ export function registerGetFileTool(
       description:
         'Get all indexed code chunks for a specific file by its relative path. Returns the complete file context. ' +
         'Reads live content from the filesystem first; falls back to stored Qdrant content if the file is inaccessible. ' +
+        'A bare relative path is auto-resolved across all configured repositories (exact path match); pass a `repo:` prefix ' +
+        '(e.g. "core:src/auth.ts") to target one repository when the same path exists in several. ' +
         'Also returns chunk-level metadata (imports, exports, dependency edges, stereotype, archLayer).',
       inputSchema: {
         path: z.string().describe('Relative file path (e.g., "src/auth/middleware.ts")'),

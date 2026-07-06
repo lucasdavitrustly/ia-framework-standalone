@@ -5,7 +5,7 @@ import { searchCodebaseHandler } from './tools/search-codebase.js';
 import { getFileHandler } from './tools/get-file.js';
 import { getDependenciesHandler } from './tools/get-dependencies.js';
 import { createMcpServer } from './server.js';
-import { resolveRepoRoot } from './server.js';
+import { resolveRepoRoot, buildResolveFileAcrossRepos } from './server.js';
 
 /** Extract text from a CallToolResult's first content item */
 function getFirstText(output: CallToolResult): string {
@@ -207,6 +207,71 @@ describe('MCP Server Tools', () => {
       expect(() => resolveRepoRoot(repoMap, '/repos/achpro', 'does-not-exist')).toThrow(
         /Unknown repo 'does-not-exist'/,
       );
+    });
+  });
+
+  // ─── Feature 017: cross-repo existence-check capability ────────────────────
+  describe('buildResolveFileAcrossRepos', () => {
+    const repoMap = new Map<string, string>([
+      ['achpro', '/repos/achpro'],
+      ['paypro', '/repos/paypro'],
+    ]);
+
+    function accessibility(overrides?: Record<string, { accessible: boolean; error?: string }>) {
+      const base = new Map<string, { path: string; accessible: boolean; error?: string }>([
+        ['achpro', { path: '/repos/achpro', accessible: true }],
+        ['paypro', { path: '/repos/paypro', accessible: true }],
+      ]);
+      if (overrides) {
+        for (const [k, v] of Object.entries(overrides)) {
+          base.set(k, { path: base.get(k)?.path ?? `/repos/${k}`, ...v });
+        }
+      }
+      return base;
+    }
+
+    test('checks each repo in configuration order and returns matches (exact join, no scan)', async () => {
+      const calls: Array<string | undefined> = [];
+      const readFileFn = vi.fn(async (_path: string, repo?: string) => {
+        calls.push(repo);
+        if (repo === 'achpro') return 'achpro content';
+        throw new Error('ENOENT');
+      });
+      const resolve = buildResolveFileAcrossRepos(repoMap, accessibility(), readFileFn);
+
+      const results = await resolve('src/Foo.java');
+
+      expect(calls).toEqual(['achpro', 'paypro']); // configuration order
+      const achpro = results.find((r) => r.repo === 'achpro');
+      const paypro = results.find((r) => r.repo === 'paypro');
+      expect(achpro).toMatchObject({ found: true, content: 'achpro content' });
+      expect(paypro).toMatchObject({ found: false });
+    });
+
+    test('skips inaccessible repos and reports them (FR-007) without reading them', async () => {
+      const readFileFn = vi.fn(async () => 'content');
+      const resolve = buildResolveFileAcrossRepos(
+        repoMap,
+        accessibility({ paypro: { accessible: false, error: 'ENOENT dir' } }),
+        readFileFn,
+      );
+
+      const results = await resolve('src/Foo.java');
+
+      // paypro is never read
+      expect(readFileFn).not.toHaveBeenCalledWith('src/Foo.java', 'paypro');
+      const paypro = results.find((r) => r.repo === 'paypro');
+      expect(paypro).toMatchObject({ found: false, skipped: true });
+      expect(paypro?.error).toMatch(/ENOENT dir/);
+    });
+
+    test('forwards startLine/endLine to the read (FR-009)', async () => {
+      const readFileFn = vi.fn(async () => 'sliced');
+      const resolve = buildResolveFileAcrossRepos(repoMap, accessibility(), readFileFn);
+
+      await resolve('src/Foo.java', { startLine: 10, endLine: 20 });
+
+      expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', 'achpro', 10, 20);
     });
   });
 });

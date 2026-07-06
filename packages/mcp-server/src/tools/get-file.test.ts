@@ -632,3 +632,243 @@ describe('T153: session dedup produces separate cache entries for different para
     expect(secondText).toContain('delete body');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feature 017: cross-repo existence-check fallback when index yields no chunk
+// ---------------------------------------------------------------------------
+
+describe('Feature 017: get_file cross-repo fallback', () => {
+  const emptyEngine = () => ({ getFile: vi.fn().mockResolvedValue([]) });
+
+  function resolver(map: Record<string, string | null>, skipped: string[] = []) {
+    // map: repo -> content (string) or null (not found). skipped: inaccessible repos.
+    return vi.fn(async (relativePath: string, opts?: { startLine?: number; endLine?: number }) =>
+      Object.keys(map).map((repo) => {
+        if (skipped.includes(repo)) {
+          return { repo, found: false, skipped: true, error: 'path inaccessible' };
+        }
+        const content = map[repo];
+        if (content === null) return { repo, found: false };
+        const body =
+          opts?.startLine !== undefined
+            ? `${content} [${opts.startLine}-${opts.endLine}]`
+            : content;
+        return { repo, found: true, content: body };
+      }),
+    );
+  }
+
+  // ── US1: single-match auto-resolution ──────────────────────────────────────
+  describe('US1 single-match', () => {
+    test('T006: resolves file on disk in exactly one repo and flags filesystem-fallback', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const resolveFileAcrossRepos = resolver({ achpro: 'FOO CONTENT', paypro: null });
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'src/Foo.java' },
+        { readFileFn, resolveFileAcrossRepos },
+      );
+
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('FOO CONTENT');
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.resolvedVia).toBe('filesystem-fallback');
+      expect(structured.fallbackUsed).toBeUndefined();
+    });
+
+    test('T007: valid prefix + index hit keeps resolvedVia="index" and no fallbackUsed', async () => {
+      const chunk: RetrievalResult = {
+        chunkId: 'c1',
+        filePath: '/p/src/a.ts',
+        relativePath: 'src/a.ts',
+        content: 'stored',
+        startLine: 1,
+        endLine: 5,
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'fn',
+        imports: [],
+        exports: [],
+        score: 1,
+        matchedVector: 'text',
+        repoId: 'core',
+      };
+      const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+      const readFileFn = vi.fn().mockResolvedValue('live core content');
+      const resolveFileAcrossRepos = resolver({ core: 'should-not-be-used' });
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'core:src/a.ts' },
+        { readFileFn, resolveFileAcrossRepos },
+      );
+
+      expect(resolveFileAcrossRepos).not.toHaveBeenCalled();
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.resolvedVia).toBe('index');
+      expect(structured.fallbackUsed).toBeUndefined();
+    });
+
+    test('T008: honors startLine/endLine and name filters on single-match fallback', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const resolveFileAcrossRepos = resolver({ achpro: 'RANGE', paypro: null });
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'src/Foo.java', startLine: 10, endLine: 20 },
+        { readFileFn, resolveFileAcrossRepos },
+      );
+
+      expect(resolveFileAcrossRepos).toHaveBeenCalledWith('src/Foo.java', {
+        startLine: 10,
+        endLine: 20,
+      });
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('RANGE [10-20]');
+    });
+  });
+
+  // ── US2: tiered disambiguation ──────────────────────────────────────────────
+  describe('US2 disambiguation', () => {
+    test('T011: 2 repos on disk → grouped copies with multiRepo flag', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const resolveFileAcrossRepos = resolver({ achpro: 'A-BODY', paypro: 'P-BODY' });
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'pom.xml' },
+        { readFileFn, resolveFileAcrossRepos },
+      );
+
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('## [achpro]');
+      expect(text).toContain('## [paypro]');
+      expect(text).toContain('A-BODY');
+      expect(text).toContain('P-BODY');
+      expect(text).toMatch(/repo:/);
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.multiRepo).toBe(true);
+      expect(structured.resolvedVia).toBe('filesystem-fallback');
+    });
+
+    test('T012: above threshold → content-free candidate list, no file bodies', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const resolveFileAcrossRepos = resolver({
+        r1: 'B1',
+        r2: 'B2',
+        r3: 'B3',
+        r4: 'B4',
+      });
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'index.ts' },
+        { readFileFn, resolveFileAcrossRepos, disambiguationThreshold: 3 },
+      );
+
+      const text = (result.content[0] as { text: string }).text;
+      // No file bodies leaked
+      expect(text).not.toContain('B1');
+      expect(text).not.toContain('B4');
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.candidates).toEqual([
+        'r1:index.ts',
+        'r2:index.ts',
+        'r3:index.ts',
+        'r4:index.ts',
+      ]);
+      expect(structured.answered).toBe(false);
+      expect(structured.resolvedVia).toBe('filesystem-fallback');
+    });
+
+    test('T013: threshold is configurable — same matches grouped vs candidate-list', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const map = { r1: 'B1', r2: 'B2', r3: 'B3' };
+
+      const grouped = await getFileHandler(
+        engine,
+        { path: 'x.ts' },
+        { readFileFn, resolveFileAcrossRepos: resolver(map), disambiguationThreshold: 3 },
+      );
+      expect((grouped.structuredContent as Record<string, unknown>).multiRepo).toBe(true);
+
+      const candidateList = await getFileHandler(
+        engine,
+        { path: 'x.ts' },
+        { readFileFn, resolveFileAcrossRepos: resolver(map), disambiguationThreshold: 2 },
+      );
+      expect((candidateList.structuredContent as Record<string, unknown>).candidates).toHaveLength(
+        3,
+      );
+    });
+  });
+
+  // ── US3: diagnostics ────────────────────────────────────────────────────────
+  describe('US3 diagnostics', () => {
+    test('T016: zero on-disk matches → diagnostic with reposSearched, no content', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const resolveFileAcrossRepos = resolver({ achpro: null, paypro: null });
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'does/not/exist.ts' },
+        { readFileFn, resolveFileAcrossRepos },
+      );
+
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('achpro');
+      expect(text).toContain('paypro');
+      expect(text).toContain('does/not/exist.ts');
+      expect(text).toMatch(/repo:/); // retry guidance
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.reposSearched).toEqual(['achpro', 'paypro']);
+      expect(structured.answered).toBe(false);
+      expect(structured.resolvedVia).toBeUndefined();
+    });
+
+    test('T017: unknown repo prefix → error, resolver never invoked', async () => {
+      // engine.getFile throws for an unknown repo, mirroring resolveRepoRoot behavior
+      const engine = {
+        getFile: vi
+          .fn()
+          .mockRejectedValue(new Error("Unknown repo 'badrepo' — configured repos: achpro")),
+      };
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      const resolveFileAcrossRepos = resolver({ achpro: 'x' });
+
+      await expect(
+        getFileHandler(
+          engine,
+          { path: 'badrepo:src/a.ts' },
+          { readFileFn, resolveFileAcrossRepos },
+        ),
+      ).rejects.toThrow(/Unknown repo 'badrepo'/);
+      expect(resolveFileAcrossRepos).not.toHaveBeenCalled();
+    });
+
+    test('T018: inaccessible repo excluded from reads but named in diagnostic; flags not conflated', async () => {
+      const engine = emptyEngine();
+      const readFileFn = vi.fn().mockResolvedValue('unused');
+      // achpro found, paypro inaccessible → single found match, but paypro reported
+      const resolveFileAcrossRepos = resolver({ achpro: 'OK', paypro: null }, ['paypro']);
+
+      const result = await getFileHandler(
+        engine,
+        { path: 'src/Foo.java' },
+        { readFileFn, resolveFileAcrossRepos },
+      );
+
+      const structured = result.structuredContent as Record<string, unknown>;
+      // Single found match → filesystem-fallback success, NOT degraded
+      expect(structured.resolvedVia).toBe('filesystem-fallback');
+      expect(structured.fallbackUsed).toBeUndefined();
+    });
+  });
+});
