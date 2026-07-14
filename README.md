@@ -730,7 +730,7 @@ The **Atlassian** MCP uses the hosted remote endpoint via `mcp-remote`; authenti
 }
 ```
 
-> This replaces the previous standalone Jira MCP. The `tab-ticket-reader` skill now depends on the `atlassian` MCP.
+> This replaces the previous standalone Jira MCP. The `jira-feed` skill now depends on the `atlassian` MCP.
 
 ### Manually configuring MCP servers
 

@@ -9,6 +9,126 @@
 # Usage: source this file then call setup_skills "$SCRIPT_DIR"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Legacy-skill migration registry
+#
+# When a skill is renamed, the installer/uninstaller can no longer see the old
+# name (both derive names by scanning the CURRENT skills/*/skill.json). Old
+# symlinks and old hook registrations would therefore leak on machines that were
+# installed before the rename. migrate_legacy_skills() cleans them up.
+#
+# LEGACY_SKILL_RENAMES:  "old-name=new-name" (one per element)
+# LEGACY_SKILL_BASENAMES_<old>:  space-separated old asset basenames whose stale
+#   links / hook registrations must be removed. Because the renamed repo no
+#   longer contains these files, the list is hard-coded here as the permanent
+#   migration record. Hook basenames matter most: json_remove_hooks() matches by
+#   exact command path, so we must feed it the OLD path to deregister it.
+# ──────────────────────────────────────────────────────────────────────────────
+LEGACY_SKILL_RENAMES=(
+  "tab-refuter=refuter"
+  "tab-ticket-reader=jira-feed"
+)
+
+# Old per-file asset basenames (agents/commands/hooks) for each legacy skill.
+_legacy_assets_for() {
+  case "$1" in
+    tab-refuter)
+      echo "agents/tab-refuter-analyst.md agents/tab-refuter-orchestrator.md agents/tab-refuter-report-writer.md \
+commands/tab-refuter.md \
+hooks/tab-refuter-audit-trail.js hooks/tab-refuter-citation-verifier.js hooks/tab-refuter-convergence.js \
+hooks/tab-refuter-drift-detector.js hooks/tab-refuter-evidence-guard.js hooks/tab-refuter-learning-append.js \
+hooks/tab-refuter-orchestration-complete.js"
+      ;;
+    tab-ticket-reader)
+      echo "agents/tab-spec-formatter.md \
+commands/tab-format-spec.md \
+hooks/tab-spec-formatter-jira-guard.js hooks/tab-spec-formatter-output-guard.js"
+      ;;
+    *) echo "" ;;
+  esac
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# migrate_legacy_skills
+# Idempotently removes stale links and hook registrations left by pre-rename
+# installs, for every IDE in SELECTED_IDES. Safe to run on a clean tree.
+# Prints a one-line report per migrated skill. Always returns 0.
+# ──────────────────────────────────────────────────────────────────────────────
+migrate_legacy_skills() {
+  [ "${#SELECTED_IDES[@]:-0}" -eq 0 ] && return 0
+
+  local pair old new ide_id
+  for pair in "${LEGACY_SKILL_RENAMES[@]}"; do
+    old="${pair%%=*}"
+    new="${pair##*=}"
+
+    local assets
+    assets="$(_legacy_assets_for "$old")"
+
+    for ide_id in "${SELECTED_IDES[@]}"; do
+      source_ide_descriptor "$ide_id" 2>/dev/null || continue
+      local ide_name="${IDE_NAME:-$ide_id}"
+      local skills_dir="${IDE_SKILLS_DIR:-}"
+      local agents_dir="${IDE_AGENTS_DIR:-}"
+      local commands_dir="${IDE_COMMANDS_DIR:-}"
+      local hooks_dir="${IDE_HOOKS_DIR:-}"
+      unset IDE_ID IDE_NAME IDE_DETECT_PATH IDE_GLOBAL_DIR \
+            IDE_SKILLS_DIR IDE_AGENTS_DIR IDE_COMMANDS_DIR IDE_HOOKS_DIR \
+            IDE_MCP_CONFIG IDE_MCP_FORMAT IDE_AGENT_FORMAT \
+            IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
+
+      local removed_links=0 removed_hooks=0
+
+      # 1. Skill directory symlink (linked, broken, or copied)
+      if [ -n "$skills_dir" ]; then
+        local link="${skills_dir}/${old}"
+        if [ -L "$link" ] || [ -e "$link" ]; then
+          rm -rf "$link" && removed_links=$((removed_links + 1))
+        fi
+      fi
+
+      # 2. Stale per-file agent/command/hook links (+ deregister hooks)
+      local rel base target toml_target
+      for rel in $assets; do
+        base="$(basename "$rel")"
+        case "$rel" in
+          agents/*)
+            [ -n "$agents_dir" ] || continue
+            target="${agents_dir}/${base}"
+            toml_target="${agents_dir}/$(basename "$base" .md).toml"
+            { [ -L "$target" ] || [ -e "$target" ]; } && rm -f "$target" && removed_links=$((removed_links + 1))
+            [ -e "$toml_target" ] && rm -f "$toml_target" && removed_links=$((removed_links + 1))
+            ;;
+          commands/*)
+            [ -n "$commands_dir" ] || continue
+            target="${commands_dir}/${base}"
+            { [ -L "$target" ] || [ -e "$target" ]; } && rm -f "$target" && removed_links=$((removed_links + 1))
+            ;;
+          hooks/*)
+            [ -n "$hooks_dir" ] || continue
+            target="${hooks_dir}/${base}"
+            # Deregister by OLD command path (no-op if not present in registry).
+            if [ -L "$target" ] || [ -e "$target" ]; then
+              json_remove_hooks "$ide_id" "$target"
+              rm -f "$target"
+              removed_links=$((removed_links + 1))
+              removed_hooks=$((removed_hooks + 1))
+            else
+              # Link already gone but a stale registration may remain.
+              json_remove_hooks "$ide_id" "$target"
+            fi
+            ;;
+        esac
+      done
+
+      if [ "$removed_links" -gt 0 ] || [ "$removed_hooks" -gt 0 ]; then
+        echo -e "  ${BLUE:-}↻${NC:-} migrated ${old} → ${new} in ${ide_name} (removed ${removed_links} stale link(s), ${removed_hooks} hook registration(s))"
+      fi
+    done
+  done
+  return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # scan_skills
 # Populates AVAILABLE_SKILLS (names) array from skills/*/skill.json.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -638,6 +758,10 @@ setup_skills() {
     echo -e "  ${YELLOW:-}⚠${NC:-} No IDEs selected — skipping skills installation."
     return 0
   fi
+
+  # Migrate any pre-rename installs (removes stale links + hook registrations)
+  # for the selected IDEs before scanning/installing the current skill set.
+  migrate_legacy_skills
 
   # Scan and select skills
   scan_skills

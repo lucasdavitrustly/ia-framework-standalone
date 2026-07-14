@@ -234,3 +234,43 @@ score_threshold:0.6, expand_hops:0)`. The `Entry$part1 [signature]` snippet
    each with the `repo:` prefix (those names exist in two repos).
 4. Three round-trips total. Stop once type + status are covered.
 <!-- ia-framework:rag-end -->
+
+<!-- pipeline-guide-start -->
+
+## Spec pipeline & when to use each skill
+
+These skills compose into a spec-driven pipeline around the TLC core. **JIRA and
+grilling are optional; the only required entry point is `/tlc-specify`.**
+
+```
+Entry 1 — feature from JIRA (optional feeder):
+  /jira-feed DEV-123 [--target=tlc]
+     → [handoff: Start specify | Emit seed | Grill first]
+     → (grill first) grill-with-docs → .jira-feed/DEV-123-context.md + context block
+     → shows /tlc-specify "<seed [+ context]>"   ← you run it (authorization)
+     → refuter --docs=.specs/features/NNN-slug/spec.md   ← optional spec gate
+     → /tlc-design → /tlc-tasks → /tlc-execute → validate
+
+Entry 2 — feature without JIRA:
+  /tlc-specify "natural-language description"
+     → refuter (optional spec gate) → /tlc-design → …
+
+Entry 3 — grill standalone (any time):
+  grill-with-docs   (writes CONTEXT.md/ADRs; needs no seed, JIRA, or specify)
+     └─ optionally afterwards: /tlc-specify "<clarified idea>"
+```
+
+Roles of each piece:
+
+- **`jira-feed`** — optional. Turns a JIRA ticket into a framework-neutral seed
+  and hands off to any SDD `specify` (`--target`, default `tlc`). Never
+  auto-runs specify; shows the command and stops.
+- **`grill-with-docs`** — optional, additive. Pre-Specify gray-area grilling.
+  Runs standalone or via `jira-feed`'s handoff. Does not alter the TLC core.
+- **`/tlc-specify` … `/tlc-execute`** — the TLC core (unchanged). Phase
+  transitions remain gated to the `tlc-<phase>` commands.
+- **`refuter`** — optional, SDD-agnostic. Adversarial gate on the produced spec
+  docs (`--docs=...`), before `/tlc-execute`. Audits the spec; TLC `validate`
+  audits the implementation. Default reports remain PM/DEV/QA.
+
+<!-- pipeline-guide-end -->

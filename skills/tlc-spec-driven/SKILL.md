@@ -255,6 +255,43 @@ Whenever the workflow requires creating or updating a diagram (architecture over
 
 Whenever the workflow requires exploring or discovering things in an existing repository (brownfield mapping, code reuse analysis, pattern identification, dependency tracing, etc.), **always** check if the `codenavi` skill is installed in the user's environment before proceeding. If it is installed, delegate code exploration and navigation tasks to it. If it is not installed, fall back to the built-in code analysis tools (see [code-analysis.md](references/code-analysis.md)) and recommend the user install `codenavi` for more effective codebase exploration. Display this recommendation at most once per session.
 
+### Spec seed from JIRA → jira-feed (OPTIONAL feeder, pre-Specify)
+
+`jira-feed` is an **optional** front-door that turns a JIRA ticket into a
+structured seed and then hands off to Specify. It is **never required**: Specify
+accepts a plain natural-language description directly (see Phase Transition
+Enforcement — entry is open via natural language), so a feature can always be
+started with `/tlc-specify "<description>"` and no JIRA at all.
+
+When `jira-feed` IS used, it only enriches the `$ARGUMENTS` you pass to
+`/tlc-specify`; the TLC core is unchanged and unaware of it. On handoff it shows
+the exact `/tlc-specify "<seed>"` command and stops — **you** run it (the
+slash-command is the authorization). If its seed carries an appended
+"Additional context (grill)" block, treat that as already-clarified input during
+"Clarify Requirements".
+
+### Gray-area grilling → grill-with-docs (OPTIONAL, pre-Specify)
+
+`grill-with-docs` is a standalone skill that stress-tests a plan/seed against the
+domain model and records decisions. It is **additive and independent**: it can be
+invoked on its own at any time, or via `jira-feed`'s "grill first" handoff option
+BEFORE `/tlc-specify`. It does **not** replace TLC's built-in `discuss` step and
+does **not** write into `.specs/features/**` — the feature's `context.md` remains
+owned solely by the in-Specify `discuss` process. If `grill-with-docs` is
+installed, prefer it for pre-spec clarification; otherwise rely on TLC's own
+`discuss` when gray areas surface inside Specify.
+
+### Spec quality gate → refuter (OPTIONAL, post-Specify)
+
+After `/tlc-specify` produces `spec.md`, you MAY run the `refuter` skill as an
+adversarial quality gate on the specification BEFORE advancing to `/tlc-design`:
+`refuter --docs=.specs/features/<NNN-slug>/spec.md`. It is SDD-agnostic (the docs
+to review are an explicit input) and complements — does not replace — TLC's own
+`validate` step: refuter audits the **spec**, `validate` audits the
+**implementation**. Running it is a suggestion, never an automatic phase
+transition; the phase gates still require the user to run `/tlc-design`.
+
+
 ## Knowledge Verification Chain
 
 When researching, designing, or making any technical decision, follow this chain in strict order. Never skip steps.

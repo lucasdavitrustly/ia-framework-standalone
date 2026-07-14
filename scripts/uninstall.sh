@@ -186,6 +186,10 @@ for descriptor in "${descriptor_dir}"/*.sh; do
   local ide_mcp_config="${IDE_MCP_CONFIG:-}"
   local ide_mcp_format="${IDE_MCP_FORMAT:-}"
 
+  # Sweep any pre-rename (legacy) skill links + hook registrations for this IDE.
+  SELECTED_IDES=("$ide_id")
+  migrate_legacy_skills || true
+
   # Remove skill links
   if [ -n "$ide_skills" ]; then
     for skill_json in "${skills_dir}"/*/skill.json; do

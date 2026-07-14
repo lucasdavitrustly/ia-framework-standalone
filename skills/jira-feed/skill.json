@@ -1,0 +1,13 @@
+{
+  "name": "jira-feed",
+  "version": "1.0.0",
+  "description": "SDD-agnostic spec-seed preparer — reads a JIRA ticket via the atlassian MCP, analyses the codebase via ia-framework MCP, researches docs via Context7, and formats a structured seed ready to hand off to any spec-driven framework's specify step (TLC, SpecKit, OpenSpec, ...). Optionally grills the seed for gray areas before handoff.",
+  "upstream": "https://github.com/rafaelmgoncalves/ia-framework",
+  "requires_mcps": ["atlassian", "ia-framework"],
+  "assets": {
+    "skill": true,
+    "agents": true,
+    "commands": true,
+    "hooks": true
+  }
+}

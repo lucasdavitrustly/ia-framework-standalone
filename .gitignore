@@ -50,3 +50,7 @@ pnpm-debug.log*
 
 # mcp-bench reports (local-only benchmark artifacts, never committed)
 mcp-bench-reports/
+
+# refuter / jira-feed runtime artifacts (per-run state, not source)
+.refuter/
+.jira-feed/
