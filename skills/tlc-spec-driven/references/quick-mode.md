@@ -26,7 +26,27 @@ User provides a clear, one-sentence description. If vague, ask for specifics:
 - ❌ "Fix the login" → Ask: "What's broken? What should happen instead?"
 - ✅ "Fix: login button returns 401 because token refresh skips expired check"
 
-### 2. Pre-Implementation Check
+### 2. Create the Task Branch (before implementation)
+
+Every quick task runs on its own git branch. Before the pre-implementation check,
+run the skill's self-contained branch helper from the tlc-spec-driven skill
+directory:
+
+```
+sh scripts/new-feature-branch.sh --json --kind quick "<one-sentence task>"
+```
+
+- Computes the next sequential number, derives a slug, and creates/switches to
+  `NNN-<slug>` **from the current HEAD** (never overwrites an existing branch).
+- Parse `{BRANCH_NAME, FEATURE_NUM}`; use `FEATURE_NUM` for the quick-task record
+  directory `.specs/quick/NNN-slug/`.
+- No SpecKit / `.specify/` dependency. When invoked via `/tlc-quick` this runs
+  automatically.
+
+> **Note:** Branch-per-quick-task is intentional — it isolates even small changes.
+> This is a change from the older commit-only quick flow.
+
+### 3. Pre-Implementation Check
 
 Before writing code, state:
 
@@ -39,7 +59,7 @@ Verify: [how to prove it works]
 
 Get user approval before proceeding. If the pre-implementation check reveals the task is bigger than expected (>3 files, unclear dependencies, design decisions needed), recommend the full pipeline instead.
 
-### 3. Implement
+### 4. Implement
 
 Follow [coding-principles.md](coding-principles.md):
 
@@ -47,11 +67,11 @@ Follow [coding-principles.md](coding-principles.md):
 - Touch ONLY listed files
 - No scope creep — fix the thing, nothing else
 
-### 4. Verify
+### 5. Verify
 
-Run verification from step 2. Mark done only after verification passes.
+Run verification from the pre-implementation check (step 3). Mark done only after verification passes.
 
-### 5. Commit
+### 6. Commit
 
 Atomic commit following [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
 
@@ -67,7 +87,7 @@ Examples:
 - `feat(settings): add dark mode toggle`
 - `chore(deps): update eslint to v9`
 
-### 6. Track
+### 7. Track
 
 Update `.specs/project/STATE.md` with quick task record (see state-management.md Quick Tasks section).
 

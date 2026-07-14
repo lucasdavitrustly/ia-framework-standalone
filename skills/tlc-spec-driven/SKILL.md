@@ -83,7 +83,75 @@ Plan and implement projects with precision. Granular tasks. Clear dependencies. 
 2. Initialize project → PROJECT.md + ROADMAP.md
 3. For each feature → same adaptive workflow
 
-**Quick mode:** Describe → Implement → Verify → Commit (for ≤3 files, one-sentence scope)
+**Quick mode:** Create branch → Describe → Implement → Verify → Commit (for ≤3 files, one-sentence scope)
+
+## Slash Commands
+
+On IDEs that support slash commands (OpenCode, Claude Code), the phases and key
+actions are invokable as `tlc-<action>` commands. Advancing between phases MUST
+go through these commands (see **Phase Transition Enforcement** below). On IDEs
+without command support, the natural-language triggers are the entry point and
+transitions are advanced conversationally instead.
+
+| Command | Action | Creates a branch? |
+|---|---|---|
+| `/tlc-specify "<description>"` | Specify phase (new feature spec) | **Yes** — before writing the spec |
+| `/tlc-design [feature]` | Design phase | No |
+| `/tlc-tasks [feature]` | Tasks phase | No |
+| `/tlc-execute [task]` | Execute phase | No |
+| `/tlc-quick "<one-sentence task>"` | Quick mode | **Yes** — before implementation |
+| `/tlc-project-init [name]` | Initialize project | No |
+| `/tlc-roadmap` | Create/update roadmap | No |
+| `/tlc-map-codebase` | Brownfield mapping | No |
+| `/tlc-state "<type> <text>"` | Record decision/blocker/todo | No |
+| `/tlc-session "<pause\|resume>"` | Session handoff | No |
+
+**Branch on new spec/quick task:** `tlc-specify` and `tlc-quick` create (or switch
+to) a git branch `NNN-<slug>` **before** producing any artifact, via the skill's
+self-contained helper `scripts/new-feature-branch.sh` (no SpecKit / `.specify/`
+dependency). The branch is created from the current HEAD and never overwrites an
+existing branch. Numbering is sequential across `.specs/features/`, `.specs/quick/`,
+and existing git branches.
+
+## Phase Transition Enforcement
+
+**On command-capable IDEs (OpenCode, Claude Code), advancing to the next phase
+MUST be done via the corresponding `tlc-<phase>` slash command.** The agent MUST
+NOT advance a feature from one phase to the next in response to a natural-language
+request alone.
+
+The pipeline order is:
+
+```
+/tlc-specify → /tlc-design → /tlc-tasks → /tlc-execute
+```
+
+Rules:
+
+1. **Entry is still open via natural language.** Starting a brand-new feature
+   ("specify a feature to…") or a quick task ("quick fix: …") MAY be initiated
+   conversationally — this preserves discoverability and still creates the branch.
+2. **Transitions are gated to commands.** Once a feature exists, moving
+   Specify→Design, Design→Tasks, or Tasks→Execute MUST be triggered by the user
+   running `/tlc-design`, `/tlc-tasks`, or `/tlc-execute` respectively. If the user
+   asks in natural language to "move on / design it now / start the tasks / begin
+   implementing", the agent MUST NOT proceed. Instead it MUST:
+   - State that the next phase is advanced via its slash command, and
+   - Tell the user the exact command to run (e.g. "Run `/tlc-tasks` to break the
+     design into tasks."), then stop and wait.
+3. **The command itself is the authorization.** When a `/tlc-<phase>` command is
+   invoked, that IS the approval to run that phase — proceed normally.
+4. **Command-less IDEs are the documented exception.** On IDEs without slash-command
+   support (Cursor, Gemini, Codex, VS Code Copilot, Windsurf), slash commands do
+   not exist, so phase transitions are advanced via natural language as before.
+   Enforcement applies only where the commands are actually available.
+5. **Quick mode** is single-step (no inter-phase transitions), so this gate does
+   not add friction there beyond its own `/tlc-quick` entry.
+
+**Why:** routing transitions through commands makes each phase boundary explicit
+and intentional, keeps the branch/spec/tasks artifacts in lockstep, and prevents
+accidentally skipping a phase from an ambiguous chat message.
+
 
 ## Context Loading Strategy
 

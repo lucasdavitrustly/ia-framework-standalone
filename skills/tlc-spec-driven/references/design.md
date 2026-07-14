@@ -2,6 +2,12 @@
 
 **Goal**: Define HOW to build it. Architecture, components, what to reuse.
 
+> **Phase transition gate:** On command-capable IDEs, entering this phase from
+> Specify MUST be triggered by the user running `/tlc-design`. Do not advance from
+> Specify to Design on a natural-language request alone — point the user to
+> `/tlc-design` and wait. (See SKILL.md → Phase Transition Enforcement. Command-less
+> IDEs advance conversationally.)
+
 **Skip this phase when:** The change is straightforward — no architectural decisions, no new patterns, no component interactions to plan. For simple features, design happens inline during Execute.
 
 ## Process

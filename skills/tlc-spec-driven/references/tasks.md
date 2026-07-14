@@ -2,6 +2,12 @@
 
 **Goal**: Break into GRANULAR, ATOMIC tasks. Clear dependencies. Right tools. Parallel execution plan.
 
+> **Phase transition gate:** On command-capable IDEs, entering this phase MUST be
+> triggered by the user running `/tlc-tasks`. Do not advance from Design (or Specify)
+> to Tasks on a natural-language request alone — point the user to `/tlc-tasks` and
+> wait. (See SKILL.md → Phase Transition Enforcement. Command-less IDEs advance
+> conversationally.)
+
 **Skip this phase when:** There are ≤3 obvious steps. In that case, tasks are implicit — go straight to Execute and list them inline in your implementation plan.
 
 ## Why Granular Tasks?

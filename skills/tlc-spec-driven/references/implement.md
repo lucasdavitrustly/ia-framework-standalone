@@ -2,6 +2,12 @@
 
 **Goal**: Implement ONE task at a time. Surgical changes. Verify. Commit. Repeat.
 
+> **Phase transition gate:** On command-capable IDEs, entering this phase MUST be
+> triggered by the user running `/tlc-execute`. Do not begin implementation from a
+> natural-language "start building it" request alone — point the user to
+> `/tlc-execute` and wait. (See SKILL.md → Phase Transition Enforcement. Command-less
+> IDEs advance conversationally.)
+
 This is where code gets written. Every task follows the same cycle: plan → implement → verify → commit. Verification is built into every task, not a separate phase.
 
 ---

@@ -6,6 +6,29 @@ If the feature has ambiguous gray areas (multiple valid approaches for user-faci
 
 ## Process
 
+### 0. Create the Feature Branch (first, before writing the spec)
+
+Every new feature spec starts on its own git branch. Before capturing anything,
+run the skill's self-contained branch helper from the tlc-spec-driven skill
+directory:
+
+```
+sh scripts/new-feature-branch.sh --json --kind feature "<feature description>"
+```
+
+- It computes the next sequential number `NNN` (from `.specs/features/`,
+  `.specs/quick/`, and existing git branches), derives a slug, and creates/switches
+  to `NNN-<slug>` **from the current HEAD**.
+- If the branch already exists it switches to it (never overwrites).
+- If the working directory is not a git repo, it exits with a clear message —
+  surface that and ask how to proceed.
+- Parse the returned JSON `{BRANCH_NAME, FEATURE_NUM}` and use `FEATURE_NUM` for
+  the spec directory `.specs/features/NNN-<slug>/` so the spec number and branch
+  match.
+
+This helper has **no** SpecKit / `.specify/` dependency. When invoked via the
+`/tlc-specify` command the branch step runs automatically.
+
 ### 1. Clarify Requirements
 
 You are a thinking partner, not an interviewer. Start open — let the user dump their mental model. Follow the energy: whatever they emphasize, dig into that.

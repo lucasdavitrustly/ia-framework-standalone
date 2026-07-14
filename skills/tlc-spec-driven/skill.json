@@ -7,7 +7,7 @@
   "assets": {
     "skill": true,
     "agents": false,
-    "commands": false,
+    "commands": true,
     "hooks": false
   }
 }

@@ -376,10 +376,106 @@ unlink_skill() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# skill_expected_asset_links_present SKILL_NAME
+# For every SELECTED_IDE, checks that each asset the skill declares in
+# skill.json (commands/agents/hooks) AND the IDE supports has a corresponding
+# link present in the IDE's asset directory.
+#
+# Returns 0 if all expected asset links are present (or none are expected),
+# 1 if at least one expected asset link is missing. This lets a skill that was
+# installed BEFORE it declared a new asset class (e.g. commands added later) be
+# detected as needing a re-link instead of being treated as fully "linked".
+#
+# Note: only reports missing links for IDEs that actually support the asset
+# (e.g. command-less IDEs never expect command links), so graceful degradation
+# is preserved — such IDEs never trigger an "incomplete" state.
+# ──────────────────────────────────────────────────────────────────────────────
+skill_expected_asset_links_present() {
+  local skill_name="$1"
+  local skill_dir="${SCRIPT_DIR}/skills/${skill_name}"
+  local skill_json="${skill_dir}/skill.json"
+
+  [ -f "$skill_json" ] || return 0
+
+  local has_agents has_commands has_hooks
+  has_agents=$(node --input-type=module <<EOF
+import { readFileSync } from 'fs';
+try { const s = JSON.parse(readFileSync('${skill_json}','utf8')); process.stdout.write(s.assets?.agents ? 'true' : 'false'); } catch { process.stdout.write('false'); }
+EOF
+)
+  has_commands=$(node --input-type=module <<EOF
+import { readFileSync } from 'fs';
+try { const s = JSON.parse(readFileSync('${skill_json}','utf8')); process.stdout.write(s.assets?.commands ? 'true' : 'false'); } catch { process.stdout.write('false'); }
+EOF
+)
+  has_hooks=$(node --input-type=module <<EOF
+import { readFileSync } from 'fs';
+try { const s = JSON.parse(readFileSync('${skill_json}','utf8')); process.stdout.write(s.assets?.hooks ? 'true' : 'false'); } catch { process.stdout.write('false'); }
+EOF
+)
+
+  local missing=0  # count of missing expected asset links
+  local ide_id
+  for ide_id in "${SELECTED_IDES[@]}"; do
+    source_ide_descriptor "$ide_id" 2>/dev/null || continue
+    local cmd_dir="${IDE_COMMANDS_DIR:-}" agt_dir="${IDE_AGENTS_DIR:-}" hk_dir="${IDE_HOOKS_DIR:-}"
+    local supports_commands="${IDE_SUPPORTS_COMMANDS:-false}"
+    local supports_hooks="${IDE_SUPPORTS_HOOKS:-false}"
+    unset IDE_ID IDE_NAME IDE_DETECT_PATH IDE_GLOBAL_DIR \
+          IDE_SKILLS_DIR IDE_AGENTS_DIR IDE_COMMANDS_DIR IDE_HOOKS_DIR \
+          IDE_MCP_CONFIG IDE_MCP_FORMAT IDE_AGENT_FORMAT \
+          IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
+
+    # Commands: only expected where the IDE supports commands and a dir is set.
+    if [ "$has_commands" = "true" ] && [ -d "${skill_dir}/commands" ] && \
+       [ "$supports_commands" = "true" ] && [ -n "$cmd_dir" ]; then
+      local f fname
+      for f in "${skill_dir}/commands/"*.md; do
+        [ -f "$f" ] || continue
+        fname=$(basename "$f")
+        [ -e "${cmd_dir}/${fname}" ] || missing=$((missing + 1))
+      done
+    fi
+
+    # Agents: expected wherever an agents dir is defined (md or transformed toml).
+    if [ "$has_agents" = "true" ] && [ -d "${skill_dir}/agents" ] && [ -n "$agt_dir" ]; then
+      local f fname base
+      for f in "${skill_dir}/agents/"*.md; do
+        [ -f "$f" ] || continue
+        fname=$(basename "$f")
+        base=$(basename "$f" .md)
+        # present if either the .md link or a transformed .toml exists
+        if [ ! -e "${agt_dir}/${fname}" ] && [ ! -e "${agt_dir}/${base}.toml" ]; then
+          missing=$((missing + 1))
+        fi
+      done
+    fi
+
+    # Hooks: only expected where the IDE supports hooks and a dir is set.
+    if [ "$has_hooks" = "true" ] && [ -d "${skill_dir}/hooks" ] && \
+       [ "$supports_hooks" = "true" ] && [ -n "$hk_dir" ]; then
+      local f fname
+      for f in "${skill_dir}/hooks/"*.js; do
+        [ -f "$f" ] || continue
+        fname=$(basename "$f")
+        [ -e "${hk_dir}/${fname}" ] || missing=$((missing + 1))
+      done
+    fi
+  done
+
+  [ "$missing" -eq 0 ]
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # aggregate_skill_state SKILL_NAME
 # Checks the link state of SKILL_NAME across all SELECTED_IDES.
 # Returns a single worst-case state by priority:
-#   broken > copied > absent (incl. mixed linked+absent) > linked
+#   broken > copied > absent (incl. mixed linked+absent) > incomplete > linked
+#
+# "incomplete" = the skill dir is linked everywhere, but the skill declares an
+# asset (commands/agents/hooks) whose expected links are missing (e.g. a skill
+# that gained commands after it was first installed). This routes the skill to
+# a re-link so a plain re-run of install.sh auto-heals it.
 # ──────────────────────────────────────────────────────────────────────────────
 aggregate_skill_state() {
   local skill_name="$1"
@@ -429,7 +525,14 @@ aggregate_skill_state() {
   # pure absent
   [ "$has_linked" -eq 0 ] && { echo "absent"; return 0; }
 
-  # all linked
+  # all linked — but check whether declared assets (commands/agents/hooks) are
+  # fully linked. If not, the skill needs a re-link to pick up new assets.
+  if ! skill_expected_asset_links_present "$skill_name"; then
+    echo "incomplete"
+    return 0
+  fi
+
+  # all linked and complete
   echo "linked"
 }
 
@@ -447,10 +550,11 @@ prompt_skill_action() {
 
   if is_noninteractive; then
     case "$state" in
-      absent)  echo "install" ;;
-      linked)  echo "skip" ;;
-      broken)  echo "relink" ;;
-      copied)  echo "upgrade" ;;
+      absent)     echo "install" ;;
+      linked)     echo "skip" ;;
+      incomplete) echo "relink" ;;
+      broken)     echo "relink" ;;
+      copied)     echo "upgrade" ;;
     esac
     return 0
   fi
@@ -465,6 +569,17 @@ prompt_skill_action() {
         re-link|relink) echo "relink" ;;
         unlink)         echo "unlink" ;;
         *)              echo "skip" ;;
+      esac
+      ;;
+    incomplete)
+      echo -e "  ${YELLOW:-}•${NC:-} ${skill_name} — linked, but new assets (commands/agents/hooks) are not yet linked" >&2
+      local action
+      read -rp "    [re-link/skip/unlink] (re-link): " action
+      action="${action:-re-link}"
+      case "$(echo "$action" | tr '[:upper:]' '[:lower:]')" in
+        skip)   echo "skip" ;;
+        unlink) echo "unlink" ;;
+        *)      echo "relink" ;;
       esac
       ;;
     broken)
