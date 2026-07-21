@@ -54,7 +54,7 @@ hooks/tab-spec-formatter-jira-guard.js hooks/tab-spec-formatter-output-guard.js"
 # Prints a one-line report per migrated skill. Always returns 0.
 # ──────────────────────────────────────────────────────────────────────────────
 migrate_legacy_skills() {
-  [ "${#SELECTED_IDES[@]:-0}" -eq 0 ] && return 0
+  { [ "${SELECTED_IDES+set}" = set ] && [ "${#SELECTED_IDES[@]}" -gt 0 ]; } || return 0
 
   local pair old new ide_id
   for pair in "${LEGACY_SKILL_RENAMES[@]}"; do
