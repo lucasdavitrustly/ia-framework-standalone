@@ -272,3 +272,223 @@ EOF
   echo -e "  ${BLUE:-}ℹ${NC:-} Models: bedrock-claude-sonnet-4-6, bedrock-claude-opus-4-8, bedrock-claude-haiku-4-5"
   return 0
 }
+
+# ──────────────────────────────────────────────────────
+# configure_worktree_permissions
+# Allowlists the git-worktree directories used by the tlc-spec-driven workflow
+# in the OpenCode permission config (opencode.jsonc primary, opencode.json legacy).
+#
+# Why: /tlc-specify, /tlc-quick and /start-work-on create worktrees at
+# "<repo-root>/../worktrees/" — a SIBLING of the product repo, which is OUTSIDE
+# the OpenCode workspace root (the repo the session was opened in). OpenCode treats
+# such paths as `external_directory` and defaults to "ask", which makes subagents
+# fail to write spec.md into the worktree. This grants "allow" for those paths.
+#
+# The allowlist accepts a base path (arg $1 or WORKTREE_ALLOW_BASE env). When
+# absent, it prompts (interactive) with a sensible default (~/paywithmybank/source),
+# using that default non-interactively. The broad "**/worktrees/**" glob is ALWAYS
+# added on top of the base-derived patterns. Idempotent & merge-safe.
+# ──────────────────────────────────────────────────────
+configure_worktree_permissions() {
+  echo -e "  ${YELLOW:-}→${NC:-} Configuring worktree filesystem permissions..."
+
+  local config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode"
+  local jsonc_file="${config_dir}/opencode.jsonc"
+  local json_file="${config_dir}/opencode.json"
+
+  mkdir -p "$config_dir"
+
+  # Resolve the base path whose sibling "worktrees/" dirs should be allowed.
+  local default_base="${HOME}/paywithmybank/source"
+  local base="${1:-${WORKTREE_ALLOW_BASE:-}}"
+  if [ -z "$base" ]; then
+    if is_noninteractive; then
+      base="$default_base"   # use the suggested default; broad glob is always added too
+    else
+      echo -e "  ${BOLD:-}Worktree location${NC:-}"
+      echo -e "  The spec-driven workflow creates git worktrees next to your product repos."
+      echo -e "  Enter the base directory that CONTAINS your repos."
+      echo -e "  The broad rule **/worktrees/** is always allowed as well."
+      printf "  Base [default: %s]: " "$default_base"
+      read -r base < /dev/tty || base=""
+      [ -z "$base" ] && base="$default_base"
+    fi
+  fi
+
+  # Build the allow patterns. Always include the broad "**/worktrees/**" glob.
+  # When a base is given, also allow "<base>/worktrees/**" and "<base>/**/worktrees/**".
+  local patterns_json
+  if [ -n "$base" ]; then
+    # Normalize: strip trailing slash
+    base="${base%/}"
+    # Export the resolved base so link_fi_connectors_worktree can reuse it
+    # without prompting for the base a second time.
+    WORKTREE_ALLOW_BASE="$base"; export WORKTREE_ALLOW_BASE
+    patterns_json="$(WT_BASE="$base" node -e '
+      const b = process.env.WT_BASE;
+      process.stdout.write(JSON.stringify({
+        [b + "/worktrees/**"]: "allow",
+        [b + "/**/worktrees/**"]: "allow",
+        "**/worktrees/**": "allow"
+      }));
+    ')"
+  else
+    patterns_json='{"**/worktrees/**":"allow"}'
+  fi
+
+  # Migration: seed .jsonc from .json if needed (reuses configure-mcp helpers)
+  if [ ! -f "$jsonc_file" ] && [ -f "$json_file" ]; then
+    _seed_jsonc_from_json "$jsonc_file" "$json_file" 2>/dev/null || true
+  fi
+  [ -f "$jsonc_file" ] || echo '{"$schema":"https://opencode.ai/config.json"}' > "$jsonc_file"
+  if ! _read_jsonc "$jsonc_file" > /dev/null 2>&1; then
+    _backup_malformed_jsonc "$jsonc_file"
+  fi
+
+  # Merge into .jsonc (primary)
+  WT_CONFIG_FILE="$jsonc_file" WT_PATTERNS="$patterns_json" WT_JSONC=1 \
+  node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const f = process.env.WT_CONFIG_FILE;
+const add = JSON.parse(process.env.WT_PATTERNS);
+let cfg = {};
+if (process.env.WT_JSONC) {
+  const raw = readFileSync(f, 'utf8');
+  const stripped = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str || '');
+  try { cfg = JSON.parse(stripped); } catch {}
+} else {
+  try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch {}
+}
+cfg['$schema'] ??= 'https://opencode.ai/config.json';
+
+// Normalize permission to object form without clobbering existing rules.
+if (cfg.permission === undefined) cfg.permission = { '*': 'allow' };
+else if (typeof cfg.permission === 'string') cfg.permission = { '*': cfg.permission };
+
+const ext = (typeof cfg.permission.external_directory === 'object' && cfg.permission.external_directory)
+  ? cfg.permission.external_directory : {};
+if (ext['*'] === undefined) ext['*'] = 'ask';   // preserve default gate for other paths
+for (const [k, v] of Object.entries(add)) ext[k] = v;   // add/refresh worktree allows
+cfg.permission.external_directory = ext;
+
+writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+
+  # Dual-write: legacy .json
+  [ -f "$json_file" ] || echo '{}' > "$json_file"
+  WT_CONFIG_FILE="$json_file" WT_PATTERNS="$patterns_json" \
+  node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const f = process.env.WT_CONFIG_FILE;
+const add = JSON.parse(process.env.WT_PATTERNS);
+let cfg = {};
+try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch {}
+if (cfg.permission === undefined) cfg.permission = { '*': 'allow' };
+else if (typeof cfg.permission === 'string') cfg.permission = { '*': cfg.permission };
+const ext = (typeof cfg.permission.external_directory === 'object' && cfg.permission.external_directory)
+  ? cfg.permission.external_directory : {};
+if (ext['*'] === undefined) ext['*'] = 'ask';
+for (const [k, v] of Object.entries(add)) ext[k] = v;
+cfg.permission.external_directory = ext;
+writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+EOF
+
+  echo -e "  ${GREEN:-}✓${NC:-} Worktree paths allowed in OpenCode permissions:"
+  echo "$patterns_json" | node -e 'const o=JSON.parse(require("fs").readFileSync(0,"utf8"));for(const k of Object.keys(o))console.log("      "+k);' 2>/dev/null || true
+  return 0
+}
+
+# ──────────────────────────────────────────────────────
+# link_fi_connectors_worktree
+# Creates a symlink so worktree-based flows can resolve the fi-connectors repo
+# as if it were a sibling of each worktree.
+#
+# Layout (given a base "source" dir that contains the product repos):
+#   <base>/core                 — core repo (a git worktree host)
+#   <base>/fi-connectors        — fi-connectors repo (sibling of core)
+#   <base>/worktrees            — where tlc-spec-driven creates worktrees
+#   <base>/worktrees/fi-connectors -> <base>/fi-connectors   (this symlink)
+#
+# Why: worktrees live at "<base>/worktrees/<slug>", one directory deeper than
+# the product repos. Code that reaches for a sibling "fi-connectors" from inside
+# a worktree would resolve to "<base>/worktrees/fi-connectors". Linking that to
+# the real "<base>/fi-connectors" keeps the relative layout consistent.
+#
+# Base resolution mirrors configure_worktree_permissions (arg $1 /
+# WORKTREE_ALLOW_BASE / prompt with default ~/paywithmybank/source). The
+# fi-connectors path is prompted like the core path (default "<base>/fi-connectors").
+# Soft-fails: if the fi-connectors source is missing, warns and skips the link.
+# Idempotent & non-destructive (never clobbers a real directory/file).
+# ──────────────────────────────────────────────────────
+link_fi_connectors_worktree() {
+  echo -e "  ${YELLOW:-}→${NC:-} Linking fi-connectors into worktrees directory..."
+
+  # Resolve the base "source" dir (reuses the value exported by
+  # configure_worktree_permissions when available).
+  local default_base="${HOME}/paywithmybank/source"
+  local base="${1:-${WORKTREE_ALLOW_BASE:-}}"
+  if [ -z "$base" ]; then
+    if is_noninteractive; then
+      base="$default_base"
+    else
+      printf "  Base directory that CONTAINS your repos [default: %s]: " "$default_base"
+      read -r base < /dev/tty || base=""
+      [ -z "$base" ] && base="$default_base"
+    fi
+  fi
+  # Trim whitespace, expand ~, strip trailing slash
+  base="${base#"${base%%[![:space:]]*}"}"
+  base="${base%"${base##*[![:space:]]}"}"
+  base="${base/#\~/$HOME}"
+  base="${base%/}"
+
+  # Prompt for the fi-connectors source path (same UX as the core path prompt),
+  # defaulting to the sibling location under the base.
+  local default_fi="${base}/fi-connectors"
+  local fi_path
+  if is_noninteractive; then
+    fi_path="$default_fi"
+  else
+    printf "  Enter the absolute path to your fi-connectors repo [default: %s]: " "$default_fi"
+    read -r fi_path < /dev/tty || fi_path=""
+    [ -z "$fi_path" ] && fi_path="$default_fi"
+  fi
+  # Trim whitespace, expand ~, strip trailing slash
+  fi_path="${fi_path#"${fi_path%%[![:space:]]*}"}"
+  fi_path="${fi_path%"${fi_path##*[![:space:]]}"}"
+  fi_path="${fi_path/#\~/$HOME}"
+  fi_path="${fi_path%/}"
+
+  local worktrees_dir="${base}/worktrees"
+  local link_path="${worktrees_dir}/fi-connectors"
+
+  # Ensure the worktrees dir exists (created lazily by worktree flows otherwise).
+  mkdir -p "$worktrees_dir"
+
+  # Soft-fail when the fi-connectors source is absent.
+  if [ ! -d "$fi_path" ]; then
+    echo -e "  ${YELLOW:-}⚠${NC:-} fi-connectors not found at ${fi_path} — skipping link."
+    echo -e "     Create it later with: ln -s \"${fi_path}\" \"${link_path}\""
+    return 0
+  fi
+
+  # Idempotent, non-destructive handling of the link path.
+  if [ -L "$link_path" ]; then
+    local current
+    current="$(readlink "$link_path" 2>/dev/null || true)"
+    if [ "$current" = "$fi_path" ]; then
+      echo -e "  ${GREEN:-}✓${NC:-} fi-connectors link already present: ${link_path} -> ${fi_path}"
+      return 0
+    fi
+    ln -sfn "$fi_path" "$link_path"
+    echo -e "  ${GREEN:-}✓${NC:-} fi-connectors link updated: ${link_path} -> ${fi_path}"
+    return 0
+  elif [ -e "$link_path" ]; then
+    echo -e "  ${YELLOW:-}⚠${NC:-} ${link_path} exists and is not a symlink — leaving it untouched."
+    return 0
+  fi
+
+  ln -s "$fi_path" "$link_path"
+  echo -e "  ${GREEN:-}✓${NC:-} fi-connectors linked: ${link_path} -> ${fi_path}"
+  return 0
+}

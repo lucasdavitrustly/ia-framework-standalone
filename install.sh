@@ -35,6 +35,8 @@ source "${SCRIPT_DIR}/scripts/install-node.sh"
 source "${SCRIPT_DIR}/scripts/install-ollama.sh"
 # shellcheck source=scripts/install-opencode.sh
 source "${SCRIPT_DIR}/scripts/install-opencode.sh"
+# shellcheck source=scripts/install-gh.sh
+source "${SCRIPT_DIR}/scripts/install-gh.sh"
 # shellcheck source=scripts/start-services.sh
 source "${SCRIPT_DIR}/scripts/start-services.sh"
 # shellcheck source=scripts/init-config.sh
@@ -115,6 +117,15 @@ if echo "$opencode_status" | grep -q "^INSTALLED"; then
 else
   echo -e "  ${YELLOW}→${NC} OpenCode not found — installing..."
   install_opencode || echo -e "  ${YELLOW}⚠${NC} OpenCode install skipped — install manually: https://opencode.ai"
+fi
+
+# GitHub CLI (recommended — soft fail; used by /delivery to open PRs)
+gh_status=$(check_gh) || true
+if echo "$gh_status" | grep -q "^INSTALLED"; then
+  echo -e "  ${GREEN}✓${NC} GitHub CLI: ${gh_status#INSTALLED: }"
+else
+  echo -e "  ${YELLOW}→${NC} GitHub CLI not found — installing..."
+  install_gh || echo -e "  ${YELLOW}⚠${NC} GitHub CLI install skipped — install manually: https://github.com/cli/cli#installation"
 fi
 
 echo ""
@@ -226,6 +237,10 @@ if [ -f "${SCRIPT_DIR}/scripts/install-opencode.sh" ]; then
   fi
   configure_trustly_provider || \
     echo -e "  ${YELLOW}⚠${NC} Trustly provider configuration skipped"
+  configure_worktree_permissions || \
+    echo -e "  ${YELLOW}⚠${NC} Worktree permission configuration skipped"
+  link_fi_connectors_worktree || \
+    echo -e "  ${YELLOW}⚠${NC} fi-connectors worktree link skipped"
 else
   echo -e "  ${YELLOW}⚠${NC} install-opencode.sh not found — Trustly provider setup deferred"
 fi

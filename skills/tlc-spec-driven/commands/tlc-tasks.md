@@ -26,7 +26,8 @@ task breakdown with clear dependencies and a parallel-execution plan.
 2. Resolve the active feature; read its `spec.md` and `design.md` (if present)
    before decomposing.
 3. Produce `tasks.md` in the feature directory: atomic tasks, dependencies,
-   "Done when" verification, and test assignments per the skill's TESTING guidance.
+   "Done when" verification, and test assignments per the skill's TESTING
+   guidance.
 </process>
 
 <constraints>

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-prerequisites.sh — detect installed tools required by ia-framework
-# Provides: check_docker, check_node, check_ollama, check_opencode, check_all functions
+# Provides: check_docker, check_node, check_ollama, check_opencode, check_gh, check_all functions
 
 # Colors (safe to re-declare — may be sourced after install.sh sets them)
 _RED='\033[0;31m'
@@ -79,6 +79,23 @@ check_opencode() {
   if command -v opencode &>/dev/null && opencode --version &>/dev/null 2>&1; then
     local version
     version=$(opencode --version 2>/dev/null | head -1)
+    echo "INSTALLED: $version"
+    return 0
+  else
+    echo "MISSING"
+    return 1
+  fi
+}
+
+# ──────────────────────────────────────────────────────
+# check_gh
+# Returns: prints "INSTALLED: vX.Y.Z" or "MISSING"
+# Exit code: 0 if installed, 1 if missing
+# ──────────────────────────────────────────────────────
+check_gh() {
+  if command -v gh &>/dev/null && gh --version &>/dev/null 2>&1; then
+    local version
+    version=$(gh --version 2>/dev/null | head -1)
     echo "INSTALLED: $version"
     return 0
   else
@@ -192,18 +209,19 @@ check_node_active() {
 
 # ──────────────────────────────────────────────────────
 # check_all
-# Checks all 4 prerequisites.
+# Checks all prerequisites.
 # Prints status for each.
-# Exit code: 0 if all installed, 1 if any missing.
+# Exit code: 0 if all required installed, 1 if any required missing.
 # ──────────────────────────────────────────────────────
 check_all() {
   local all_ok=0
 
-  local docker_status node_status ollama_status opencode_status
+  local docker_status node_status ollama_status opencode_status gh_status
   docker_status=$(check_docker)
   node_status=$(check_node)
   ollama_status=$(check_ollama)
   opencode_status=$(check_opencode)
+  gh_status=$(check_gh)
 
   if echo "$docker_status" | grep -q "^INSTALLED"; then
     echo -e "  ${_GREEN}✓${_NC} Docker:    $docker_status"
@@ -231,6 +249,13 @@ check_all() {
   else
     echo -e "  ${_YELLOW}→${_NC} OpenCode:  $opencode_status (will install)"
     # OpenCode is optional at check time — installer will install
+  fi
+
+  if echo "$gh_status" | grep -q "^INSTALLED"; then
+    echo -e "  ${_GREEN}✓${_NC} GitHub CLI: $gh_status"
+  else
+    echo -e "  ${_YELLOW}→${_NC} GitHub CLI: $gh_status (will install)"
+    # gh is optional at check time — installer will install (used by /delivery)
   fi
 
   return $all_ok

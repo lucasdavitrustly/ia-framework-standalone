@@ -30,6 +30,10 @@ and atomic commits.
 3. For each task: implement the simplest thing that works, verify per its
    "Done when", then make an atomic Conventional Commit.
 4. Mark completed tasks `[X]` in `tasks.md` and update traceability.
+5. When the feature is complete and the Verifier returns PASS, surface the next
+   step and STOP: show `/delivery <BRANCH_NAME>` (branch =
+   `git rev-parse --abbrev-ref HEAD`) so the user can push and open the draft PR.
+   Never run `/delivery` automatically — showing the command is the authorization.
 </process>
 
 <constraints>
