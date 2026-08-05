@@ -261,7 +261,37 @@ answer.
 - **How**: express the reasoning as a sequence of thoughts, revising or adding
   steps as needed, and converge on a single verified conclusion.
 - **Do NOT use it for**: trivial, single-step changes (e.g. a one-line edit, a
-  wording tweak) where the extra structure adds no value.`;
+  wording tweak) where the extra structure adds no value.
+
+## Database migrations
+
+When creating a **new database migration** in a repo that uses Flyway (versioned
+\`V…__….sql\` migration files), follow the standardized naming convention below.
+This applies only to **new** migrations — never rename existing ones.
+
+- **Allowed characters:** the filename contains only **letters, numbers, and
+  underscores**, and ends with the \`.sql\` extension. No spaces or special
+  characters.
+- **Template:** \`V9.999.9.N__descriptive_snake_case_name.sql\`
+    - Start with the placeholder version prefix \`V9.999.9.N\`, where **N** is the
+      next ordering integer (\`1\`, \`2\`, \`3\`, … — any integer from 1 upward).
+    - Follow the version with **two underscores** (\`__\`) as the separator.
+    - Then a snake_case description of what the migration does.
+- **Examples:**
+    - \`V9.999.9.1__first_migration_add_user_index.sql\`
+    - \`V9.999.9.2__second_migration_add_another_user_index.sql\`
+- **Do not hand-pick a real Flyway version** (e.g. \`V1.269.0.1\`). Always use the
+  \`V9.999.9.N\` placeholder for new migrations — a GitHub Action rewrites it to the
+  correct version and ordering when the PR is merged. A companion Action rejects
+  non-compliant migration names in the PR.
+- **Never rename existing migrations.** Flyway validates migrations by checksum,
+  so renaming an already-applied migration breaks validation.
+
+Before writing a migration, verify the repo's existing migrations directory and
+the current highest \`N\` (use \`search_codebase\` / \`glob\` — do not assume the path
+or ordering). Authority: Trustly ADR "Standardizing Naming Conventions for
+Database Migrations"
+(https://trustly.atlassian.net/wiki/spaces/ARCH/pages/71295697209).`;
 
 function getConfigPath(options: { config?: string }): string {
   return (

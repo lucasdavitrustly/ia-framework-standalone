@@ -946,7 +946,9 @@ agent documentation file (`AGENTS.md`, or `CLAUDE.md` if that's what the project
 uses). This block tells AI assistants working in that project how to use the
 codebase RAG tools (`search_codebase`, `get_file`, `get_dependencies`) and when to
 reach for **Context7** (up-to-date library/framework docs) and **Sequential
-Thinking** (structured multi-step reasoning). The block is delimited by
+Thinking** (structured multi-step reasoning). It also instructs assistants on how
+to create **database migrations** following the standardized Flyway naming
+convention (e.g. `V9.999.9.N__descriptive_name.sql`). The block is delimited by
 `<!-- ia-framework:rag-start -->` / `<!-- ia-framework:rag-end -->` markers, so
 re-running injection **refreshes it in place** — it never duplicates content.
 

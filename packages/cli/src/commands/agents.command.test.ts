@@ -183,6 +183,25 @@ describe('agents inject', () => {
     expect(content).toContain('search_codebase');
   });
 
+  // Test 3f (#91): Database migration naming guidance present in injected content
+  it('includes database migration naming guidance (#91)', async () => {
+    const agentsPath = join(targetDir, 'AGENTS.md');
+    await writeFile(agentsPath, '# Project\n');
+
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
+
+    const content = await readFile(agentsPath, 'utf-8');
+    expect(content).toContain('Database migrations');
+    // Placeholder version prefix and separator from the ADR
+    expect(content).toContain('V9.999.9.N');
+    expect(content).toContain('__');
+    expect(content).toContain('.sql');
+    // Never rename existing migrations (Flyway checksum rule)
+    expect(content).toMatch(/[Nn]ever rename existing migrations/);
+    // Links back to the authority ADR
+    expect(content).toContain('trustly.atlassian.net/wiki/spaces/ARCH/pages/71295697209');
+  });
+
   // Test 3e (US4): re-injecting an old block converges to one block with all guidance
   it('refreshes an old block to include Context7/Sequential Thinking without duplication (US4)', async () => {
     const agentsPath = join(targetDir, 'AGENTS.md');
