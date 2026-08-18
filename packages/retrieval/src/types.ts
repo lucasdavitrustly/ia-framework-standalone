@@ -1,3 +1,8 @@
+import type { EmbeddingProvider } from '@ia-framework/embedding';
+import type { SparseVector, StoreCapabilities } from '@ia-framework/vector-store';
+import type { VectorBranch } from '@ia-framework/core';
+import type { EffectiveFilter } from './effective-filter.js';
+
 /**
  * A natural language query to the retrieval engine.
  */
@@ -12,6 +17,30 @@ export interface RetrievalQuery {
   filter?: Record<string, unknown> | undefined;
   /** Optional retrieval hint for path/module-aware search */
   preferredModule?: string | undefined;
+  /**
+   * SPR-04 / SPR-06: invoked once per vector branch the engine actually issues a
+   * retrieval call for. A branch the plan selected but the engine skipped (e.g. an
+   * empty sparse vector) is never reported, which is what makes "skipped" and
+   * "executed with zero results" distinguishable to the caller.
+   */
+  onBranchExecuted?: ((branch: VectorBranch) => void) | undefined;
+}
+
+/**
+ * LLM-produced metadata attached to an indexed chunk.
+ * The group is omitted when a chunk has no enrichment.
+ */
+export interface RetrievalEnrichment {
+  description?: string | undefined;
+  businessContext?: string | undefined;
+  semanticTags?: string[] | undefined;
+  relationships?: Array<{
+    target: string;
+    type: string;
+    label?: string | undefined;
+  }> | undefined;
+  enrichedAt?: string | undefined;
+  enrichmentModel?: string | undefined;
 }
 
 /**
@@ -77,6 +106,34 @@ export interface RetrievalResult {
   expansionRepo?: string | undefined;
   /** Source repository identifier (kebab-case from RepoRegistry) */
   repoId?: string | undefined;
+  /** LLM-produced metadata, absent when the chunk was not enriched. */
+  enrichment?: RetrievalEnrichment | undefined;
+  /** Deterministic construct signature used for structural context assembly. */
+  signature?: string | undefined;
+  /** Full class declaration signature, when the chunk is class-related. */
+  classSignature?: string | undefined;
+  /** Enclosing class name, when the chunk is a member. */
+  parentName?: string | undefined;
+  /** 1-indexed start of the parent construct when this is a split chunk. */
+  parentStartLine?: number | undefined;
+  /** 1-indexed end of the parent construct when this is a split chunk. */
+  parentEndLine?: number | undefined;
+  /** 1-based part number within the parent construct. */
+  partIndex?: number | undefined;
+  /** Total number of parts in the parent construct. */
+  totalParts?: number | undefined;
+  /** True when the indexed content is a bounded prefix rather than the full chunk. */
+  truncated?: boolean | undefined;
+  /** Heuristic construct classification. */
+  stereotype?: string | undefined;
+  /** Heuristic architectural layer classification. */
+  archLayer?: string | undefined;
+  /** 1-indexed start of the associated documentation comment. */
+  docCommentStartLine?: number | undefined;
+  /** 1-indexed start of the associated annotation/decorator. */
+  annotationStartLine?: number | undefined;
+  /** True when only the construct signature was embedded. */
+  signatureOnly?: boolean | undefined;
   /** Import/dependency edges extracted from AST (used for payload-edge graph expansion) */
   dependencyEdges?:
     | Array<{
@@ -102,10 +159,7 @@ export interface RetrievalResult {
  */
 export interface SearchEngineConfig {
   /** Embedding provider to embed queries */
-  embeddingProvider: {
-    embed(text: string, taskType?: 'document' | 'query'): Promise<number[]>;
-    dimensions: number;
-  };
+  embeddingProvider: Pick<EmbeddingProvider, 'embed' | 'dimensions' | 'contract'>;
   /**
    * Absolute path to the indexed project root.
    * Used to reconstruct absolute filePaths from relativePaths when stored filePath is absent.
@@ -179,10 +233,42 @@ export interface SearchEngineConfig {
         vectorName: string;
       }>
     >;
+    /** Optional: direct named sparse search. */
+    searchSparse?(
+      vector: SparseVector,
+      options: { limit: number; filter?: Record<string, unknown> | undefined },
+    ): Promise<
+      Array<{
+        id: string;
+        score: number;
+        payload: {
+          chunkId: string;
+          filePath?: string | undefined;
+          relativePath: string;
+          language: string;
+          chunkType: string;
+          name?: string | undefined;
+          content?: string | undefined;
+          startLine: number;
+          endLine: number;
+          imports: string[];
+          exports: string[];
+          contentHash?: string | undefined;
+          modulePath?: string | undefined;
+          packageName?: string | undefined;
+          layerHints?: string[] | undefined;
+          indexedAt: string;
+        };
+        vectorName: string;
+      }>
+    >;
+    /** Optional adapter capabilities. */
+    capabilities?(): StoreCapabilities;
     /** Optional: hybrid search combining dense + sparse + RRF. Falls back to search() if absent. */
     searchHybrid?(options: {
-      denseVector: number[];
-      sparseVector: { indices: number[]; values: number[] };
+      semanticVector: number[];
+      signatureVector: number[];
+      sparseVector?: { indices: number[]; values: number[] } | undefined;
       limit: number;
       filter?: Record<string, unknown> | undefined;
       /** Prefetch multiplier for keyword/sparse branch (default: 3) */
@@ -275,7 +361,11 @@ export interface SearchEngineConfig {
   /** Optional dependency graph for expanding results along import edges */
   dependencyGraph?:
     | {
-        getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]>;
+        getNeighborFiles(
+          filePaths: string[],
+          hops: 1 | 2,
+          filter: EffectiveFilter,
+        ): Promise<string[]>;
       }
     | undefined;
 }

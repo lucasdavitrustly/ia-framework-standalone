@@ -1,7 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 import { getRelatedTerms } from '../search-synonyms.js';
 import { SearchEngine } from '../search-engine.js';
 import type { SearchEngineConfig } from '../types.js';
+import type { EmbeddingContract } from '@ia-framework/core';
+
+const MOCK_CONTRACT: EmbeddingContract = {
+  provider: 'openai',
+  model: 'mock-model',
+  dimension: 384,
+  tokenizerVersion: 1,
+  sparseHashVersion: 1,
+};
 
 /**
  * Helper to create a minimal VectorSearchResult-shaped mock return value.
@@ -51,10 +61,12 @@ describe('getRelatedTerms()', () => {
 });
 
 describe('SearchEngine.searchWithFallback() related-concept expansion', () => {
-  let mockSearch: ReturnType<typeof vi.fn>;
-  let mockSearchHybrid: ReturnType<typeof vi.fn>;
-  let mockSearchKeyword: ReturnType<typeof vi.fn>;
-  let mockEmbed: ReturnType<typeof vi.fn>;
+  // Typed as async mocks so mockImplementation() accepts a Promise-returning
+  // callback (a bare vi.fn() infers a void return and trips no-misused-promises).
+  let mockSearch: Mock<(vector: number[]) => Promise<unknown[]>>;
+  let mockSearchHybrid: Mock<() => Promise<unknown[]>>;
+  let mockSearchKeyword: Mock<() => Promise<unknown[]>>;
+  let mockEmbed: Mock<(text: string) => Promise<number[]>>;
   let config: SearchEngineConfig;
 
   beforeEach(() => {
@@ -64,7 +76,7 @@ describe('SearchEngine.searchWithFallback() related-concept expansion', () => {
     mockEmbed = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
 
     config = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 384 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 384, contract: MOCK_CONTRACT },
       vectorStore: {
         search: mockSearch,
         searchHybrid: mockSearchHybrid,
@@ -75,15 +87,14 @@ describe('SearchEngine.searchWithFallback() related-concept expansion', () => {
 
   it('returns relatedResults when all fallbacks return zero results but synonym match exists', async () => {
     // mockEmbed returns different vectors per query text so mockSearch can distinguish
-    mockEmbed.mockImplementation(async (text: string) => {
-      if (text === 'message') return new Array(384).fill(0.2);
-      return new Array(384).fill(0.1);
+    mockEmbed.mockImplementation((text: string): Promise<number[]> => {
+      if (text === 'message') return Promise.resolve(new Array<number>(384).fill(0.2));
+      return Promise.resolve(new Array<number>(384).fill(0.1));
     });
     // Primary search for "websocket" (vector 0.1) returns empty; "message" (vector 0.2) returns results
-    mockSearch.mockImplementation(async (vector: number[]) => {
-      if (vector[0] === 0.2) return [makeRaw('msg-handler'), makeRaw('msg-queue')];
-      return [];
-    });
+    mockSearch.mockImplementation((vector: number[]) =>
+      Promise.resolve(vector[0] === 0.2 ? [makeRaw('msg-handler'), makeRaw('msg-queue')] : []),
+    );
     mockSearchHybrid.mockResolvedValue([]);
     mockSearchKeyword.mockResolvedValue([]);
 
@@ -119,15 +130,17 @@ describe('SearchEngine.searchWithFallback() related-concept expansion', () => {
   });
 
   it('caps relatedResults at 3', async () => {
-    mockEmbed.mockImplementation(async (text: string) => {
-      if (text === 'message') return new Array(384).fill(0.2);
-      return new Array(384).fill(0.1);
+    mockEmbed.mockImplementation((text: string): Promise<number[]> => {
+      if (text === 'message') return Promise.resolve(new Array<number>(384).fill(0.2));
+      return Promise.resolve(new Array<number>(384).fill(0.1));
     });
-    mockSearch.mockImplementation(async (vector: number[]) => {
-      if (vector[0] === 0.2)
-        return [makeRaw('r1'), makeRaw('r2'), makeRaw('r3'), makeRaw('r4'), makeRaw('r5')];
-      return [];
-    });
+    mockSearch.mockImplementation((vector: number[]) =>
+      Promise.resolve(
+        vector[0] === 0.2
+          ? [makeRaw('r1'), makeRaw('r2'), makeRaw('r3'), makeRaw('r4'), makeRaw('r5')]
+          : [],
+      ),
+    );
     mockSearchHybrid.mockResolvedValue([]);
     mockSearchKeyword.mockResolvedValue([]);
 

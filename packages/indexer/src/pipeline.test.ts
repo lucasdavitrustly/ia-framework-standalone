@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { ChunkMetadata } from '@ia-framework/core';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import type { ChunkMetadata, EmbeddingContract } from '@ia-framework/core';
+import { contractFingerprint } from '@ia-framework/core';
+
+const execFileAsync = promisify(execFile);
 
 // ── Hoist mock variables so they are available in vi.mock factories ──────────
 const { mockParseFile } = vi.hoisted(() => ({ mockParseFile: vi.fn() }));
@@ -78,14 +84,25 @@ import type { VectorStore } from '@ia-framework/vector-store';
 
 // ── Mock factory helpers ─────────────────────────────────────────────────────
 function makeMockEmbeddingProvider(dim = 3) {
+  const contract: EmbeddingContract = {
+    provider: 'openai',
+    model: 'mock-model',
+    dimension: dim,
+    tokenizerVersion: 1,
+    sparseHashVersion: 1,
+  };
   return {
     name: 'mock',
     model: 'mock-model',
     dimensions: dim,
+    contract,
     embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
-    embedBatch: vi
-      .fn()
-      .mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => [0.1, 0.2, 0.3]))),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) =>
+      Promise.resolve({
+        vectors: texts.map(() => [0.1, 0.2, 0.3]),
+        failures: [],
+      }),
+    ),
     estimateTokens: vi.fn().mockReturnValue(10),
   };
 }
@@ -107,6 +124,14 @@ function makeMockVectorStore() {
     scroll: vi.fn().mockResolvedValue({ points: [], nextOffset: undefined }),
     countPoints: vi.fn().mockResolvedValue(0),
     deleteCollection: vi.fn().mockResolvedValue(undefined),
+    // T22 made both members required on VectorStore; mirror the real
+    // QdrantVectorStore.capabilities() so the double stays honest.
+    searchSparse: vi.fn().mockResolvedValue([]),
+    capabilities: vi.fn().mockReturnValue({
+      sparse: true,
+      filterOnly: false,
+      payloadIndexes: [],
+    }),
   } satisfies VectorStore;
 }
 
@@ -176,9 +201,14 @@ describe('IndexingPipeline', () => {
     expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.any(String)]),
       'document',
+      undefined,
     );
     // Second call: signature inputs (name + chunkType fallback since no signature on chunk)
-    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(['testFn function'], 'document');
+    expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(
+      ['testFn function'],
+      'document',
+      undefined,
+    );
   });
 
   it('Test 3: run() calls vectorStore.upsertBatch() with VectorPoints having semantic and signature vectors', async () => {
@@ -218,6 +248,28 @@ describe('IndexingPipeline', () => {
     expect(result.filesIndexed).toBe(2);
     // Only one chunk was successfully indexed (from bar.ts)
     expect(result.chunksIndexed).toBe(1);
+    expect(result.failedFiles).toHaveLength(1);
+    expect(mockSaveLastIndexedCommit).not.toHaveBeenCalled();
+  });
+
+  it('advances the indexed commit only when no chunks were skipped', async () => {
+    // Clean run → commit saved.
+    await pipeline.run(makeConfig());
+    expect(mockSaveLastIndexedCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT advance the indexed commit when a chunk was skipped', async () => {
+    // Force an embedding failure so the chunk is skipped.
+    embeddingProvider.embedBatch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('Ollama embedding error (unknown): 400 — {"error":"invalid input"}'),
+      );
+
+    const result = await pipeline.run(makeConfig());
+
+    expect(result.skippedChunks).toBeGreaterThan(0);
+    expect(mockSaveLastIndexedCommit).not.toHaveBeenCalled();
   });
 
   it('Test 6: run() with incremental=true only processes changed files', async () => {
@@ -248,6 +300,51 @@ describe('IndexingPipeline', () => {
       must: [{ key: 'relativePath', match: { value: expectedRelativePath } }],
     });
     expect(vectorStore.deleteByFilter).not.toHaveBeenCalledWith({ filePath: changedFile });
+  });
+
+  it('F2.2: run() initializes the collection with the provider embedding contract', async () => {
+    await pipeline.run(makeConfig());
+
+    expect(vectorStore.initialize).toHaveBeenCalledTimes(1);
+    const [initArgs] = vectorStore.initialize.mock.calls[0] as [
+      { embeddingContract?: EmbeddingContract; indexGeneration?: string },
+    ];
+    expect(initArgs.embeddingContract).toEqual(embeddingProvider.contract);
+  });
+
+  it('F2.2: indexGeneration is the contract fingerprint joined to the run ISO timestamp', async () => {
+    await pipeline.run(makeConfig());
+
+    const [initArgs] = vectorStore.initialize.mock.calls[0] as [{ indexGeneration?: string }];
+    const generation = initArgs.indexGeneration;
+    expect(typeof generation).toBe('string');
+
+    // Structural assertion (not expect.any(String)): "<fingerprint>-<ISO timestamp>".
+    const fingerprint = contractFingerprint(embeddingProvider.contract);
+    expect(generation?.startsWith(`${fingerprint}-`)).toBe(true);
+    const timestamp = generation?.slice(fingerprint.length + 1) ?? '';
+    expect(new Date(timestamp).toISOString()).toBe(timestamp);
+  });
+
+  it('F2.2: two runs with the same contract produce different indexGeneration values (BUD-14)', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-13T10:00:00.000Z'));
+      await pipeline.run(makeConfig());
+      vi.setSystemTime(new Date('2026-08-13T11:30:00.000Z'));
+      await pipeline.run(makeConfig());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const generations = vectorStore.initialize.mock.calls.map(
+      ([args]) => (args as { indexGeneration?: string }).indexGeneration,
+    );
+    expect(generations).toHaveLength(2);
+    const fingerprint = contractFingerprint(embeddingProvider.contract);
+    expect(generations[0]).toBe(`${fingerprint}-2026-08-13T10:00:00.000Z`);
+    expect(generations[1]).toBe(`${fingerprint}-2026-08-13T11:30:00.000Z`);
+    expect(generations[0]).not.toBe(generations[1]);
   });
 
   it('Test 7: run() calls vectorStore.initialize() before upserting', async () => {
@@ -358,6 +455,7 @@ describe('IndexingPipeline — contextSources', () => {
     expect(embeddingProvider.embedBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.any(String)]),
       'document',
+      undefined,
     );
     expect(vectorStore.upsertBatch).toHaveBeenCalled();
     expect(result.chunksIndexed).toBe(1);
@@ -572,7 +670,7 @@ describe('IndexingPipeline — parallel embedding', () => {
       maxConcurrent = Math.max(maxConcurrent, activeCalls);
       await new Promise((r) => setTimeout(r, 50)); // simulate work
       activeCalls--;
-      return [[0.1, 0.2, 0.3]];
+      return { vectors: [[0.1, 0.2, 0.3]], failures: [] };
     });
 
     await pipeline.run(makeConfig({ embeddingBatchSize: 1, embeddingConcurrency: 2 }));
@@ -603,7 +701,7 @@ describe('IndexingPipeline — parallel embedding', () => {
       maxConcurrent = Math.max(maxConcurrent, activeCalls);
       await new Promise((r) => setTimeout(r, 50));
       activeCalls--;
-      return [[0.1, 0.2, 0.3]];
+      return { vectors: [[0.1, 0.2, 0.3]], failures: [] };
     });
 
     await pipeline.run(
@@ -658,7 +756,7 @@ describe('IndexingPipeline — parallel embedding', () => {
       maxConcurrent = Math.max(maxConcurrent, activeCalls);
       await new Promise((r) => setTimeout(r, 50));
       activeCalls--;
-      return [[0.1, 0.2, 0.3]];
+      return { vectors: [[0.1, 0.2, 0.3]], failures: [] };
     });
 
     // Provider is 'mock' (defaults to 3), but we override to 1
@@ -689,7 +787,7 @@ describe('IndexingPipeline — parallel embedding', () => {
       if (callCount === 1) {
         throw new Error('transient error');
       }
-      return Promise.resolve([[0.1, 0.2, 0.3]]);
+      return Promise.resolve({ vectors: [[0.1, 0.2, 0.3]], failures: [] });
     });
 
     const result = await pipeline.run(makeConfig({ embeddingBatchSize: 1 }));
@@ -716,7 +814,10 @@ describe('IndexingPipeline — parallel embedding', () => {
       if (batchAttempts <= 4) {
         throw new Error('persistent error');
       }
-      return Promise.resolve(texts.map(() => [0.1, 0.2, 0.3]));
+      return Promise.resolve({
+        vectors: texts.map(() => [0.1, 0.2, 0.3]),
+        failures: [],
+      });
     });
 
     const result = await pipeline.run(
@@ -747,7 +848,7 @@ describe('IndexingPipeline — parallel embedding', () => {
         abortController.abort();
       }
       await new Promise((r) => setTimeout(r, 50));
-      return [[0.1, 0.2, 0.3]];
+      return { vectors: [[0.1, 0.2, 0.3]], failures: [] };
     });
 
     const result = await pipeline.run(
@@ -1118,6 +1219,7 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
       'test-collection',
       undefined,
       undefined,
+      undefined,
     );
   });
 
@@ -1136,5 +1238,519 @@ describe('IndexingPipeline — prompt content hash change triggers re-index', ()
     );
 
     expect(result.filesIndexed).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('IndexingPipeline — T1.2: sub-chunk parent declaration re-attachment', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `indexer-subchunk-reload-${Date.now()}-${Math.random()}`);
+    await mkdir(tmpDir, { recursive: true });
+
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetLastPromptContentHash.mockResolvedValue(null);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  /** Every text the mock provider was asked to embed, across all channels. */
+  function embeddedTexts(): string[] {
+    return embeddingProvider.embedBatch.mock.calls.flatMap((call) => (call as [string[]])[0]);
+  }
+
+  it('re-attaches the parent declaration to a reloaded $partN sub-chunk', async () => {
+    // A body-only sub-chunk: startLine begins AFTER the enum declaration line,
+    // exactly as the splitter records it. Reloading lines 2..5 alone yields text
+    // with no `{` and no parent name, which previously made the oversized-input
+    // handler unable to find a declaration.
+    const fileLines = [
+      'public enum TransactionTypeEnum {',
+      '  DEPOSIT,',
+      '  WITHDRAWAL,',
+      '  REFUND,',
+      '  CHARGEBACK;',
+      '}',
+    ];
+    await writeFile(join(tmpDir, 'TransactionTypeEnum.java'), fileLines.join('\n'));
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'enum-part-1',
+        filePath: join(tmpDir, 'TransactionTypeEnum.java'),
+        relativePath: 'TransactionTypeEnum.java',
+        language: 'java',
+        chunkType: 'other',
+        name: 'TransactionTypeEnum$part1',
+        content: 'stale-content-must-be-reloaded',
+        startLine: 2,
+        endLine: 5,
+        imports: [],
+        exports: [],
+        parentName: 'TransactionTypeEnum',
+        parentStartLine: 1,
+        parentEndLine: 6,
+        partIndex: 1,
+        totalParts: 1,
+      },
+    ]);
+
+    await pipeline.run(makeConfig());
+
+    const texts = embeddedTexts();
+    expect(texts.length).toBeGreaterThan(0);
+    // The parent declaration is back in the embedded text — the sub-chunk is
+    // self-describing again.
+    expect(texts.some((text) => text.includes('public enum TransactionTypeEnum {'))).toBe(true);
+    // The body is still there (the declaration is a prefix, not a replacement).
+    expect(texts.some((text) => text.includes('CHARGEBACK;'))).toBe(true);
+  });
+
+  it('hashes the real source range, not the virtual reattached prefix', async () => {
+    const bodyLines = Array.from({ length: 1000 }, (_, index) => `  VALUE_${index},`);
+    const fileLines = ['public enum HugeEnum {', ...bodyLines, '}'];
+    const filePath = join(tmpDir, 'HugeEnum.java');
+    await writeFile(filePath, fileLines.join('\n'));
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'huge-enum-part-1',
+        filePath,
+        relativePath: 'HugeEnum.java',
+        language: 'java',
+        chunkType: 'other',
+        name: 'HugeEnum$part1',
+        content: 'stale-content-must-be-reloaded',
+        startLine: 2,
+        endLine: 1001,
+        imports: [],
+        exports: [],
+        parentName: 'HugeEnum',
+        parentStartLine: 1,
+        parentEndLine: 1002,
+        partIndex: 1,
+        totalParts: 1,
+      },
+    ]);
+
+    await pipeline.run(makeConfig());
+
+    const [points] = vectorStore.upsertBatch.mock.calls[0] as [Record<string, unknown>[]];
+    const payload = (points[0]!['payload'] ?? points[0]!) as Record<string, unknown>;
+    const expectedHash = createHash('sha256').update(bodyLines.join('\n')).digest('hex');
+
+    expect(payload.contentHash).toBe(expectedHash);
+    expect(payload.signatureOnly).toBe(true);
+  });
+
+  it('does not prepend a parent declaration to a non-sub-chunk', async () => {
+    const fileLines = ['public class Payment {', '  int amount;', '}'];
+    await writeFile(join(tmpDir, 'Payment.java'), fileLines.join('\n'));
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'field-1',
+        filePath: join(tmpDir, 'Payment.java'),
+        relativePath: 'Payment.java',
+        language: 'java',
+        chunkType: 'other',
+        name: 'amount',
+        content: 'stale',
+        startLine: 2,
+        endLine: 2,
+        imports: [],
+        exports: [],
+        // Has a parentName but NOT a $partN name — must not be treated as a part.
+        parentName: 'Payment',
+        parentStartLine: 1,
+        parentEndLine: 3,
+      },
+    ]);
+
+    await pipeline.run(makeConfig());
+
+    const texts = embeddedTexts();
+    expect(texts.some((text) => text.includes('int amount;'))).toBe(true);
+    expect(texts.some((text) => text.includes('public class Payment {'))).toBe(false);
+  });
+
+  it('includes a Java member doc comment in embedding content while hashing its source range', async () => {
+    const fileLines = [
+      '/** Processes the payment and records the result. */',
+      '@Transactional',
+      'public boolean processPayment() {',
+      '  return true;',
+      '}',
+    ];
+    const filePath = join(tmpDir, 'PaymentService.java');
+    await writeFile(filePath, fileLines.join('\n'));
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'payment-method',
+        filePath,
+        relativePath: 'PaymentService.java',
+        language: 'java',
+        chunkType: 'method',
+        name: 'processPayment',
+        content: 'stale',
+        startLine: 3,
+        endLine: 5,
+        docCommentStartLine: 1,
+        imports: [],
+        exports: [],
+      },
+    ]);
+
+    await pipeline.run(makeConfig());
+
+    const texts = embeddedTexts();
+    expect(texts.some((text) => text.includes('Processes the payment'))).toBe(true);
+    expect(texts.some((text) => text.includes('public boolean processPayment()'))).toBe(true);
+  });
+
+  it('bounds the declaration scan when the parent has no opening brace', async () => {
+    // A brace-less construct (SQL-like). Scanning forward for `{` must not walk
+    // past the sub-chunk body and duplicate body lines into the prefix.
+    const fileLines = [
+      'CREATE TABLE payments',
+      '(',
+      '  id BIGINT NOT NULL,',
+      '  amount NUMERIC(18,2),',
+      '  metadata JSONB DEFAULT $${}$$',
+      ');',
+    ];
+    await writeFile(join(tmpDir, 'V1__payments.sql'), fileLines.join('\n'));
+    mockParseFile.mockResolvedValue([
+      {
+        id: 'sql-part-1',
+        filePath: join(tmpDir, 'V1__payments.sql'),
+        relativePath: 'V1__payments.sql',
+        language: 'sql',
+        chunkType: 'other',
+        name: 'payments$part1',
+        content: 'stale',
+        startLine: 3,
+        endLine: 6,
+        imports: [],
+        exports: [],
+        parentName: 'payments',
+        parentStartLine: 1,
+        parentEndLine: 6,
+        partIndex: 1,
+        totalParts: 1,
+      },
+    ]);
+
+    await pipeline.run(makeConfig());
+
+    const texts = embeddedTexts();
+    const withBody = texts.find((text) => text.includes('id BIGINT NOT NULL,'));
+    expect(withBody).toBeDefined();
+    // The parent line is prepended…
+    expect(withBody).toContain('CREATE TABLE payments');
+    // …but the body is NOT duplicated by an unbounded forward brace scan.
+    expect(withBody!.split('id BIGINT NOT NULL,').length - 1).toBe(1);
+  });
+});
+
+describe('IndexingPipeline — incremental invalidation and metrics', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+    tmpDir = join(tmpdir(), `indexer-incremental-${Date.now()}-${Math.random()}`);
+    await mkdir(tmpDir, { recursive: true });
+    await writeFile(join(tmpDir, 'foo.ts'), 'function testFn() {}');
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [], toDelete: [] });
+    mockParseFile.mockResolvedValue([makeChunk('chunk-1', join(tmpDir, 'foo.ts'))]);
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test-collection',
+    embeddingProvider,
+    vectorStore,
+    ...overrides,
+  });
+
+  it('forwards repoId when reading and writing incremental state', async () => {
+    const changedFile = join(tmpDir, 'foo.ts');
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit');
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [changedFile], toDelete: [] });
+
+    await pipeline.run(makeConfig({ incremental: true, repoId: 'repo-a' }));
+
+    expect(mockGetLastIndexedCommit).toHaveBeenCalledWith(
+      join(tmpDir, '.ia-framework'),
+      'test-collection',
+      'repo-a',
+    );
+    expect(mockSaveLastIndexedCommit).toHaveBeenCalledWith(
+      join(tmpDir, '.ia-framework'),
+      'abc123',
+      'test-collection',
+      undefined,
+      undefined,
+      'repo-a',
+    );
+  });
+
+  it('scopes deletion by repoId and counts actual deleted and reindexed chunks', async () => {
+    const changedFile = join(tmpDir, 'foo.ts');
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit');
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [changedFile], toDelete: [] });
+    vectorStore.deleteByFilter.mockResolvedValue(4);
+
+    const result = await pipeline.run(makeConfig({ incremental: true, repoId: 'repo-a' }));
+
+    expect(vectorStore.deleteByFilter).toHaveBeenCalledWith({
+      must: [
+        { key: 'relativePath', match: { value: 'foo.ts' } },
+        { key: 'repoId', match: { value: 'repo-a' } },
+      ],
+    });
+    expect(result.metrics).toMatchObject({
+      mode: 'incremental',
+      filesChanged: 1,
+      chunksDeleted: 4,
+      chunksReindexed: 1,
+      chunksAffected: 5,
+    });
+  });
+
+  it('surfaces change-detection failures and does not advance state', async () => {
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit');
+    mockGetChangedFiles.mockResolvedValue({
+      toProcess: [],
+      toDelete: [],
+      failures: [{ operation: 'process', error: 'git diff failed' }],
+    });
+
+    const result = await pipeline.run(makeConfig({ incremental: true, repoId: 'repo-a' }));
+
+    expect(result.failedChanges).toEqual([{ operation: 'process', error: 'git diff failed' }]);
+    expect(result.metrics.failedChanges).toEqual(result.failedChanges);
+    expect(mockSaveLastIndexedCommit).not.toHaveBeenCalled();
+  });
+
+  it('surfaces strategy failures and does not advance state', async () => {
+    const strategy = {
+      name: 'failing-strategy',
+      chunk: vi.fn().mockRejectedValue(new Error('strategy failed')),
+    };
+
+    const result = await pipeline.run(makeConfig({ chunkingStrategy: strategy, repoId: 'repo-a' }));
+
+    expect(result.failedFiles).toEqual([{ relativePath: 'foo.ts', reason: 'strategy failed' }]);
+    expect(result.metrics.failedFiles).toEqual(result.failedFiles);
+    expect(mockSaveLastIndexedCommit).not.toHaveBeenCalled();
+  });
+
+  it('invalidates all split parts when a changed file shrinks, shifts, and grows', async () => {
+    const filePath = join(tmpDir, 'LargeClass.java');
+    const points: Array<{ id: string; payload: Record<string, unknown> }> = [];
+    vectorStore.deleteByFilter.mockImplementation((filter: Record<string, unknown>) => {
+      const must = filter['must'] as Array<{ key: string; match: { value: string } }>;
+      const relativePath = must.find((condition) => condition.key === 'relativePath')?.match.value;
+      const repoId = must.find((condition) => condition.key === 'repoId')?.match.value;
+      const before = points.length;
+      for (let index = points.length - 1; index >= 0; index--) {
+        const payload = points[index]!.payload;
+        if (payload.relativePath === relativePath && payload.repoId === repoId) {
+          points.splice(index, 1);
+        }
+      }
+      return Promise.resolve(before - points.length);
+    });
+    vectorStore.upsertBatch.mockImplementation((newPoints) => {
+      points.push(...(newPoints as Array<{ id: string; payload: Record<string, unknown> }>));
+      return Promise.resolve();
+    });
+    const filePoints = () =>
+      points.filter(
+        (point) =>
+          point.payload.relativePath === 'LargeClass.java' && point.payload.partIndex != null,
+      );
+
+    const makeParts = (count: number, offset: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `part-${count}-${index + 1}`,
+        filePath,
+        relativePath: 'LargeClass.java',
+        language: 'java',
+        chunkType: 'other',
+        name: `LargeClass$part${index + 1}`,
+        content: `part ${index + 1}`,
+        startLine: 2 + offset + index,
+        endLine: 2 + offset + index,
+        imports: [],
+        exports: [],
+        parentName: 'LargeClass',
+        parentStartLine: 1,
+        parentEndLine: 8 + offset,
+        partIndex: index + 1,
+        totalParts: count,
+      }));
+
+    await writeFile(
+      filePath,
+      Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n'),
+    );
+    mockParseFile.mockImplementation((parsedPath: string) =>
+      Promise.resolve(parsedPath === filePath ? makeParts(3, 0) : []),
+    );
+    await pipeline.run(makeConfig({ repoId: 'repo-a' }));
+    expect(filePoints().map((point) => point.id)).toEqual(['part-3-1', 'part-3-2', 'part-3-3']);
+
+    mockGetLastIndexedCommit.mockResolvedValue('old-commit');
+    mockGetChangedFiles.mockResolvedValue({ toProcess: [filePath], toDelete: [] });
+    mockParseFile.mockImplementation((parsedPath: string) =>
+      Promise.resolve(parsedPath === filePath ? makeParts(2, 1) : []),
+    );
+    const shrinkResult = await pipeline.run(makeConfig({ incremental: true, repoId: 'repo-a' }));
+
+    expect(shrinkResult.metrics).toMatchObject({
+      chunksDeleted: 3,
+      chunksReindexed: 2,
+      chunksAffected: 5,
+    });
+    expect(filePoints().map((point) => point.id)).toEqual(['part-2-1', 'part-2-2']);
+    expect(filePoints().map((point) => point.payload.startLine)).toEqual([3, 4]);
+    expect(filePoints().every((point) => point.payload.totalParts === 2)).toBe(true);
+
+    mockParseFile.mockImplementation((parsedPath: string) =>
+      Promise.resolve(parsedPath === filePath ? makeParts(4, 2) : []),
+    );
+    const growResult = await pipeline.run(makeConfig({ incremental: true, repoId: 'repo-a' }));
+
+    expect(growResult.metrics).toMatchObject({
+      chunksDeleted: 2,
+      chunksReindexed: 4,
+      chunksAffected: 6,
+    });
+    expect(filePoints().map((point) => point.id)).toEqual([
+      'part-4-1',
+      'part-4-2',
+      'part-4-3',
+      'part-4-4',
+    ]);
+    expect(filePoints().map((point) => point.payload.startLine)).toEqual([4, 5, 6, 7]);
+    expect(filePoints().every((point) => point.payload.totalParts === 4)).toBe(true);
+  });
+
+  it('does not leak sibling-repo paths into parseFile or deleteByFilter under a real git diff', async () => {
+    // Regression coverage for monorepo path-scoping: a shared git worktree with
+    // `achpro/` and `platform/` subdirectories, using the real getChangedFiles()
+    // implementation (not a mocked result) so an unscoped diff would actually
+    // produce invalid `achpro/platform/...` paths if the fix regressed.
+    const actual = await vi.importActual<typeof import('./incremental.js')>('./incremental.js');
+    mockGetChangedFiles.mockImplementation(actual.getChangedFiles);
+
+    const worktreeRoot = await mkdtemp(join(tmpdir(), 'pipeline-monorepo-'));
+    const achproDir = join(worktreeRoot, 'achpro');
+    const platformDir = join(worktreeRoot, 'platform');
+    await mkdir(join(achproDir, 'src'), { recursive: true });
+    await mkdir(join(platformDir, 'src'), { recursive: true });
+    await writeFile(join(achproDir, 'src', 'A.java'), 'class A {}\n');
+    await writeFile(join(platformDir, 'src', 'P.java'), 'class P {}\n');
+
+    await execFileAsync('git', ['init', '-q'], { cwd: worktreeRoot });
+    await execFileAsync('git', ['add', '-A'], { cwd: worktreeRoot });
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.email=test@example.com',
+        '-c',
+        'user.name=Test',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-qm',
+        'initial',
+      ],
+      { cwd: worktreeRoot },
+    );
+    const { stdout: initialCommitOut } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+      cwd: worktreeRoot,
+    });
+    const initialCommit = initialCommitOut.trim();
+
+    // Only the sibling `platform` subtree changes — `achpro` itself is untouched.
+    await writeFile(join(platformDir, 'src', 'P.java'), 'class P { /* changed */ }\n');
+    await execFileAsync('git', ['add', '-A'], { cwd: worktreeRoot });
+    await execFileAsync(
+      'git',
+      [
+        '-c',
+        'user.email=test@example.com',
+        '-c',
+        'user.name=Test',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-qm',
+        'change platform',
+      ],
+      { cwd: worktreeRoot },
+    );
+
+    mockGetLastIndexedCommit.mockResolvedValue(initialCommit);
+    mockGetCurrentCommit.mockResolvedValue(initialCommit);
+
+    const result = await pipeline.run({
+      targetProjectPath: achproDir,
+      frameworkDir: join(worktreeRoot, '.ia-framework'),
+      collectionName: 'test-collection',
+      embeddingProvider,
+      vectorStore,
+      incremental: true,
+      repoId: 'achpro',
+    });
+
+    // No sibling change should reach the parser at all.
+    expect(mockParseFile).not.toHaveBeenCalled();
+    for (const call of mockParseFile.mock.calls) {
+      const parsedPath = call[0] as string;
+      expect(parsedPath).not.toContain('platform');
+      expect(parsedPath).not.toContain(join('achpro', 'achpro'));
+    }
+
+    // No sibling path should reach the deletion filter either.
+    for (const call of vectorStore.deleteByFilter.mock.calls) {
+      const filter = call[0] as { must: Array<{ key: string; match: { value: string } }> };
+      const relativePath = filter.must.find((c) => c.key === 'relativePath')?.match.value;
+      expect(relativePath).not.toContain('platform');
+      expect(relativePath).not.toContain('..');
+    }
+
+    expect(result.metrics.mode).toBe('incremental');
+    expect(result.metrics.filesChanged).toBe(0);
   });
 });

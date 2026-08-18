@@ -100,7 +100,7 @@ export class CrossRepoEdgeStore {
     }
   }
 
-  private rowToEdge(row: Record<string, unknown>): CrossRepoEdge {
+  private rowToEdge(this: void, row: Record<string, unknown>): CrossRepoEdge {
     return {
       id: row.id as number,
       sourceRepo: row.source_repo as string,

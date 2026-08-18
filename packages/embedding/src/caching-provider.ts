@@ -1,4 +1,9 @@
-import type { EmbeddingProvider, EmbeddingTaskType } from './interface.js';
+import type {
+  EmbedBatchOutcome,
+  EmbeddingProvider,
+  EmbeddingTaskType,
+  InputFailure,
+} from './interface.js';
 
 export interface CachingProviderOptions {
   /** Maximum number of cached embeddings (LRU eviction). Default: 100 */
@@ -30,6 +35,7 @@ export class CachingEmbeddingProvider implements EmbeddingProvider {
   readonly name: string;
   readonly model: string;
   readonly dimensions: number;
+  readonly contract: EmbeddingProvider['contract'];
 
   constructor(
     private readonly underlying: EmbeddingProvider,
@@ -38,10 +44,11 @@ export class CachingEmbeddingProvider implements EmbeddingProvider {
     this.name = underlying.name;
     this.model = underlying.model;
     this.dimensions = underlying.dimensions;
+    this.contract = underlying.contract;
     this.maxSize = options?.maxSize ?? 100;
   }
 
-  async embed(text: string, taskType?: EmbeddingTaskType): Promise<number[]> {
+  async embed(text: string, taskType?: EmbeddingTaskType, signal?: AbortSignal): Promise<number[]> {
     const key = this.buildKey(text, taskType);
     const cached = this.cache.get(key);
 
@@ -52,7 +59,7 @@ export class CachingEmbeddingProvider implements EmbeddingProvider {
     }
 
     // Cache miss — call underlying provider
-    const vector = await this.underlying.embed(text, taskType);
+    const vector = await this.underlying.embed(text, taskType, signal);
 
     // Evict LRU if at capacity
     if (this.cache.size >= this.maxSize) {
@@ -63,10 +70,51 @@ export class CachingEmbeddingProvider implements EmbeddingProvider {
     return vector;
   }
 
-  async embedBatch(texts: string[], taskType?: EmbeddingTaskType): Promise<number[][]> {
-    // Batch calls are delegated directly — caching individual entries within a batch
-    // adds complexity without proportional benefit (batches are typically unique content)
-    return this.underlying.embedBatch(texts, taskType);
+  async embedBatch(
+    texts: string[],
+    taskType?: EmbeddingTaskType,
+    signal?: AbortSignal,
+  ): Promise<EmbedBatchOutcome> {
+    if (texts.length === 0) return this.underlying.embedBatch(texts, taskType, signal);
+
+    const vectors = new Array<number[] | null>(texts.length).fill(null);
+    const misses: Array<{ index: number; text: string }> = [];
+
+    for (let index = 0; index < texts.length; index++) {
+      const text = texts[index]!;
+      const key = this.buildKey(text, taskType);
+      const cached = this.cache.get(key);
+      if (cached) {
+        cached.lastAccess = ++this.accessCounter;
+        vectors[index] = cached.vector;
+      } else {
+        misses.push({ index, text });
+      }
+    }
+
+    if (misses.length === 0) return { vectors, failures: [] };
+
+    const outcome = await this.underlying.embedBatch(
+      misses.map(({ text }) => text),
+      taskType,
+      signal,
+    );
+    const failures: InputFailure[] = outcome.failures.map((failure) => ({
+      ...failure,
+      index: misses[failure.index]?.index ?? failure.index,
+    }));
+
+    for (let missIndex = 0; missIndex < misses.length; missIndex++) {
+      const vector = outcome.vectors[missIndex];
+      if (!vector) continue;
+      const { index, text } = misses[missIndex]!;
+      vectors[index] = vector;
+      const key = this.buildKey(text, taskType);
+      if (this.cache.size >= this.maxSize) this.evictLRU();
+      this.cache.set(key, { vector, lastAccess: ++this.accessCounter });
+    }
+
+    return { vectors, failures };
   }
 
   estimateTokens(text: string): number {

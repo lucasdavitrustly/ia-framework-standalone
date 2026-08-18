@@ -46,55 +46,71 @@ export interface PromptResponse {
 
 // ── JSON schema for structured output ────────────────────────────────────────
 
-export const ENRICHMENT_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    chunks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['id', 'description', 'businessContext', 'semanticTags', 'relationships'],
-        properties: {
-          id: { type: 'string' },
-          description: {
-            type: 'string',
-            description: 'One sentence summary of what this chunk does',
-          },
-          businessContext: { type: 'string', description: 'Business domain this belongs to' },
-          semanticTags: {
-            type: 'array',
-            items: { type: 'string' },
-            description: '3-7 lowercase tags like ["retry","payment","resilience"]',
-          },
-          relationships: {
-            type: 'array',
-            items: {
-              type: 'object',
-              required: ['target', 'type'],
-              properties: {
-                target: { type: 'string' },
-                type: {
-                  type: 'string',
-                  enum: [
-                    'uses',
-                    'implements',
-                    'extends',
-                    'configures',
-                    'produces',
-                    'consumes',
-                    'tests',
-                  ],
-                },
-                label: { type: 'string' },
+/**
+ * Build a bounded JSON schema for Ollama's `format` option enforcing a
+ * top-level array of exactly `count` enrichment objects (one per batched chunk).
+ *
+ * The `minItems`/`maxItems` bounds are load-bearing: without them small models
+ * (e.g. qwen2.5-coder) collapse a multi-chunk batch into a single object or
+ * ramble to the `num_predict` ceiling, producing truncated, unparseable JSON.
+ * `semanticTags` is capped at 5 to stop tag-list runaway.
+ *
+ * @param count - Number of chunks in the batch (== expected array length)
+ */
+export function buildEnrichmentSchema(count: number): Record<string, unknown> {
+  return {
+    type: 'array',
+    minItems: count,
+    maxItems: count,
+    items: {
+      type: 'object',
+      required: ['description', 'businessContext', 'semanticTags'],
+      properties: {
+        description: {
+          type: 'string',
+          description: 'One sentence summary of what this chunk does',
+        },
+        businessContext: { type: 'string', description: 'Business domain this belongs to' },
+        semanticTags: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 3,
+          maxItems: 5,
+          description: '3-5 lowercase tags like ["retry","payment","resilience"]',
+        },
+        relationships: {
+          type: 'array',
+          // Bounded to stop output-token runaway. Without maxItems the model
+          // emits one relationship per import (often 8+), each with a long
+          // path, blowing num_predict and truncating the JSON mid-array.
+          maxItems: 3,
+          items: {
+            type: 'object',
+            required: ['target', 'type'],
+            properties: {
+              // Filename only (e.g. "Foo.java"), not an absolute path — capped
+              // so a single verbose relationship cannot exhaust the budget.
+              target: { type: 'string', maxLength: 80 },
+              type: {
+                type: 'string',
+                enum: [
+                  'uses',
+                  'implements',
+                  'extends',
+                  'configures',
+                  'produces',
+                  'consumes',
+                  'tests',
+                ],
               },
+              label: { type: 'string' },
             },
           },
         },
       },
     },
-  },
-  required: ['chunks'],
-} as const;
+  };
+}
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
@@ -136,15 +152,20 @@ export function buildEnrichmentPrompt(chunks: ChunkForPrompt[], filePath: string
     .join('\n\n');
 
   return `Enrich these ${chunks[0]?.language ?? 'code'} chunks from "${filePath}". Return JSON array, one object per chunk in order.
-Format: [{"description":"<1 sentence>","businessContext":"<domain>","semanticTags":["<3-7 lowercase>"],"relationships":[{"target":"<file>","type":"uses|implements|extends|configures|produces|consumes|tests"}]}]
+Format: [{"description":"<1 sentence>","businessContext":"<domain>","semanticTags":["<3-7 lowercase>"],"relationships":[{"target":"<filename only, e.g. Foo.java>","type":"uses|implements|extends|configures|produces|consumes|tests"}]}]
 
 ${chunkBlocks}`;
 }
 
 /**
  * Parse the Ollama response into structured enrichment data.
- * Supports: flat array, legacy {chunks: [...]}, and single-object fallback.
+ * Supports: flat array and legacy {chunks: [...]}.
  * Returns null if the response cannot be parsed.
+ *
+ * Note: a lone enrichment object (no array) is deliberately NOT accepted —
+ * treating it as a 1-element result silently drops the rest of the batch.
+ * The caller relies on a bounded array schema (see buildEnrichmentSchema) to
+ * guarantee one object per chunk, and rejects length mismatches so they retry.
  */
 export function parseEnrichmentResponse(rawResponse: string): EnrichedChunkResponse[] | null {
   try {
@@ -152,7 +173,7 @@ export function parseEnrichmentResponse(rawResponse: string): EnrichedChunkRespo
     const cleaned = rawResponse.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     // Strip markdown code fences if present (safety net for models that ignore format:'json')
     const stripped = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
-    const parsed = JSON.parse(stripped);
+    const parsed: unknown = JSON.parse(stripped);
 
     // New format: flat array
     if (Array.isArray(parsed)) {
@@ -160,13 +181,11 @@ export function parseEnrichmentResponse(rawResponse: string): EnrichedChunkRespo
     }
 
     // Legacy format: { chunks: [...] }
-    if (parsed && Array.isArray(parsed.chunks)) {
-      return parsed.chunks as EnrichedChunkResponse[];
-    }
-
-    // Single-object fallback: model returned one enrichment object instead of array
-    if (parsed && typeof parsed === 'object' && 'description' in parsed) {
-      return [parsed as EnrichedChunkResponse];
+    if (parsed !== null && typeof parsed === 'object' && 'chunks' in parsed) {
+      const { chunks } = parsed as { chunks: unknown };
+      if (Array.isArray(chunks)) {
+        return chunks as EnrichedChunkResponse[];
+      }
     }
 
     return null;

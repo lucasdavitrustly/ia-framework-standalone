@@ -43,7 +43,9 @@ export default function TokenUsage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // Mount-only: the polling interval is self-contained and must not be
+    // re-created on every render. The dependency array is deliberately empty.
+  }, []);
 
   return (
     <div className="p-8">

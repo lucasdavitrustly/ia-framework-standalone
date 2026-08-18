@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 import {
   buildCrossRepoEdges,
   type EdgeBuilderEngine,
@@ -17,7 +18,13 @@ function makeChunk(overrides: Partial<ChunkForEdgeBuilding> = {}): ChunkForEdgeB
   };
 }
 
-function makeStore(): CrossRepoEdgeStore {
+/** The double's mocked members must stay visible so assertions are type-safe. */
+type MockedStore = CrossRepoEdgeStore & {
+  insertEdges: Mock;
+  rebuildForRepo: Mock;
+};
+
+function makeStore(): MockedStore {
   return {
     insertEdge: vi.fn(),
     insertEdges: vi.fn(),
@@ -25,27 +32,44 @@ function makeStore(): CrossRepoEdgeStore {
     getEdgesTo: vi.fn().mockReturnValue([]),
     rebuildForRepo: vi.fn(),
     close: vi.fn(),
-  } as unknown as CrossRepoEdgeStore;
+  } as unknown as MockedStore;
+}
+
+/** Build the AsyncIterable page stream EdgeBuilderEngine.scrollAllChunks returns. */
+function makeAsyncChunkPages<T>(pages: T[][]): AsyncIterable<T[]> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<T[]> {
+      let index = 0;
+      return {
+        next: () =>
+          Promise.resolve(
+            index < pages.length
+              ? { value: pages[index++]!, done: false }
+              : { value: undefined, done: true },
+          ),
+      };
+    },
+  };
 }
 
 describe('buildCrossRepoEdges', () => {
-  let store: CrossRepoEdgeStore;
+  let store: MockedStore;
   let engine: EdgeBuilderEngine;
+  let scrollByNameInRepo: Mock;
   let config: EdgeBuilderConfig;
 
   beforeEach(() => {
     store = makeStore();
+    scrollByNameInRepo = vi.fn().mockResolvedValue([
+      makeChunk({
+        relativePath: 'src/bar.ts',
+        name: 'Bar',
+        repoId: 'repo-b',
+      }),
+    ]);
     engine = {
-      async *scrollAllChunks(repoId: string) {
-        yield [makeChunk({ repoId })];
-      },
-      scrollByNameInRepo: vi.fn().mockResolvedValue([
-        makeChunk({
-          relativePath: 'src/bar.ts',
-          name: 'Bar',
-          repoId: 'repo-b',
-        }),
-      ]),
+      scrollAllChunks: (repoId: string) => makeAsyncChunkPages([[makeChunk({ repoId })]]),
+      scrollByNameInRepo,
     };
     config = {
       repos: [
@@ -58,7 +82,7 @@ describe('buildCrossRepoEdges', () => {
   it('iterates chunks, resolves imports via resolveImportToRepo, inserts edges', async () => {
     const result = await buildCrossRepoEdges(store, engine, config);
     expect(result.edgesCreated).toBeGreaterThan(0);
-    expect(store.insertEdges as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+    expect(store.insertEdges).toHaveBeenCalled();
   });
 
   it('chunks with imports matching no repo produce no edges', async () => {
@@ -73,19 +97,18 @@ describe('buildCrossRepoEdges', () => {
   it('calls rebuildForRepo when rebuildRepoId is provided (per D-10)', async () => {
     config.rebuildRepoId = 'repo-a';
     await buildCrossRepoEdges(store, engine, config);
-    expect(store.rebuildForRepo as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('repo-a');
+    expect(store.rebuildForRepo).toHaveBeenCalledWith('repo-a');
   });
 
   it('uses scrollByNameInRepo with repoId filter for symbol lookup (per D-02)', async () => {
     await buildCrossRepoEdges(store, engine, config);
-    expect(engine.scrollByNameInRepo).toHaveBeenCalledWith(expect.any(String), 'repo-b');
+    expect(scrollByNameInRepo).toHaveBeenCalledWith(expect.any(String), 'repo-b');
   });
 
   it('external packages (no provides match) are silently skipped', async () => {
     engine = {
-      async *scrollAllChunks() {
-        yield [makeChunk({ imports: ['lodash', 'express'] })];
-      },
+      scrollAllChunks: () =>
+        makeAsyncChunkPages([[makeChunk({ imports: ['lodash', 'express'] })]]),
       scrollByNameInRepo: vi.fn().mockResolvedValue([]),
     };
     config.repos = [

@@ -53,7 +53,7 @@ describe('parseXml', () => {
   it('returns a module chunk for empty XML content', () => {
     const chunks = parseXml('', filePath, relativePath);
     expect(chunks).toHaveLength(1);
-    expect(chunks[0].chunkType).toBe('module');
+    expect(chunks[0]!.chunkType).toBe('module');
   });
 
   it('returns a module chunk for XML with no bean/import elements', () => {
@@ -64,7 +64,7 @@ describe('parseXml', () => {
 
     const chunks = parseXml(content, filePath, relativePath);
     expect(chunks).toHaveLength(1);
-    expect(chunks[0].chunkType).toBe('module');
+    expect(chunks[0]!.chunkType).toBe('module');
   });
 
   it('assigns correct filePath, relativePath and line numbers', () => {

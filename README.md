@@ -595,7 +595,7 @@ Checks whether RAG guidance has been injected, reporting per designated injectio
 
 ### search_codebase
 
-The primary tool. AI assistants call this to find relevant code for the task at hand. Queries are auto-classified (semantic/keyword/existence/aggregation) and routed to the optimal search path. Top-5 results include live file content read from disk; results 6-10 are metadata-only to reduce token usage.
+The primary tool. AI assistants call this to find relevant code for the task at hand. Queries are auto-classified (semantic/keyword/existence/aggregation) and routed to the optimal search path. Results are read from targeted live source ranges and selected by evidence priority plus the remaining context budget; there is no fixed top-five cutoff. The response includes compact retrieval diagnostics in `structuredContent`.
 
 | Parameter         | Type    | Default  | Description                                                                                 |
 | ----------------- | ------- | -------- | ------------------------------------------------------------------------------------------- |

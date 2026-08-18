@@ -8,7 +8,17 @@ import type {
   CollectionInfo,
   ChunkPayload,
   HybridSearchOptions,
+  SparseSearchOptions,
+  SparseVector,
+  StoreCapabilities,
 } from './interface.js';
+import { baseFilter } from './base-filter.js';
+import {
+  CollectionSchemaError,
+  PayloadIndexError,
+  type EmbeddingContract,
+} from '@ia-framework/core';
+import { ContractStore } from './contract-store.js';
 
 function toQdrantId(chunkId: string): string {
   const hash = createHash('sha256').update(chunkId).digest('hex');
@@ -25,6 +35,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function isReservedContractPoint(value: unknown): boolean {
+  return isRecord(value) && value.kind === '__ia_contract__';
+}
+
 function toChunkPayload(value: unknown): ChunkPayload {
   const record = isRecord(value) ? value : {};
   return {
@@ -37,6 +51,10 @@ function toChunkPayload(value: unknown): ChunkPayload {
     content: typeof record.content === 'string' ? record.content : undefined,
     startLine: typeof record.startLine === 'number' ? record.startLine : 0,
     endLine: typeof record.endLine === 'number' ? record.endLine : 0,
+    docCommentStartLine:
+      typeof record.docCommentStartLine === 'number' ? record.docCommentStartLine : undefined,
+    annotationStartLine:
+      typeof record.annotationStartLine === 'number' ? record.annotationStartLine : undefined,
     imports: Array.isArray(record.imports)
       ? record.imports.filter((v): v is string => typeof v === 'string')
       : [],
@@ -44,6 +62,12 @@ function toChunkPayload(value: unknown): ChunkPayload {
       ? record.exports.filter((v): v is string => typeof v === 'string')
       : [],
     parentName: typeof record.parentName === 'string' ? record.parentName : undefined,
+    parentStartLine:
+      typeof record.parentStartLine === 'number' ? record.parentStartLine : undefined,
+    parentEndLine: typeof record.parentEndLine === 'number' ? record.parentEndLine : undefined,
+    partIndex: typeof record.partIndex === 'number' ? record.partIndex : undefined,
+    totalParts: typeof record.totalParts === 'number' ? record.totalParts : undefined,
+    truncated: typeof record.truncated === 'boolean' ? record.truncated : undefined,
     superclass: typeof record.superclass === 'string' ? record.superclass : undefined,
     interfaces: Array.isArray(record.interfaces)
       ? record.interfaces.filter((i: unknown) => typeof i === 'string')
@@ -59,18 +83,10 @@ function toChunkPayload(value: unknown): ChunkPayload {
     qualityScore: typeof record.qualityScore === 'number' ? record.qualityScore : undefined,
     mavenModule: isRecord(record.mavenModule)
       ? {
-          groupId:
-            typeof (record.mavenModule as Record<string, unknown>).groupId === 'string'
-              ? ((record.mavenModule as Record<string, unknown>).groupId as string)
-              : '',
+          groupId: typeof record.mavenModule.groupId === 'string' ? record.mavenModule.groupId : '',
           artifactId:
-            typeof (record.mavenModule as Record<string, unknown>).artifactId === 'string'
-              ? ((record.mavenModule as Record<string, unknown>).artifactId as string)
-              : '',
-          version:
-            typeof (record.mavenModule as Record<string, unknown>).version === 'string'
-              ? ((record.mavenModule as Record<string, unknown>).version as string)
-              : '',
+            typeof record.mavenModule.artifactId === 'string' ? record.mavenModule.artifactId : '',
+          version: typeof record.mavenModule.version === 'string' ? record.mavenModule.version : '',
         }
       : undefined,
     contentHash: typeof record.contentHash === 'string' ? record.contentHash : undefined,
@@ -79,33 +95,27 @@ function toChunkPayload(value: unknown): ChunkPayload {
     contextHeader: typeof record.contextHeader === 'string' ? record.contextHeader : undefined,
     moduleInfo: isRecord(record.moduleInfo)
       ? {
-          group:
-            typeof (record.moduleInfo as Record<string, unknown>).group === 'string'
-              ? ((record.moduleInfo as Record<string, unknown>).group as string)
-              : '',
-          module:
-            typeof (record.moduleInfo as Record<string, unknown>).module === 'string'
-              ? ((record.moduleInfo as Record<string, unknown>).module as string)
-              : '',
+          group: typeof record.moduleInfo.group === 'string' ? record.moduleInfo.group : '',
+          module: typeof record.moduleInfo.module === 'string' ? record.moduleInfo.module : '',
           submodule:
-            typeof (record.moduleInfo as Record<string, unknown>).submodule === 'string'
-              ? ((record.moduleInfo as Record<string, unknown>).submodule as string)
+            typeof record.moduleInfo.submodule === 'string'
+              ? record.moduleInfo.submodule
               : undefined,
         }
       : undefined,
     mavenCoordinates: isRecord(record.mavenCoordinates)
       ? {
           groupId:
-            typeof (record.mavenCoordinates as Record<string, unknown>).groupId === 'string'
-              ? ((record.mavenCoordinates as Record<string, unknown>).groupId as string)
+            typeof record.mavenCoordinates.groupId === 'string'
+              ? record.mavenCoordinates.groupId
               : '',
           artifactId:
-            typeof (record.mavenCoordinates as Record<string, unknown>).artifactId === 'string'
-              ? ((record.mavenCoordinates as Record<string, unknown>).artifactId as string)
+            typeof record.mavenCoordinates.artifactId === 'string'
+              ? record.mavenCoordinates.artifactId
               : '',
           version:
-            typeof (record.mavenCoordinates as Record<string, unknown>).version === 'string'
-              ? ((record.mavenCoordinates as Record<string, unknown>).version as string)
+            typeof record.mavenCoordinates.version === 'string'
+              ? record.mavenCoordinates.version
               : '',
         }
       : undefined,
@@ -123,10 +133,36 @@ function toChunkPayload(value: unknown): ChunkPayload {
     calls: Array.isArray(record.calls)
       ? record.calls.filter((c: unknown): c is string => typeof c === 'string')
       : undefined,
+    calledBy: Array.isArray(record.calledBy)
+      ? record.calledBy.filter((c: unknown): c is string => typeof c === 'string')
+      : undefined,
     stereotype: typeof record.stereotype === 'string' ? record.stereotype : undefined,
     archLayer: typeof record.archLayer === 'string' ? record.archLayer : undefined,
     complexity: (['low', 'medium', 'high'] as const).includes(record.complexity as 'low')
       ? (record.complexity as 'low' | 'medium' | 'high')
+      : undefined,
+    annotationMeta: isRecord(record.annotationMeta)
+      ? {
+          operationSummaries: Array.isArray(record.annotationMeta.operationSummaries)
+            ? record.annotationMeta.operationSummaries.filter(
+                (v: unknown): v is string => typeof v === 'string',
+              )
+            : undefined,
+          endpointPaths: Array.isArray(record.annotationMeta.endpointPaths)
+            ? record.annotationMeta.endpointPaths.filter(
+                (v: unknown): v is string => typeof v === 'string',
+              )
+            : undefined,
+          httpMethods: Array.isArray(record.annotationMeta.httpMethods)
+            ? record.annotationMeta.httpMethods.filter(
+                (v: unknown): v is string => typeof v === 'string',
+              )
+            : undefined,
+          tagName:
+            typeof record.annotationMeta.tagName === 'string'
+              ? record.annotationMeta.tagName
+              : undefined,
+        }
       : undefined,
     description: typeof record.description === 'string' ? record.description : undefined,
     businessContext:
@@ -155,6 +191,11 @@ function toChunkPayload(value: unknown): ChunkPayload {
     enrichedAt: typeof record.enrichedAt === 'string' ? record.enrichedAt : undefined,
     enrichmentModel:
       typeof record.enrichmentModel === 'string' ? record.enrichmentModel : undefined,
+    chunkIndex: typeof record.chunkIndex === 'number' ? record.chunkIndex : undefined,
+    totalChunks: typeof record.totalChunks === 'number' ? record.totalChunks : undefined,
+    signatureOnly: typeof record.signatureOnly === 'boolean' ? record.signatureOnly : undefined,
+    tokenizerVersion:
+      typeof record.tokenizerVersion === 'number' ? record.tokenizerVersion : undefined,
   };
 }
 
@@ -186,9 +227,47 @@ export class QdrantVectorStore implements VectorStore {
     textDimensions: number;
     codeDimensions: number;
     force?: boolean;
+    embeddingContract?: EmbeddingContract;
+    indexGeneration?: string;
   }): Promise<void> {
     const semanticDimensions = config.textDimensions;
     const signatureDimensions = config.codeDimensions;
+    const contractStore = new ContractStore(
+      this.client as unknown as ConstructorParameters<typeof ContractStore>[0],
+      this.collectionName,
+    );
+    const indexFields: Array<{ field_name: string; field_schema: 'keyword' | 'integer' }> = [
+      { field_name: 'stereotype', field_schema: 'keyword' },
+      { field_name: 'archLayer', field_schema: 'keyword' },
+      { field_name: 'moduleInfo.module', field_schema: 'keyword' },
+      { field_name: 'language', field_schema: 'keyword' },
+      { field_name: 'repoId', field_schema: 'keyword' },
+      { field_name: 'relativePath', field_schema: 'keyword' },
+      { field_name: 'kind', field_schema: 'keyword' },
+      { field_name: 'chunkIndex', field_schema: 'integer' },
+      { field_name: 'defines', field_schema: 'keyword' },
+      { field_name: 'dependencyEdges[].targetPath', field_schema: 'keyword' },
+      { field_name: 'dependencyEdges[].relation', field_schema: 'keyword' },
+    ];
+    const reconcilePayloadIndexes = async (): Promise<void> => {
+      for (const idx of indexFields) {
+        try {
+          await this.client.createPayloadIndex(this.collectionName, idx);
+        } catch (error) {
+          throw new PayloadIndexError(
+            idx.field_name,
+            `${error instanceof Error ? error.message : String(error)}; filtering may fall back to an unindexed full scan`,
+          );
+        }
+      }
+    };
+    const writeContract = async (): Promise<void> => {
+      if (!config.embeddingContract) return;
+      await contractStore.writeContract(
+        config.embeddingContract,
+        config.indexGeneration ?? 'unknown',
+      );
+    };
 
     const existence = await this.client.collectionExists(this.collectionName);
     if (existence.exists) {
@@ -215,11 +294,29 @@ export class QdrantVectorStore implements VectorStore {
           'signature' in vectors && isRecord(vectors['signature'])
             ? (vectors['signature'] as { size?: number }).size
             : undefined;
+        const unreadable = semanticSize === undefined || signatureSize === undefined;
         const mismatch =
-          (semanticSize !== undefined && semanticSize !== semanticDimensions) ||
-          (signatureSize !== undefined && signatureSize !== signatureDimensions);
-        if (!mismatch) return;
-        await this.client.deleteCollection(this.collectionName);
+          unreadable ||
+          semanticSize !== semanticDimensions ||
+          signatureSize !== signatureDimensions;
+        if (mismatch) {
+          if (!config.force) {
+            throw new CollectionSchemaError(
+              this.collectionName,
+              unreadable ? 'vectors' : 'semantic/signature',
+              semanticDimensions,
+              unreadable ? 'unreadable' : `${semanticSize}/${signatureSize}`,
+            );
+          }
+          await this.client.deleteCollection(this.collectionName);
+        } else if (config.embeddingContract) {
+          await contractStore.assertSearchable(config.embeddingContract);
+          await reconcilePayloadIndexes();
+          return;
+        } else {
+          await reconcilePayloadIndexes();
+          return;
+        }
       }
     }
 
@@ -231,21 +328,8 @@ export class QdrantVectorStore implements VectorStore {
       sparse_vectors: { sparse: { modifier: 'idf' } },
     });
 
-    const indexFields: Array<{ field_name: string; field_schema: 'keyword' | 'integer' }> = [
-      { field_name: 'stereotype', field_schema: 'keyword' },
-      { field_name: 'archLayer', field_schema: 'keyword' },
-      { field_name: 'moduleInfo.module', field_schema: 'keyword' },
-      { field_name: 'language', field_schema: 'keyword' },
-      { field_name: 'repoId', field_schema: 'keyword' },
-      { field_name: 'relativePath', field_schema: 'keyword' },
-    ];
-    for (const idx of indexFields) {
-      try {
-        await this.client.createPayloadIndex(this.collectionName, idx);
-      } catch {
-        /* non-fatal */
-      }
-    }
+    await writeContract();
+    await reconcilePayloadIndexes();
   }
 
   async upsertBatch(points: VectorPoint[]): Promise<void> {
@@ -256,6 +340,9 @@ export class QdrantVectorStore implements VectorStore {
         const semanticVec = p.semantic ?? p.textVector ?? [];
         const signatureVec = p.signature ?? p.codeVector ?? [];
         const sparseVec = p.sparse ?? p.sparseVector;
+        // Lean-payload constraint: content is never stored in Qdrant.
+        const leanPayload: Record<string, unknown> = { ...p.payload };
+        delete leanPayload['content'];
         return {
           id: toQdrantId(p.id),
           vector: {
@@ -263,7 +350,7 @@ export class QdrantVectorStore implements VectorStore {
             signature: signatureVec,
             ...(sparseVec ? { sparse: sparseVec } : {}),
           },
-          payload: { ...p.payload },
+          payload: leanPayload,
         };
       }),
     });
@@ -276,19 +363,55 @@ export class QdrantVectorStore implements VectorStore {
         : options.vectorName === 'code'
           ? 'signature'
           : options.vectorName;
-    const results = await this.client.search(this.collectionName, {
-      vector: { name: vectorName, vector: queryVector },
+    const response = await this.client.query(this.collectionName, {
+      query: queryVector,
+      using: vectorName,
       limit: options.limit,
       ...(options.scoreThreshold !== undefined ? { score_threshold: options.scoreThreshold } : {}),
-      ...(options.filter !== undefined ? { filter: options.filter } : {}),
+      filter: baseFilter(options.filter),
       with_payload: true,
     });
-    return results.map((r) => ({
-      id: toChunkPayload(r.payload).chunkId || String(r.id),
-      score: r.score,
-      payload: toChunkPayload(r.payload),
-      vectorName: vectorName as 'semantic' | 'signature',
-    }));
+    const results = response.points;
+    return results
+      .filter((r) => !isReservedContractPoint(r.payload))
+      .map((r) => ({
+        id: toChunkPayload(r.payload).chunkId || String(r.id),
+        score: r.score,
+        payload: toChunkPayload(r.payload),
+        vectorName: vectorName as 'semantic' | 'signature',
+      }));
+  }
+
+  async searchSparse(vector: SparseVector, options: SparseSearchOptions): Promise<SearchResult[]> {
+    const response = await this.client.query(this.collectionName, {
+      query: vector,
+      using: 'sparse',
+      limit: options.limit,
+      filter: baseFilter(options.filter),
+      with_payload: true,
+    });
+    const results = response.points;
+
+    return results
+      .filter((result) => !isReservedContractPoint(result.payload))
+      .sort(
+        (left, right) =>
+          right.score - left.score || String(left.id).localeCompare(String(right.id)),
+      )
+      .map((result) => ({
+        id: toChunkPayload(result.payload).chunkId || String(result.id),
+        score: result.score,
+        payload: toChunkPayload(result.payload),
+        vectorName: 'sparse' as const,
+      }));
+  }
+
+  capabilities(): StoreCapabilities {
+    return {
+      sparse: true,
+      filterOnly: false,
+      payloadIndexes: [],
+    };
   }
 
   async getCollectionInfo(): Promise<CollectionInfo> {
@@ -336,47 +459,64 @@ export class QdrantVectorStore implements VectorStore {
     const results = await query(this.collectionName, {
       prefetch: [
         {
-          query: { nearest: options.denseVector },
+          query: { nearest: options.semanticVector },
           using: 'semantic',
           limit: options.limit * semanticMult,
         },
         {
-          query: { nearest: options.denseVector },
+          query: { nearest: options.signatureVector },
           using: 'signature',
           limit: options.limit * semanticMult,
         },
-        {
-          query: { nearest: options.sparseVector },
-          using: 'sparse',
-          limit: options.limit * keywordMult,
-        },
+        ...(options.sparseVector
+          ? [
+              {
+                query: { nearest: options.sparseVector },
+                using: 'sparse',
+                limit: options.limit * keywordMult,
+              },
+            ]
+          : []),
       ],
       query: { fusion: 'rrf' },
       limit: options.limit,
       with_payload: true,
-      ...(options.filter !== undefined ? { filter: options.filter } : {}),
+      filter: baseFilter(options.filter),
     });
     const points = Array.isArray(results)
       ? results
       : isRecord(results) && Array.isArray(results.points)
         ? results.points
         : [];
-    return points.map((r) => ({
-      id: isRecord(r) ? toChunkPayload(r.payload).chunkId || String(r.id) : '',
-      score: isRecord(r) && typeof r.score === 'number' ? r.score : 0,
-      payload: isRecord(r) ? toChunkPayload(r.payload) : toChunkPayload(undefined),
-      vectorName: 'semantic' as const,
-    }));
+    return points
+      .filter((r) => isRecord(r) && !isReservedContractPoint(r.payload))
+      .map((r) => {
+        const branch = isRecord(r) ? (r.vectorName ?? r.vector_name) : undefined;
+        const vectorName =
+          branch === 'signature' || branch === 'sparse' || branch === 'text' || branch === 'code'
+            ? branch
+            : 'semantic';
+        return {
+          id: isRecord(r) ? toChunkPayload(r.payload).chunkId || String(r.id) : '',
+          score: isRecord(r) && typeof r.score === 'number' ? r.score : 0,
+          payload: isRecord(r) ? toChunkPayload(r.payload) : toChunkPayload(undefined),
+          vectorName,
+        };
+      });
   }
 
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
-    const result = await (
+    // Qdrant's delete operation acknowledges completion but does not expose a
+    // deleted-count field. Count first so callers can report real invalidation
+    // metrics while retaining wait=true deletion semantics.
+    const deleted = await this.countPoints(filter);
+    await (
       this.client.delete as unknown as (
         name: string,
         args: { wait: boolean; filter: Record<string, unknown> },
-      ) => Promise<{ deleted_count?: number }>
+      ) => Promise<unknown>
     )(this.collectionName, { wait: true, filter });
-    return result.deleted_count ?? 0;
+    return deleted;
   }
 
   async deleteByIds(ids: string[]): Promise<void> {
@@ -404,11 +544,13 @@ export class QdrantVectorStore implements VectorStore {
     const result = await this.client.scroll(this.collectionName, {
       limit: options.limit,
       ...(options.offset !== undefined ? { offset: options.offset } : {}),
-      ...(options.filter !== undefined ? { filter: options.filter } : {}),
+      filter: baseFilter(options.filter),
       with_payload: true,
     });
     return {
-      points: result.points.map((p) => ({ id: String(p.id), payload: toChunkPayload(p.payload) })),
+      points: result.points
+        .filter((p) => !isReservedContractPoint(p.payload))
+        .map((p) => ({ id: String(p.id), payload: toChunkPayload(p.payload) })),
       nextOffset:
         typeof result.next_page_offset === 'string' || typeof result.next_page_offset === 'number'
           ? result.next_page_offset
@@ -418,7 +560,7 @@ export class QdrantVectorStore implements VectorStore {
 
   async countPoints(filter?: Record<string, unknown>): Promise<number> {
     const result = await this.client.count(this.collectionName, {
-      ...(filter !== undefined ? { filter } : {}),
+      filter: baseFilter(filter),
       exact: true,
     });
     return result.count;

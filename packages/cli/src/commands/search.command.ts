@@ -9,7 +9,8 @@ import {
   DependencyGraph,
   MultiCollectionSearchEngine,
 } from '@ia-framework/retrieval';
-import type { CollectionEngine } from '@ia-framework/retrieval';
+import type { CollectionEngine, EffectiveFilter } from '@ia-framework/retrieval';
+import { createEffectiveFilter } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 
 export function searchCommand(): Command {
@@ -40,15 +41,21 @@ export function searchCommand(): Command {
           const frameworkDir = dirname(configPath);
           const graphDbPath = join(frameworkDir, 'graph.sqlite');
           let dependencyGraph:
-            | { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> }
+            | {
+                getNeighborFiles(
+                  filePaths: string[],
+                  hops: 1 | 2,
+                  filter: EffectiveFilter,
+                ): Promise<string[]>;
+              }
             | undefined;
 
           try {
             const graph = new DependencyGraph({ dbPath: graphDbPath });
             graph.initialize();
             dependencyGraph = {
-              getNeighborFiles: (filePaths: string[], hops: 1 | 2) =>
-                Promise.resolve(graph.getNeighborFiles(filePaths, hops)),
+              getNeighborFiles: (filePaths, hops, filter) =>
+                Promise.resolve(graph.getNeighborFiles(filePaths, hops, filter)),
             };
           } catch {
             // Graph not available — search will work without expansion
@@ -112,6 +119,7 @@ export function searchCommand(): Command {
               limit: isNaN(limit) ? 10 : limit,
               scoreThreshold: isNaN(scoreThreshold) ? 0.5 : scoreThreshold,
             },
+            createEffectiveFilter(),
             { hops: expansionHops },
           );
           const latencyMs = Date.now() - startTime;

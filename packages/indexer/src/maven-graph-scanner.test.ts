@@ -5,9 +5,9 @@ describe('scanMavenModuleGraph', () => {
   it('discovers pom.xml files and builds a module graph JSON', async () => {
     const mockReadFile = vi.fn();
     // Root pom
-    mockReadFile.mockImplementation(async (path: string) => {
+    mockReadFile.mockImplementation((path: string): Promise<string> => {
       if (path.includes('pom.xml') && !path.includes('module-a')) {
-        return `<?xml version="1.0"?>
+        return Promise.resolve(`<?xml version="1.0"?>
 <project>
   <groupId>com.example</groupId>
   <artifactId>parent</artifactId>
@@ -15,10 +15,10 @@ describe('scanMavenModuleGraph', () => {
   <modules>
     <module>module-a</module>
   </modules>
-</project>`;
+</project>`);
       }
       if (path.includes('module-a/pom.xml')) {
-        return `<?xml version="1.0"?>
+        return Promise.resolve(`<?xml version="1.0"?>
 <project>
   <parent>
     <groupId>com.example</groupId>
@@ -31,9 +31,9 @@ describe('scanMavenModuleGraph', () => {
       <artifactId>parent</artifactId>
     </dependency>
   </dependencies>
-</project>`;
+</project>`);
       }
-      throw new Error(`File not found: ${path}`);
+      return Promise.reject(new Error(`File not found: ${path}`));
     });
 
     const mockGlob = vi.fn().mockResolvedValue(['/project/pom.xml', '/project/module-a/pom.xml']);

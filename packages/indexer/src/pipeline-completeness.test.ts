@@ -80,18 +80,32 @@ vi.mock('./enrichment/enricher.js', () => ({
 import { IndexingPipeline } from './pipeline.js';
 import type { IndexingConfig, IndexingProgress } from './pipeline.js';
 import type { VectorStore } from '@ia-framework/vector-store';
+import type { EmbeddingContract } from '@ia-framework/core';
 
 // ── Factory helpers ───────────────────────────────────────────────────────────
 
 function makeMockEmbeddingProvider(dim = 3) {
+  const contract: EmbeddingContract = {
+    provider: 'openai',
+    model: 'mock-model',
+    dimension: dim,
+    tokenizerVersion: 1,
+    sparseHashVersion: 1,
+  };
   return {
     name: 'mock',
     model: 'mock-model',
     dimensions: dim,
+    contract,
     embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
     embedBatch: vi
       .fn()
-      .mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => [0.1, 0.2, 0.3]))),
+      .mockImplementation((texts: string[]) =>
+        Promise.resolve({
+          vectors: texts.map(() => [0.1, 0.2, 0.3]),
+          failures: [],
+        }),
+      ),
     estimateTokens: vi.fn().mockReturnValue(10),
   };
 }
@@ -113,6 +127,14 @@ function makeMockVectorStore() {
     scroll: vi.fn().mockResolvedValue({ points: [], nextOffset: undefined }),
     countPoints: vi.fn().mockResolvedValue(0),
     deleteCollection: vi.fn().mockResolvedValue(undefined),
+    // T22 made both members required on VectorStore; mirror the real
+    // QdrantVectorStore.capabilities() so the double stays honest.
+    searchSparse: vi.fn().mockResolvedValue([]),
+    capabilities: vi.fn().mockReturnValue({
+      sparse: true,
+      filterOnly: false,
+      payloadIndexes: [],
+    }),
   } satisfies VectorStore;
 }
 
@@ -174,7 +196,7 @@ describe('T078: filePath not stored in payload', () => {
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
     mockClassify.mockReturnValue({ stereotype: 'unknown' });
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
     mockParseFile.mockResolvedValue([makeRichChunk(tmpDir)]);
   });
 
@@ -226,7 +248,7 @@ describe('T079: classifier wired into parsing loop', () => {
     mockGetLastIndexedCommit.mockResolvedValue(null);
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
     mockParseFile.mockResolvedValue([makeRichChunk(tmpDir)]);
   });
 
@@ -300,7 +322,7 @@ describe('T080: missing CodeChunk fields wired to payload', () => {
     mockGetCurrentCommit.mockResolvedValue('abc123');
     mockSaveLastIndexedCommit.mockResolvedValue(undefined);
     mockClassify.mockReturnValue({ stereotype: 'entity', archLayer: 'domain' });
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
     mockParseFile.mockResolvedValue([makeRichChunk(tmpDir)]);
   });
 
@@ -412,7 +434,7 @@ describe('T081: LLM enricher wired into pipeline', () => {
 
   it('T081: LlmEnricher.enrich() is called when enrichmentConfig is set', async () => {
     // Default: pass-through
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
 
     await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }));
 
@@ -420,7 +442,7 @@ describe('T081: LLM enricher wired into pipeline', () => {
   });
 
   it('T081: LlmEnricher.enrich() is NOT called when skipEnrichment=true', async () => {
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
 
     await pipeline.run(
       makeConfig({ enrichmentConfig: makeEnrichmentConfig(), skipEnrichment: true }),
@@ -430,7 +452,7 @@ describe('T081: LLM enricher wired into pipeline', () => {
   });
 
   it('T081: LlmEnricher.enrich() is NOT called when enrichmentConfig is absent', async () => {
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
 
     await pipeline.run(makeConfig()); // no enrichmentConfig
 
@@ -438,15 +460,17 @@ describe('T081: LLM enricher wired into pipeline', () => {
   });
 
   it('T081: enrichment fields (description, businessContext, semanticTags) are in payload after enrich()', async () => {
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) =>
-      (chunks as Record<string, unknown>[]).map((c) => ({
-        ...c,
-        description: 'Handles payment records',
-        businessContext: 'Payments domain',
-        semanticTags: ['payment', 'entity', 'domain'],
-        enrichedAt: '2026-06-05T00:00:00Z',
-        enrichmentModel: 'qwen2.5-coder:7b',
-      })),
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) =>
+      Promise.resolve(
+        (chunks as Record<string, unknown>[]).map((c) => ({
+          ...c,
+          description: 'Handles payment records',
+          businessContext: 'Payments domain',
+          semanticTags: ['payment', 'entity', 'domain'],
+          enrichedAt: '2026-06-05T00:00:00Z',
+          enrichmentModel: 'qwen2.5-coder:7b',
+        })),
+      ),
     );
 
     await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }));
@@ -460,11 +484,13 @@ describe('T081: LLM enricher wired into pipeline', () => {
   });
 
   it('T081: relationships from enricher are in payload', async () => {
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) =>
-      (chunks as Record<string, unknown>[]).map((c) => ({
-        ...c,
-        relationships: [{ target: 'PaymentService', type: 'uses', label: 'persisted by' }],
-      })),
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) =>
+      Promise.resolve(
+        (chunks as Record<string, unknown>[]).map((c) => ({
+          ...c,
+          relationships: [{ target: 'PaymentService', type: 'uses', label: 'persisted by' }],
+        })),
+      ),
     );
 
     await pipeline.run(makeConfig({ enrichmentConfig: makeEnrichmentConfig() }));
@@ -517,7 +543,7 @@ describe('T082: enriching progress stage', () => {
   });
 
   it('T082: onProgress is called with stage=enriching when enrichmentConfig is set', async () => {
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
 
     const stages: string[] = [];
     const onProgress = vi.fn((p: IndexingProgress) => {
@@ -530,7 +556,7 @@ describe('T082: enriching progress stage', () => {
   });
 
   it('T082: enriching stage appears between parsing and embedding in progress sequence', async () => {
-    mockLlmEnricherEnrich.mockImplementation(async (chunks: unknown[]) => chunks);
+    mockLlmEnricherEnrich.mockImplementation((chunks: unknown[]) => Promise.resolve(chunks));
 
     const stages: string[] = [];
     const onProgress = vi.fn((p: IndexingProgress) => {
@@ -601,12 +627,12 @@ describe('T084: enrichment progress bar — batchesTotal/batchesCompleted during
 
   it('T084: batchesTotal is set on enriching progress events', async () => {
     mockLlmEnricherEnrich.mockImplementation(
-      async (
+      (
         chunks: unknown[],
         onProgress?: (p: { batchesCompleted: number; batchesTotal: number }) => void,
       ) => {
         onProgress?.({ batchesCompleted: 1, batchesTotal: 1 });
-        return chunks;
+        return Promise.resolve(chunks);
       },
     );
 
@@ -622,14 +648,14 @@ describe('T084: enrichment progress bar — batchesTotal/batchesCompleted during
 
   it('T084: batchesCompleted increments in enriching progress events', async () => {
     mockLlmEnricherEnrich.mockImplementation(
-      async (
+      (
         chunks: unknown[],
         onProgress?: (p: { batchesCompleted: number; batchesTotal: number }) => void,
       ) => {
         onProgress?.({ batchesCompleted: 1, batchesTotal: 3 });
         onProgress?.({ batchesCompleted: 2, batchesTotal: 3 });
         onProgress?.({ batchesCompleted: 3, batchesTotal: 3 });
-        return chunks;
+        return Promise.resolve(chunks);
       },
     );
 
@@ -655,7 +681,7 @@ describe('T084: enrichment progress bar — batchesTotal/batchesCompleted during
         }) => void,
       ) => {
         onProgress?.({ batchesCompleted: 1, batchesTotal: 1, currentFile: expectedFile });
-        return chunks;
+        return Promise.resolve(chunks);
       },
     );
 
@@ -671,12 +697,12 @@ describe('T084: enrichment progress bar — batchesTotal/batchesCompleted during
 
   it('T084: batchesTotal and batchesCompleted are reset (undefined) when transitioning to embedding', async () => {
     mockLlmEnricherEnrich.mockImplementation(
-      async (
+      (
         chunks: unknown[],
         onProgress?: (p: { batchesCompleted: number; batchesTotal: number }) => void,
       ) => {
         onProgress?.({ batchesCompleted: 1, batchesTotal: 1 });
-        return chunks;
+        return Promise.resolve(chunks);
       },
     );
 
@@ -692,5 +718,279 @@ describe('T084: enrichment progress bar — batchesTotal/batchesCompleted during
     expect(firstEmbeddingEvent).toBeDefined();
     expect(firstEmbeddingEvent!.batchesCompleted).toBeUndefined();
     expect(firstEmbeddingEvent!.batchesTotal).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T21: indexing run summary completeness', () => {
+  let pipeline: IndexingPipeline;
+  let embeddingProvider: ReturnType<typeof makeMockEmbeddingProvider>;
+  let vectorStore: ReturnType<typeof makeMockVectorStore>;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    pipeline = new IndexingPipeline();
+    embeddingProvider = makeMockEmbeddingProvider();
+    vectorStore = makeMockVectorStore();
+
+    tmpDir = join(tmpdir(), `pipeline-t021-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    mockGetLastIndexedCommit.mockResolvedValue(null);
+    mockGetCurrentCommit.mockResolvedValue('abc123');
+    mockSaveLastIndexedCommit.mockResolvedValue(undefined);
+    mockClassify.mockReturnValue({ stereotype: 'unknown' });
+  });
+
+  const makeConfig = (overrides: Partial<IndexingConfig> = {}): IndexingConfig => ({
+    targetProjectPath: tmpDir,
+    frameworkDir: join(tmpDir, '.ia-framework'),
+    collectionName: 'test',
+    embeddingProvider,
+    vectorStore,
+    embeddingConcurrency: 1,
+    repoId: 'repo-a',
+    ...overrides,
+  });
+
+  it('reports each skipped chunk with re-index identity and reason', async () => {
+    const content = 'function rejected() {}';
+    await writeFile(join(tmpDir, 'Payment.java'), content);
+    mockParseFile.mockResolvedValue([
+      {
+        ...makeRichChunk(tmpDir),
+        id: 'rejected-1',
+        chunkType: 'function',
+        name: 'rejected',
+        content,
+        endLine: 1,
+      },
+    ]);
+    embeddingProvider.embedBatch.mockResolvedValue({
+      vectors: [null],
+      failures: [{ index: 0, reason: 'provider rejected input', retryable: false }],
+    });
+
+    const result = await pipeline.run(makeConfig());
+
+    expect(result.skippedChunks).toBe(1);
+    expect(result.skipped).toEqual([
+      {
+        repoId: 'repo-a',
+        relativePath: 'Payment.java',
+        name: 'rejected',
+        startLine: 1,
+        endLine: 1,
+        reason: 'provider rejected input',
+      },
+    ]);
+  });
+
+  it('reports signature-only chunks with count and identity', async () => {
+    const content = `function huge() { ${'x'.repeat(40_000)} }`;
+    await writeFile(join(tmpDir, 'huge.ts'), content);
+    mockParseFile.mockResolvedValue([
+      {
+        ...makeRichChunk(tmpDir),
+        id: 'huge-1',
+        filePath: join(tmpDir, 'huge.ts'),
+        relativePath: 'huge.ts',
+        language: 'typescript',
+        chunkType: 'function',
+        name: 'huge',
+        content,
+        endLine: 1,
+      },
+    ]);
+
+    const result = await pipeline.run(makeConfig());
+
+    expect(result.signatureOnlyCount).toBe(1);
+    expect(result.signatureOnly).toEqual([
+      {
+        repoId: 'repo-a',
+        relativePath: 'huge.ts',
+        name: 'huge',
+        startLine: 1,
+        endLine: 1,
+      },
+    ]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('retains an undeclarable oversized chunk as a reported signature-only degradation', async () => {
+    // T1.4: content with no extractable declaration (minified/generated blob)
+    // used to throw OversizedInputError and disappear from the index. It is now
+    // retained as a flagged head truncation, so it stays searchable and the
+    // degradation is reported via signatureOnly instead of being a silent loss.
+    const content = 'x'.repeat(40_000);
+    await writeFile(join(tmpDir, 'unhandleable.ts'), content);
+    mockParseFile.mockResolvedValue([
+      {
+        ...makeRichChunk(tmpDir),
+        id: 'unhandleable-1',
+        filePath: join(tmpDir, 'unhandleable.ts'),
+        relativePath: 'unhandleable.ts',
+        chunkType: 'method',
+        name: 'unhandleable',
+        content,
+        endLine: 1,
+      },
+    ]);
+
+    const result = await pipeline.run(makeConfig());
+
+    // No silent chunk loss.
+    expect(result.skipped).toEqual([]);
+    expect(result.signatureOnlyCount).toBe(1);
+    expect(result.signatureOnly).toEqual([
+      {
+        repoId: 'repo-a',
+        relativePath: 'unhandleable.ts',
+        name: 'unhandleable',
+        startLine: 1,
+        endLine: 1,
+      },
+    ]);
+  });
+
+  it('reports every chunk cancelled before upsert', async () => {
+    const controller = new AbortController();
+    const content = 'function cancelled() {}';
+    await writeFile(join(tmpDir, 'cancelled.ts'), content);
+    mockParseFile.mockResolvedValue([
+      {
+        ...makeRichChunk(tmpDir),
+        id: 'cancelled-1',
+        filePath: join(tmpDir, 'cancelled.ts'),
+        relativePath: 'cancelled.ts',
+        chunkType: 'function',
+        name: 'cancelled',
+        content,
+        endLine: 1,
+      },
+    ]);
+    embeddingProvider.embedBatch.mockImplementation((texts: string[]) => {
+      controller.abort();
+      return Promise.resolve({
+        vectors: texts.map(() => [0.1, 0.2, 0.3]),
+        failures: [],
+      });
+    });
+
+    const result = await pipeline.run(makeConfig(), undefined, controller.signal);
+
+    expect(result.skipped).toEqual([
+      expect.objectContaining({
+        relativePath: 'cancelled.ts',
+        name: 'cancelled',
+        reason: 'indexing cancelled before upsert',
+      }),
+    ]);
+  });
+
+  it('accounts for a context source failure with an identity record', async () => {
+    mockParseFile.mockResolvedValue([]);
+    const result = await pipeline.run(
+      makeConfig({
+        contextSources: [
+          {
+            name: 'broken-schema',
+            getChunks: vi.fn().mockRejectedValue(new Error('schema unavailable')),
+          },
+        ],
+      }),
+    );
+
+    expect(result.skipped).toEqual([
+      {
+        repoId: 'repo-a',
+        relativePath: '__context_source__/broken-schema',
+        name: 'broken-schema',
+        startLine: 0,
+        endLine: 0,
+        reason: 'schema unavailable',
+      },
+    ]);
+  });
+
+  it('reports an oversized context source chunk before provider request', async () => {
+    mockParseFile.mockResolvedValue([]);
+    const contextChunk = {
+      id: 'large-context',
+      filePath: '__db__',
+      relativePath: 'users',
+      language: 'sql',
+      chunkType: 'table' as const,
+      name: 'users',
+      content: 'x'.repeat(40_000),
+      startLine: 1,
+      endLine: 1,
+      imports: [],
+      exports: [],
+      indexedAt: new Date().toISOString(),
+    };
+
+    const result = await pipeline.run(
+      makeConfig({
+        contextSources: [{ name: 'postgres', getChunks: vi.fn().mockResolvedValue([contextChunk]) }],
+      }),
+    );
+
+    expect(result.skipped).toEqual([
+      expect.objectContaining({
+        relativePath: 'users',
+        name: 'users',
+        reason: 'input remained oversized after handling',
+      }),
+    ]);
+  });
+
+  it('reports context source provider failures per input', async () => {
+    mockParseFile.mockResolvedValue([]);
+    const contextChunk = {
+      id: 'failed-context',
+      filePath: '__db__',
+      relativePath: 'orders',
+      language: 'sql',
+      chunkType: 'table' as const,
+      name: 'orders',
+      content: 'Table orders',
+      startLine: 0,
+      endLine: 0,
+      imports: [],
+      exports: [],
+      indexedAt: new Date().toISOString(),
+    };
+    embeddingProvider.embedBatch.mockResolvedValue({
+      vectors: [null],
+      failures: [{ index: 0, reason: 'context provider rejected input', retryable: false }],
+    });
+
+    const result = await pipeline.run(
+      makeConfig({
+        contextSources: [{ name: 'postgres', getChunks: vi.fn().mockResolvedValue([contextChunk]) }],
+      }),
+    );
+
+    expect(result.skipped).toEqual([
+      expect.objectContaining({
+        relativePath: 'orders',
+        name: 'orders',
+        reason: 'context provider rejected input',
+      }),
+    ]);
+  });
+
+  it('returns an empty skip and signature-only list for a clean run', async () => {
+    mockParseFile.mockResolvedValue([]);
+
+    const result = await pipeline.run(makeConfig());
+
+    expect(result.skippedChunks).toBe(0);
+    expect(result.skipped).toEqual([]);
+    expect(result.signatureOnlyCount).toBe(0);
+    expect(result.signatureOnly).toEqual([]);
   });
 });

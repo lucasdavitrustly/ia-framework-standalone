@@ -1,3 +1,5 @@
+import type { EmbeddingContract } from '@ia-framework/core';
+
 /**
  * Payload stored in Qdrant for each chunk point.
  * Lean metadata — does NOT store raw code content.
@@ -15,6 +17,10 @@ export interface ChunkPayload {
   // === Location (for filesystem retrieval) ===
   startLine: number;
   endLine: number;
+  /** 1-indexed line where the associated documentation comment starts, if present */
+  docCommentStartLine?: number | undefined;
+  /** 1-indexed line where the associated annotation/decorator starts, if present */
+  annotationStartLine?: number | undefined;
   /** SHA256 of content at index time (drift detection) */
   contentHash?: string | undefined;
 
@@ -28,6 +34,16 @@ export interface ChunkPayload {
   chunkType: string;
   name?: string | undefined;
   parentName?: string | undefined;
+  /** For sub-chunks: 1-indexed start line of the parent construct */
+  parentStartLine?: number | undefined;
+  /** For sub-chunks: 1-indexed end line of the parent construct */
+  parentEndLine?: number | undefined;
+  /** For sub-chunks: 1-based index of this part within the parent construct */
+  partIndex?: number | undefined;
+  /** For sub-chunks: total number of parts the parent construct was split into */
+  totalParts?: number | undefined;
+  /** True when only a bounded head prefix was embedded as a last resort */
+  truncated?: boolean | undefined;
   packageName?: string | undefined;
   moduleInfo?:
     | {
@@ -109,6 +125,10 @@ export interface ChunkPayload {
   content?: string | undefined;
   chunkIndex?: number | undefined;
   totalChunks?: number | undefined;
+  /** True when only the construct signature was embedded. */
+  signatureOnly?: boolean | undefined;
+  /** Version of the tokenizer used to build the sparse vector. */
+  tokenizerVersion?: number | undefined;
 }
 
 /**
@@ -119,6 +139,19 @@ export interface ChunkPayload {
 export interface SparseVector {
   indices: number[];
   values: number[];
+}
+
+/** Options required for direct sparse retrieval. */
+export interface SparseSearchOptions {
+  limit: number;
+  filter?: Record<string, unknown> | undefined;
+}
+
+/** Retrieval capabilities exposed by a concrete vector-store adapter. */
+export interface StoreCapabilities {
+  sparse: boolean;
+  filterOnly: boolean;
+  payloadIndexes: string[];
 }
 
 /**
@@ -149,10 +182,12 @@ export interface VectorPoint {
  * Options for hybrid search (dense + sparse + RRF fusion).
  */
 export interface HybridSearchOptions {
-  /** Dense query vector (embedded from the query text) */
-  denseVector: number[];
+  /** Dense query vector for the semantic branch. */
+  semanticVector: number[];
+  /** Dense query vector for the structural signature branch. */
+  signatureVector: number[];
   /** BM25 term-frequency sparse vector computed from the query text */
-  sparseVector: SparseVector;
+  sparseVector?: SparseVector | undefined;
   /** Maximum results to return after RRF fusion */
   limit: number;
   /** Optional Qdrant filter for payload field filtering */
@@ -214,11 +249,16 @@ export interface VectorStore {
    * No-op if collection already exists with correct config.
    * When `force` is true, deletes and recreates the collection if it uses the
    * old schema (text/code vectors) instead of throwing.
+   * When `embeddingContract` is supplied it is persisted as collection metadata
+   * on creation (EMB-08) and asserted against the persisted contract otherwise.
+   * Both contract fields are optional so existing call sites remain valid.
    */
   initialize(config: {
     textDimensions: number;
     codeDimensions: number;
     force?: boolean;
+    embeddingContract?: EmbeddingContract;
+    indexGeneration?: string;
   }): Promise<void>;
 
   /**
@@ -232,6 +272,12 @@ export interface VectorStore {
    * Returns results sorted by score descending.
    */
   search(queryVector: number[], options: SearchOptions): Promise<SearchResult[]>;
+
+  /** Direct search against the collection's named sparse vector. */
+  searchSparse(vector: SparseVector, options: SparseSearchOptions): Promise<SearchResult[]>;
+
+  /** Capabilities available from this adapter and collection. */
+  capabilities(): StoreCapabilities;
 
   /**
    * Hybrid search combining dense text, dense code, and BM25 sparse vectors via RRF fusion.

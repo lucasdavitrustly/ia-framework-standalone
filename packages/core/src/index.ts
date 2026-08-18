@@ -28,6 +28,56 @@ export { loadConfig, validateConfig, ConfigNotFoundError } from './config/loader
 export { RepoRegistry } from './config/registry.js';
 export type { InjectionTarget } from './config/registry.js';
 export { detectRepoProfile, detectRepoProvides } from './config/detector.js';
+export { TOKENIZER_VERSION, tokenize } from './lexical/tokenizer.js';
+export {
+  SPARSE_HASH_VERSION,
+  buildSparseVector,
+  sparseHash,
+  type SparseVector,
+  type TokenSource,
+} from './lexical/sparse.js';
+export {
+  TOKEN_ESTIMATE_UNDERREPORT_MARGIN,
+  estimateTokens,
+  estimateProviderInputTokens,
+} from './tokens/estimator.js';
+export { capabilitiesFor } from './embedding/capabilities.js';
+export type { ModelCapabilities } from './embedding/capabilities.js';
+export {
+  EmbeddingConfigurationError,
+  contractFingerprint,
+  contractsMatch,
+  resolveContract,
+} from './embedding/contract.js';
+export type {
+  ContractDiff,
+  ContractField,
+  EmbeddingContract,
+  EmbeddingPrefixes,
+} from './embedding/contract.js';
+export {
+  CollectionSchemaError,
+  EmbeddingContractMismatchError,
+  EmbeddingResponseError,
+  FilterOnlyRetrievalError,
+  OversizedInputError,
+  PayloadIndexError,
+  QueryPlanError,
+  UnknownContractError,
+} from './errors/index.js';
+export type { RetrievalStatus } from './errors/index.js';
+export type {
+  CandidateLimits,
+  ContextItem,
+  Diagnostics,
+  EffectiveFilter,
+  LineRange,
+  QueryIntent,
+  QueryPlan,
+  ResolvedBudget,
+  SourceAnchor,
+  VectorBranch,
+} from './planning/types.js';
 export {
   ProjectConfigSchema,
   EmbeddingProviderConfigSchema,

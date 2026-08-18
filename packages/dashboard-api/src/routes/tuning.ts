@@ -26,6 +26,8 @@ export interface TuningSearchEngineDep {
       startLine: number;
       endLine: number;
       score: number;
+      /** Mirrors RetrievalResult.scoreType; surfaced on ScoreCandidate. */
+      scoreType?: 'cosine' | 'rrf' | undefined;
       source?: string;
       chunkType: string;
       content: string;

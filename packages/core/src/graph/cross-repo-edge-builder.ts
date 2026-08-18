@@ -34,7 +34,7 @@ export async function buildCrossRepoEdges(
   config: EdgeBuilderConfig,
 ): Promise<{ edgesCreated: number; errors: number }> {
   let edgesCreated = 0;
-  let errors = 0;
+  const errors = 0;
 
   // D-10: if rebuildRepoId provided, drop existing edges first
   if (config.rebuildRepoId) {

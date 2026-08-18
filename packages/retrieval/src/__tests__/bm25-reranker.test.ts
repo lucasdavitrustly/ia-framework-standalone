@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { bm25Rerank } from '../bm25-reranker.js';
 import type { RetrievalResult } from '../types.js';
+import { buildSparseVector } from '@ia-framework/core';
 
 function makeResult(
   overrides: Partial<RetrievalResult> & { content: string; score: number },
@@ -125,5 +126,31 @@ describe('bm25Rerank', () => {
       vectorScoreWeight: 0.1, // low weight so BM25 dominates
     });
     expect(reranked[0]!.name).toBe('PaymentGateway');
+  });
+
+  it.each([
+    'getUserById',
+    'PaymentService',
+    'HTTPServer',
+    'PaymentService.refund',
+    'com.acme.billing',
+    'src/services/payment.ts',
+    '@Transactional',
+    '"exact phrase here"',
+  ])('T25: uses canonical tokenizer terms for %s', (query) => {
+    const sparse = buildSparseVector([query]);
+    const matched = makeResult({
+      content: query,
+      score: 0.5,
+    });
+    const unrelated = makeResult({ content: 'unrelated content', score: 0.6 });
+
+    const reranked = bm25Rerank([unrelated, matched], query, {
+      topK: 1,
+      vectorScoreWeight: 0,
+    });
+
+    expect(sparse.indices.length).toBeGreaterThan(0);
+    expect(reranked[0]?.content).toBe(query);
   });
 });

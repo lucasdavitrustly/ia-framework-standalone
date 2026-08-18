@@ -270,10 +270,8 @@ Temperature: 1.0
   });
 
   it('Test 13: any mismatch → runIntegrity="partial"', async () => {
-    let callCount = 0;
     const mockEngine = {
       search: vi.fn((): Promise<RetrievalResult[]> => {
-        callCount++;
         return Promise.resolve([makeRetrievalResult('src/middleware/auth.ts')]);
       }),
     };

@@ -48,8 +48,8 @@ spring:
 
       const chunks = parseYaml(content, filePath, relativePath);
       expect(chunks).toHaveLength(1);
-      expect(chunks[0].name).toBe('spring');
-      expect(chunks[0].chunkType).toBe('config-block');
+      expect(chunks[0]!.name).toBe('spring');
+      expect(chunks[0]!.chunkType).toBe('config-block');
     });
 
     it('preserves nested config in the chunk content', () => {
@@ -92,7 +92,7 @@ payment:
     it('returns a module chunk for an empty YAML file', () => {
       const chunks = parseYaml('', filePath, relativePath);
       expect(chunks).toHaveLength(1);
-      expect(chunks[0].chunkType).toBe('module');
+      expect(chunks[0]!.chunkType).toBe('module');
     });
 
     it('returns a single module chunk for a YAML with only scalar values', () => {

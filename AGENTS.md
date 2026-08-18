@@ -7,7 +7,6 @@ at specs/018-tlc-spec-driven-commands/plan.md
 <!-- SPECKIT END -->
 
 <!-- ia-framework:rag-start -->
-
 ## Codebase RAG Tools (ia-framework)
 
 This project is indexed by ia-framework. The following MCP tools provide
@@ -15,8 +14,9 @@ codebase context during AI-assisted development:
 
 - `search_codebase` — Semantic search across the indexed codebase using
   query auto-classification (semantic / keyword / existence / aggregation).
-  Results include live file content for the top-5 matches and metadata-only
-  for results 6-10. Stale results (file changed since indexing) are flagged.
+  Results contain targeted live source selected by evidence priority and the
+  remaining context budget; there is no fixed rank cutoff. Stale results
+  (file changed since indexing) are flagged.
   Parameters: `query` (required), `limit` (default 10), `score_threshold`
   (default 0.5), `expand_hops` (0=no expansion, 1=direct imports, 2=transitive),
   `fallback` (default true), `repo`, `stereotype`, `archLayer`, `module`,
@@ -60,13 +60,13 @@ exist in several repos.
 outward from each direct match. After the initial semantic/keyword hits, the
 engine follows edges — `imports`, `extends`/superclass chains, and interface
 `implements` — to pull related files into the **same response**, so you get the
-matched code _plus_ the context it depends on without extra round-trips.
+matched code *plus* the context it depends on without extra round-trips.
 
-| Value | Meaning                                                        | Use when                                                                                                      |
-| ----- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `0`   | No expansion — only the direct matches                         | You know the exact symbol, or a definition you can answer from the `[signature]` snippet. Cheapest in tokens. |
-| `1`   | Direct imports — one level of dependency/superclass/impl edges | You need the match plus its immediate collaborators (e.g. a class and the types it directly uses).            |
-| `2`   | Transitive — follows the chain two levels deep **(default)**   | Tracing a flow, or enumerating "who implements/extends X" across the graph.                                   |
+| Value | Meaning | Use when |
+|-------|---------|----------|
+| `0` | No expansion — only the direct matches | You know the exact symbol, or a definition you can answer from the `[signature]` snippet. Cheapest in tokens. |
+| `1` | Direct imports — one level of dependency/superclass/impl edges | You need the match plus its immediate collaborators (e.g. a class and the types it directly uses). |
+| `2` | Transitive — follows the chain two levels deep **(default)** | Tracing a flow, or enumerating "who implements/extends X" across the graph. |
 
 **What expansion pulls in (when `expand_hops > 0`):**
 
@@ -83,15 +83,16 @@ matched code _plus_ the context it depends on without extra round-trips.
 
 **Bounds & behaviour you can rely on:**
 
-- The value is **clamped to 0–2** and rounded — passing `5` is treated as `2`,
-  negatives as `0`. There is no way to expand deeper than 2.
+- The value must be `0`, `1`, or `2`; invalid values are refused rather than
+  silently clamped. There is no way to expand deeper than 2.
 - Omitting `expand_hops` uses the server default (`2`). You (the agent) set it
   per call; you cannot raise the ceiling.
-- **Token budget is shared 70/30:** direct results get 70% of the budget,
-  expanded neighbors get the remaining 30%. If direct results already exceed
-  70%, neighbor expansion is suppressed. So a high `limit` + `expand_hops=2`
-  can crowd out the expansion you asked for — prefer a smaller `limit` when you
-  rely on expansion.
+- **Context selection is budget-driven:** retrieval candidate limits are separate
+  from the model-visible budget. After expansion, deduplication, ranking, and
+  live reads, evidence is selected by priority and remaining budget. Exact
+  requested nodes are preferred; lower-priority evidence is compacted or omitted
+  deterministically. An explicit budget wins over the adaptive default; `0`
+  means unlimited.
 
 **Examples:**
 
@@ -108,7 +109,7 @@ search_codebase(query="how entries are persisted", expand_hops=2)
 
 **Rule of thumb:** definitions and needle lookups → `expand_hops=0`;
 "who implements / how does this flow work" → `expand_hops=2` with a modest
-`limit` so the 30% neighbor budget isn't starved.
+`limit` so the remaining budget can include expansion evidence.
 
 ### When to use
 
@@ -133,7 +134,7 @@ reasoning, planning, or editing. When in doubt, check the MCP.
 - **"Does file X exist / where is it?":** ask `search_codebase` or `get_file`
   first. `glob`/`find` over the working dir is error-prone because anchor paths
   are repo-relative (see Multi-repo path resolution) — a wrong base path returns
-  a misleading empty result that is _not_ proof of absence.
+  a misleading empty result that is *not* proof of absence.
 - **Ambiguous filenames across repos** (e.g. `pom.xml`, common class names):
   always pass `repo:` to avoid multi-repo dumps and disambiguation round-trips.
 - **Treat negative/empty tool results as "re-query with the right repo/path,"**
@@ -154,7 +155,29 @@ reasoning, planning, or editing. When in doubt, check the MCP.
 - Raise `score_threshold` to 0.7 for precise matches
 - Use `get_file` with `name` or `startLine`/`endLine` instead of fetching entire files
 - Skip RAG for tasks that don't need codebase context (doc updates, config changes)
-- Top-5 results include live code; results 6-10 are metadata-only to save tokens
+- Search results use targeted ranges and budget-driven priority selection. Do
+  not assume a fixed result rank has source or summary content; inspect the
+  returned anchors and structured diagnostics.
+
+### Diagnostics and failures
+
+Every `search_codebase` response includes these compact fields in
+`structuredContent`: `route`, `executed_branches`, `fallback_mode`,
+`candidate_count`, `selected_count`, `deduplicated_count`,
+`omitted_count`, `expansion_count`, `stale_count`, `estimated_tokens`,
+`configured_budget`, `compaction_count`, and `exact_node_overflow`.
+They describe what actually ran and what the final response cost; they are not
+source evidence and should not be copied into the prose answer.
+
+Failure outcomes are successful tool results with a closed `status` value:
+`ok | empty | low_confidence | unavailable | refused`. A Qdrant or retrieval
+outage is `unavailable` and names the remediation; it does not recommend
+`grep` or `find` as a substitute. An embedding-contract mismatch or unknown
+contract is `refused`; rebuild with `ia index --force` after checking the
+active and persisted contracts.
+
+The sparse branch runs only when the adapter declares sparse capability. When
+that capability is unavailable, no sparse branch is executed or reported.
 
 ### Token-efficient retrieval (universal rules)
 
@@ -169,17 +192,17 @@ These rules hold for **every** scenario below:
 1. **Plan all fetches up front, then batch.** After the first search, write the
    complete fetch list (paths + line ranges) BEFORE issuing any `get_file`, then
    send them in as few batched messages as possible. The budget is blown by
-   _extra round-trips_, not by any single payload. Hard rule: **no mid-stream
+   *extra round-trips*, not by any single payload. Hard rule: **no mid-stream
    discovery** — if you find yourself searching again to locate a parent class
    or collaborator you could have anticipated, fold it into the up-front plan.
    Target ≤3 round-trips for a definitional question.
 2. **Answer from snippets before fetching, and read inheritance from the
    `[signature]` snippet.** A `[signature]`-tagged result exposes the
    `extends`/`implements`/`permits` clause — read the parent/sealed-base name
-   straight from it and add the parent's field block to your plan _now_, instead
+   straight from it and add the parent's field block to your plan *now*, instead
    of fetching the child then discovering the parent.
 3. **Prefer `startLine`/`endLine` over `name:`.** Default to reading just the
-   field block + method _signatures_ with a line range. **Never use `name:` on a
+   field block + method *signatures* with a line range. **Never use `name:` on a
    large/`sealed`/aggregate class** — it triplicates output. Reserve `name:` for
    a single small method whose body you actually need.
 4. **`get_dependencies` (graph) instead of re-`search` or whole-file reads** for
@@ -207,32 +230,92 @@ These rules hold for **every** scenario below:
 
 Pick the tactic by question type. All scenarios still obey the universal rules.
 
-| Scenario                                                    | Strategy                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **"What is X?"** (definition)                               | search (`limit:5, score_threshold:0.6, expand_hops:0`) → answer from `[signature]` snippet → fetch only field blocks via `startLine`/`endLine`. Never `name:` on a sealed/large class.                                                                                                                                                     |
-| **"Who implements / extends X?"**                           | search `limit:10` and read the **metadata-only results 6-10** to enumerate candidates cheaply; or `get_dependencies(path)` for reverse edges; or `expand_hops:2` to follow the graph. Stop at class signatures — don't fetch each impl body. Narrow with `stereotype`.                                                                     |
-| **"How does X work?" / trace a flow** (the expensive one)   | search once for the entry point, then **plan the whole call chain up front** from snippets. Per hop, fetch only the specific method via `startLine`/`endLine` (`name:` OK for one _small_ method). Use `get_dependencies` to find the next hop instead of re-searching. Cost driver is breadth — don't fetch collaborators you won't cite. |
-| **"Where is X called / used?"**                             | For an exact symbol, `rg` returns `file:line` cheaply; `get_dependencies` reverse edges also list callers without bodies. Use `search_codebase` only for conceptual usage.                                                                                                                                                                 |
-| **"Find the class/method named X"** (needle)                | Skip semantic search — `glob` the file or `get_file(path, name:X)` for one small member.                                                                                                                                                                                                                                                   |
-| **"What breaks if I change X?"** (refactor blast radius)    | `get_dependencies(path or module, depth:2)` for the edge graph; combine with `rg` for exact call-site counts before reading any file.                                                                                                                                                                                                      |
-| **Existence / aggregation** ("is there a retry mechanism?") | Auto-routed in `search_codebase`. Use `limit:3-5`, answer from snippets, stop on sufficiency — no completeness sweep.                                                                                                                                                                                                                      |
-| **Before editing a file**                                   | `get_file` with `startLine`/`endLine` for just the region you'll edit. Never whole-file `Read` of an indexed file.                                                                                                                                                                                                                         |
+| Scenario | Strategy |
+|----------|----------|
+| **"What is X?"** (definition) | search (`limit:5, score_threshold:0.6, expand_hops:0`) → answer from `[signature]` snippet → fetch only field blocks via `startLine`/`endLine`. Never `name:` on a sealed/large class. |
+| **"Who implements / extends X?"** | search with a modest candidate limit and `expand_hops:2` to follow the graph, then use the returned signatures and anchors. Selection is budget-driven; inspect each returned item rather than assuming a rank-based form. Narrow with `stereotype`. |
+| **"How does X work?" / trace a flow** (the expensive one) | search once for the entry point, then **plan the whole call chain up front** from snippets. Per hop, fetch only the specific method via `startLine`/`endLine` (`name:` OK for one *small* method). Use `get_dependencies` to find the next hop instead of re-searching. Cost driver is breadth — don't fetch collaborators you won't cite. |
+| **"Where is X called / used?"** | For an exact symbol, `rg` returns `file:line` cheaply; `get_dependencies` reverse edges also list callers without bodies. Use `search_codebase` only for conceptual usage. |
+| **"Find the class/method named X"** (needle) | Skip semantic search — `glob` the file or `get_file(path, name:X)` for one small member. |
+| **"What breaks if I change X?"** (refactor blast radius) | `get_dependencies(path or module, depth:2)` for the edge graph; combine with `rg` for exact call-site counts before reading any file. |
+| **Existence / aggregation** ("is there a retry mechanism?") | Auto-routed in `search_codebase`. Use `limit:3-5`, answer from snippets, stop on sufficiency — no completeness sweep. |
+| **Before editing a file** | `get_file` with `startLine`/`endLine` for just the region you'll edit. Never whole-file `Read` of an indexed file. |
 
 ### Worked example — "what is an Entry?" done right (~15-25k tokens)
 
 1. `search_codebase("Entry domain class", repo:"payment-gateway", limit:5,
-score_threshold:0.6, expand_hops:0)`. The `Entry$part1 [signature]` snippet
+   score_threshold:0.6, expand_hops:0)`. The `Entry$part1 [signature]` snippet
    shows `final class Entry extends EntryCore` — so the plan is fixed up front:
    (a) Entry decl + fields, (b) EntryCore parent fields, (c) the two enums.
 2. Batch plan items (a)+(b) in **one message**:
    `get_file(repo:"payment-gateway", path:".../Entry.java", startLine:34, endLine:62)`
-   - `get_file(repo:"payment-gateway", path:".../EntryCore.java", startLine:35, endLine:57)`
-     — fields only, no method bodies. **Do not** `get_file(name:"EntryCore")` —
-     that one call triplicates ~500 lines of a `sealed` class and is the single
-     biggest budget blow-out.
+   + `get_file(repo:"payment-gateway", path:".../EntryCore.java", startLine:35, endLine:57)`
+   — fields only, no method bodies. **Do not** `get_file(name:"EntryCore")` —
+   that one call triplicates ~500 lines of a `sealed` class and is the single
+   biggest budget blow-out.
 3. Batch plan item (c): read the small `EntryType` / `EntryStatus` enums whole,
    each with the `repo:` prefix (those names exist in two repos).
 4. Three round-trips total. Stop once type + status are covered.
+
+## When to use Context7
+
+Context7 provides up-to-date documentation for libraries, frameworks, SDKs, APIs,
+and CLI tools. Use it whenever a task depends on a specific library's current API,
+configuration, version migration, or CLI usage — even for well-known libraries —
+because training data may lag behind recent releases.
+
+- **Use it for**: library/framework API syntax, configuration options, setup and
+  installation steps, version/migration questions, and library-specific debugging.
+- **How**: resolve the library ID first (from the library name), then query the
+  specific task. Prefer Context7 over generic web search for any library-specific
+  documentation question.
+- **Do NOT use it for**: refactoring, writing scripts from scratch, debugging your
+  own business logic, code review, or general programming concepts unrelated to a
+  specific library.
+
+## When to use Sequential Thinking
+
+Sequential Thinking supports structured, multi-step, and revisable reasoning. Use
+it when a problem benefits from explicit, adjustable steps rather than a single
+answer.
+
+- **Use it for**: breaking complex problems into steps, planning/design work that
+  may need revision, analysis that might require course-correction, and multi-step
+  tasks where earlier conclusions may be reconsidered as understanding deepens.
+- **How**: express the reasoning as a sequence of thoughts, revising or adding
+  steps as needed, and converge on a single verified conclusion.
+- **Do NOT use it for**: trivial, single-step changes (e.g. a one-line edit, a
+  wording tweak) where the extra structure adds no value.
+
+## Database migrations
+
+When creating a **new database migration** in a repo that uses Flyway (versioned
+`V…__….sql` migration files), follow the standardized naming convention below.
+This applies only to **new** migrations — never rename existing ones.
+
+- **Allowed characters:** the filename contains only **letters, numbers, and
+  underscores**, and ends with the `.sql` extension. No spaces or special
+  characters.
+- **Template:** `V9.999.9.N__descriptive_snake_case_name.sql`
+    - Start with the placeholder version prefix `V9.999.9.N`, where **N** is the
+      next ordering integer (`1`, `2`, `3`, … — any integer from 1 upward).
+    - Follow the version with **two underscores** (`__`) as the separator.
+    - Then a snake_case description of what the migration does.
+- **Examples:**
+    - `V9.999.9.1__first_migration_add_user_index.sql`
+    - `V9.999.9.2__second_migration_add_another_user_index.sql`
+- **Do not hand-pick a real Flyway version** (e.g. `V1.269.0.1`). Always use the
+  `V9.999.9.N` placeholder for new migrations — a GitHub Action rewrites it to the
+  correct version and ordering when the PR is merged. A companion Action rejects
+  non-compliant migration names in the PR.
+- **Never rename existing migrations.** Flyway validates migrations by checksum,
+  so renaming an already-applied migration breaks validation.
+
+Before writing a migration, verify the repo's existing migrations directory and
+the current highest `N` (use `search_codebase` / `glob` — do not assume the path
+or ordering). Authority: Trustly ADR "Standardizing Naming Conventions for
+Database Migrations"
+(https://trustly.atlassian.net/wiki/spaces/ARCH/pages/71295697209).
 <!-- ia-framework:rag-end -->
 
 <!-- pipeline-guide-start -->

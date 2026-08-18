@@ -151,6 +151,27 @@ function extractAnnotations(node: Parser.SyntaxNode): string[] {
     .map((c) => c.text);
 }
 
+function getAnnotationStartLine(node: Parser.SyntaxNode): number | undefined {
+  const annotationLines = getModifiers(node)
+    ?.children.filter((c) => c.type === 'marker_annotation' || c.type === 'annotation')
+    .map((c) => c.startPosition.row + 1);
+  return annotationLines && annotationLines.length > 0 ? Math.min(...annotationLines) : undefined;
+}
+
+function getDocCommentStartLine(
+  siblings: Parser.SyntaxNode[],
+  siblingIndex: number,
+): number | undefined {
+  for (let i = siblingIndex - 1; i >= 0; i--) {
+    const previous = siblings[i]!;
+    if (previous.type === 'block_comment') {
+      return previous.text.startsWith('/**') ? previous.startPosition.row + 1 : undefined;
+    }
+    if (previous.type !== 'marker_annotation' && previous.type !== 'annotation') break;
+  }
+  return undefined;
+}
+
 // ── T117: Annotation value extraction for annotationMeta ────────────────────
 
 /** HTTP method mapping: annotation name → HTTP method */
@@ -554,9 +575,11 @@ function collectDeclarations(
 
     // For member declarations (methods, constructors, fields), include preceding annotations
     let effectiveStartLine = startLine;
+    let docCommentStartLine: number | undefined;
     if (isMember) {
       const siblings = node.children;
       const siblingIndex = siblings.indexOf(child);
+      docCommentStartLine = getDocCommentStartLine(siblings, siblingIndex);
       for (let i = siblingIndex - 1; i >= 0; i--) {
         const prev = siblings[i]!;
         if (prev.type === 'marker_annotation' || prev.type === 'annotation') {
@@ -574,6 +597,7 @@ function collectDeclarations(
 
     const chunkType: CodeChunk['chunkType'] = CHUNK_TYPE_MAP[targetNode.type] ?? 'other';
     const name = getNodeName(targetNode);
+    const annotationStartLine = getAnnotationStartLine(targetNode);
 
     let content = rawContent;
     let parentName: string | undefined;
@@ -611,6 +635,8 @@ function collectDeclarations(
       parentName,
       annotations: extractAnnotations(targetNode),
       visibility: extractVisibility(targetNode),
+      ...(docCommentStartLine !== undefined ? { docCommentStartLine } : {}),
+      ...(annotationStartLine !== undefined ? { annotationStartLine } : {}),
       ...(contextHeader != null ? { contextHeader } : {}),
       ...(allImports.length > 0 ? { dependencyEdges: importsToDependencyEdges(allImports) } : {}),
       ...(isTopLevel &&

@@ -38,7 +38,7 @@ describe('LlmEnricher error handling', () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 500,
-      text: async () => '{"error":"llama runner process no longer running: unknown"}',
+      text: () => Promise.resolve('{"error":"llama runner process no longer running: unknown"}'),
     });
 
     await expect(enricher.enrich([makeChunk()])).rejects.toThrow(
@@ -50,7 +50,7 @@ describe('LlmEnricher error handling', () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 404,
-      text: async () => '{"error":"model \'qwen3:8b\' not found"}',
+      text: () => Promise.resolve('{"error":"model \'qwen3:8b\' not found"}'),
     });
 
     await expect(enricher.enrich([makeChunk()])).rejects.toThrow('qwen3:8b');
@@ -68,10 +68,8 @@ describe('LlmEnricher error handling', () => {
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => {
-        throw new SyntaxError('Unexpected token < in JSON');
-      },
-      text: async () => '<html>error page</html>',
+      json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
+      text: () => Promise.resolve('<html>error page</html>'),
     });
 
     await expect(enricher.enrich([makeChunk()])).rejects.toThrow('parse-failure');
@@ -89,7 +87,7 @@ describe('LlmEnricher error handling', () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 500,
-      text: async () => '{"error":"context window exceeded"}',
+      text: () => Promise.resolve('{"error":"context window exceeded"}'),
     });
 
     const warnings: string[] = [];

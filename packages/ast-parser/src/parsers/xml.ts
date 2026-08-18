@@ -21,21 +21,6 @@ interface XmlElement {
 }
 
 /**
- * Elements to extract as top-level chunks.
- * These are the "meaningful" structural units in Spring XML and Maven pom.xml files.
- */
-const CHUNK_ELEMENT_TYPES = new Set([
-  'bean',
-  'import',
-  'dependency',
-  'plugin',
-  'profile',
-  'execution',
-  'resource',
-  'filter',
-]);
-
-/**
  * Parse an XML file into CodeChunks, one per major structural element.
  */
 export function parseXml(content: string, filePath: string, relativePath: string): CodeChunk[] {

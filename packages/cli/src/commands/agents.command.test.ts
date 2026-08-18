@@ -17,7 +17,7 @@ vi.mock('@ia-framework/core', async (importOriginal) => {
   };
 });
 
-import { agentsCommand, RAG_MARKER_START, RAG_MARKER_END } from './agents.command.js';
+import { agentsCommand, RAG_CONTENT, RAG_MARKER_START, RAG_MARKER_END } from './agents.command.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -162,9 +162,79 @@ describe('agents inject', () => {
     expect(content).toContain('repo:');
     // Dedicated expand_hops section with full mechanics must be documented
     expect(content).toContain('Dependency graph expansion (`expand_hops`)');
-    expect(content).toContain('clamped to 0–2');
-    expect(content).toContain('70/30');
+    expect(content).toContain('must be `0`, `1`, or `2`');
+    expect(content).toContain('Context selection is budget-driven');
     expect(content).toContain('1 hop');
+  });
+
+  it('documents budget-driven source selection instead of a fixed rank cutoff', () => {
+    expect(RAG_CONTENT).not.toContain('results 6-10 are metadata-only');
+    expect(RAG_CONTENT).toMatch(/budget-driven|priority.*budget|remaining budget/i);
+  });
+
+  it('documents every structured diagnostics field', () => {
+    for (const field of [
+      'route',
+      'executed_branches',
+      'fallback_mode',
+      'candidate_count',
+      'selected_count',
+      'deduplicated_count',
+      'omitted_count',
+      'expansion_count',
+      'stale_count',
+      'estimated_tokens',
+      'configured_budget',
+      'compaction_count',
+      'exact_node_overflow',
+    ]) {
+      expect(RAG_CONTENT).toContain(field);
+    }
+  });
+
+  it('documents embedding-contract refusal remediation', () => {
+    expect(RAG_CONTENT).toContain('ia index --force');
+    expect(RAG_CONTENT).toMatch(/contract mismatch|unknown contract/i);
+  });
+
+  it('documents conditional sparse retrieval capability', () => {
+    expect(RAG_CONTENT).toMatch(/sparse.*capab|capab.*sparse/i);
+    expect(RAG_CONTENT).toMatch(/does not run|not run|unavailable/i);
+  });
+
+  it('documents closed failure statuses and successful tool-result failures', () => {
+    expect(RAG_CONTENT).toContain('ok | empty | low_confidence | unavailable | refused');
+    expect(RAG_CONTENT).toMatch(/structuredContent|successful tool result/i);
+  });
+
+  it('regenerates the managed block with the same source content', async () => {
+    const agentsPath = join(targetDir, 'AGENTS.md');
+    await writeFile(agentsPath, '# Project\n');
+
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
+
+    const content = await readFile(agentsPath, 'utf-8');
+    expect(content).toContain(`${RAG_MARKER_START}\n${RAG_CONTENT}\n${RAG_MARKER_END}`);
+  });
+
+  it('documents that exact source is selected by priority and remaining budget', () => {
+    expect(RAG_CONTENT).toMatch(/priority/i);
+    expect(RAG_CONTENT).toMatch(/remaining budget|configured budget/i);
+    expect(RAG_CONTENT).toMatch(/targeted|smallest sufficient/i);
+  });
+
+  it('does not reintroduce the stale fixed-cutoff claim on refresh', async () => {
+    const agentsPath = join(targetDir, 'AGENTS.md');
+    await writeFile(
+      agentsPath,
+      `# Project\n${RAG_MARKER_START}\nresults 6-10 are metadata-only\n${RAG_MARKER_END}\n`,
+    );
+
+    await runSubcommand(['inject', '--config', '/path/project.json', '--file', agentsPath]);
+
+    const content = await readFile(agentsPath, 'utf-8');
+    expect(content).not.toContain('results 6-10 are metadata-only');
+    expect(content).toContain('budget-driven');
   });
 
   // Test 3d (US4): Context7 + Sequential Thinking guidance present in injected content

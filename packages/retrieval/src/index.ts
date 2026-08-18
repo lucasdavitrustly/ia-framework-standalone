@@ -1,4 +1,6 @@
-export { SearchEngine, computeTermFrequencySparseVector } from './search-engine.js';
+export { SearchEngine } from './search-engine.js';
+export { QueryPlanner } from './planning/query-planner.js';
+export type { PlanInput, PlannedQuery, QueryRoute } from './planning/query-planner.js';
 export { getRelatedTerms } from './search-synonyms.js';
 export { DependencyGraph } from './dependency-graph.js';
 export type { DependencyGraphConfig } from './dependency-graph.js';
@@ -26,3 +28,9 @@ export { extractSymbols } from './symbol-extractor.js';
 export type { ExtractedSymbols } from './symbol-extractor.js';
 export { multiHopExpand } from './multi-hop.js';
 export type { MultiHopConfig, MultiHopEngine } from './multi-hop.js';
+export {
+  assertEffectiveFilter,
+  createEffectiveFilter,
+  toQdrantFilter,
+} from './effective-filter.js';
+export type { EffectiveFilter, EffectiveFilterInput } from './effective-filter.js';

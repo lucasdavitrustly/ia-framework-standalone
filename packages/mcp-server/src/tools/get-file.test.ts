@@ -2,6 +2,30 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { parseRepoPath, getFileHandler, resetGetFileSessionCache } from './get-file.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 
+/** Typed view of the get_file tool's structuredContent payload. */
+interface GetFileStructured {
+  answered?: boolean;
+  multiRepo?: boolean;
+  fallbackUsed?: boolean;
+  cached?: boolean;
+  content?: string;
+  resolvedVia?: string;
+  reposSearched?: string[];
+  candidates?: unknown[];
+  chunks?: Array<{
+    repo?: string;
+    name?: string;
+    startLine?: number;
+    endLine?: number;
+    chunkId?: string;
+  }>;
+  [key: string]: unknown;
+}
+
+function structuredOf(result: { structuredContent?: object | undefined }): GetFileStructured {
+  return (result.structuredContent ?? {}) as GetFileStructured;
+}
+
 describe('parseRepoPath', () => {
   test('parses repo:path prefix', () => {
     expect(parseRepoPath('core:src/a.ts')).toEqual({ repo: 'core', path: 'src/a.ts' });
@@ -83,8 +107,73 @@ describe('getFileHandler multi-repo', () => {
     };
 
     const result = await getFileHandler(engine, { path: 'src/a.ts' });
-    expect((result as any).structuredContent.chunks).toBeDefined();
-    expect((result as any).structuredContent.chunks[0].repo).toBe('core');
+    const structured = structuredOf(result);
+    expect(structured.chunks).toBeDefined();
+    expect(structured.chunks![0]!.repo).toBe('core');
+  });
+
+  test('rejects an explicit unknown repo before querying the engine', async () => {
+    const engine = { getFile: vi.fn() };
+
+    const result = await getFileHandler(
+      engine,
+      { path: 'unknown:src/a.ts' },
+      { knownRepos: ['core', 'backend'] },
+    );
+
+    expect((result.content[0] as { text: string }).text).toContain("Unknown repo 'unknown'");
+    expect(engine.getFile).not.toHaveBeenCalled();
+  });
+
+  test('reads a valid but not-yet-indexed explicit repo file from disk', async () => {
+    const engine = { getFile: vi.fn().mockResolvedValue([]) };
+    const readFileFn = vi.fn().mockResolvedValue('export const fromDisk = true;');
+
+    const result = await getFileHandler(
+      engine,
+      { path: 'core:src/new.ts' },
+      { knownRepos: ['core'], readFileFn },
+    );
+
+    expect((result.content[0] as { text: string }).text).toContain('fromDisk = true');
+    expect(structuredOf(result).resolvedVia).toBe('filesystem-fallback');
+    expect(readFileFn).toHaveBeenCalledWith('src/new.ts', 'core', undefined, undefined);
+  });
+
+  test('does not use an invalid zero parent range for a contiguous read', async () => {
+    const engine = {
+      getFile: vi.fn().mockResolvedValue([
+        makeResult({
+          name: 'Foo$part1',
+          parentName: 'Foo',
+          parentStartLine: 0,
+          parentEndLine: 20,
+          startLine: 2,
+          endLine: 10,
+        }),
+      ]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('part content');
+
+    await getFileHandler(engine, { path: 'src/a.ts', name: 'Foo' }, { readFileFn });
+
+    expect(readFileFn).toHaveBeenCalledWith('src/a.ts', undefined, 2, 10);
+    expect(readFileFn).not.toHaveBeenCalledWith('src/a.ts', undefined, 0, 20);
+  });
+
+  test('prioritizes a direct Foo chunk over methods whose parentName is Foo', async () => {
+    const engine = {
+      getFile: vi.fn().mockResolvedValue([
+        makeResult({ name: 'Foo', chunkType: 'class', startLine: 1, endLine: 20 }),
+        makeResult({ name: 'create', parentName: 'Foo', startLine: 3, endLine: 8 }),
+      ]),
+    };
+    const readFileFn = vi.fn().mockResolvedValue('class Foo {}');
+
+    await getFileHandler(engine, { path: 'src/a.ts', name: 'Foo' }, { readFileFn });
+
+    expect(readFileFn).toHaveBeenCalledTimes(1);
+    expect(readFileFn).toHaveBeenCalledWith('src/a.ts', undefined, 1, 20);
   });
 });
 
@@ -129,11 +218,11 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const readFileFn = vi.fn().mockResolvedValue('file content');
 
     const result = await getFileHandler(engine, { path: 'src/auth.ts' }, { readFileFn });
-    const structured = (result as any).structuredContent;
+    const structured = structuredOf(result);
     expect(structured.content).toBe('file content');
     expect(structured.chunks).toBeDefined();
-    expect(structured.chunks[0].name).toBe('authFn');
-    expect(structured.chunks[0].startLine).toBe(5);
+    expect(structured.chunks![0]!.name).toBe('authFn');
+    expect(structured.chunks![0]!.startLine).toBe(5);
   });
 
   test('falls back to stored Qdrant content when readFileFn throws ENOENT', async () => {
@@ -144,7 +233,7 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const result = await getFileHandler(engine, { path: 'src/auth.ts' }, { readFileFn });
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain('stored-qdrant-content');
-    const structured = (result as any).structuredContent;
+    const structured = structuredOf(result);
     expect(structured.fallbackUsed).toBe(true);
   });
 
@@ -158,7 +247,9 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const result = await getFileHandler(engine, { path: 'src/auth.ts' });
     const text = (result.content[0] as { text: string }).text;
     expect(engine.search).toHaveBeenCalled();
-    expect(text).toContain('auth');
+    expect(text).toContain('No exact indexed file matched');
+    expect(text).toContain('src/auth-service.ts');
+    expect(structuredOf(result).candidates).toBeDefined();
   });
 
   test('forwards repo from repo:path prefix to readFileFn as second argument', async () => {
@@ -178,7 +269,10 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     const readFileFn = vi.fn().mockResolvedValue('content');
 
     await getFileHandler(engine, { path: 'core:src/auth.ts' }, { readFileFn });
-    expect(engine.getFile).toHaveBeenCalledWith('src/auth.ts', 'core');
+    expect(engine.getFile).toHaveBeenCalledWith(
+      'src/auth.ts',
+      expect.objectContaining({ repoId: 'core', excludeTests: true, reservedExclusion: true }),
+    );
   });
 
   test('derives repo from chunk repoId when no prefix given (single repo)', async () => {
@@ -200,7 +294,9 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
       makeChunk({ chunkId: 'c2', repoId: 'paypro', relativePath: 'src/Foo.java' }),
     ];
     const engine = { getFile: vi.fn().mockResolvedValue(chunks) };
-    const readFileFn = vi.fn(async (_path: string, repo?: string) => `content of ${repo}`);
+    const readFileFn = vi.fn((_path: string, repo?: string) =>
+      Promise.resolve(`content of ${repo}`),
+    );
 
     const result = await getFileHandler(engine, { path: 'src/Foo.java' }, { readFileFn });
     const text = (result.content[0] as { text: string }).text;
@@ -212,7 +308,7 @@ describe('T063: get_file filesystem read primary + semantic fallback', () => {
     expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', 'paypro');
     expect(text).toContain('content of achpro');
     expect(text).toContain('content of paypro');
-    expect((result as any).structuredContent.multiRepo).toBe(true);
+    expect(structuredOf(result).multiRepo).toBe(true);
   });
 });
 
@@ -270,7 +366,7 @@ describe('T139: get_file with startLine/endLine returns only the specified range
       { path: 'src/entry/Entry.java', startLine: 10, endLine: 15 },
       { readFileFn },
     );
-    const structured = (result as any).structuredContent;
+    const structured = structuredOf(result);
     expect(structured.answered).toBe(true);
     // The content should only contain the sliced lines
     expect(structured.content).toContain('line 10');
@@ -308,10 +404,12 @@ describe('T140: get_file with name parameter filters chunks by name', () => {
     const createContent = 'public static Entry create(...) {\n  // create logic\n}';
     const readFileFn = vi
       .fn()
-      .mockImplementation((path: string, repo?: string, startLine?: number, endLine?: number) => {
-        if (startLine === 166 && endLine === 231) return Promise.resolve(createContent);
-        return Promise.resolve('other content');
-      });
+      .mockImplementation(
+        (_path: string, _repo?: string, startLine?: number, endLine?: number) => {
+          if (startLine === 166 && endLine === 231) return Promise.resolve(createContent);
+          return Promise.resolve('other content');
+        },
+      );
 
     const result = await getFileHandler(
       engine,
@@ -365,7 +463,7 @@ describe('T141: get_file with name matching multiple chunks returns all', () => 
     const engine = { getFile: vi.fn().mockResolvedValue([chunk1, chunk2, otherChunk]) };
     const readFileFn = vi
       .fn()
-      .mockImplementation((path: string, repo?: string, startLine?: number, endLine?: number) => {
+      .mockImplementation((_path: string, _repo?: string, startLine?: number) => {
         if (startLine === 100) return Promise.resolve('create overload 1');
         if (startLine === 160) return Promise.resolve('create overload 2');
         return Promise.resolve('other');
@@ -461,6 +559,137 @@ describe('T143: get_file with both name and line range — name takes precedence
     // Should use name-based filtering (lines 166-231), not the provided line range (1-10)
     expect(text).toContain('create method via name');
     expect(text).not.toContain('line range content that should not appear');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Track 2: split-chunk parent retrieval
+// ---------------------------------------------------------------------------
+
+describe('Track 2: get_file resolves split chunks to one parent range', () => {
+  function makeChunk(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
+    return {
+      chunkId: 'split-1',
+      filePath: '/project/src/Foo.java',
+      relativePath: 'src/Foo.java',
+      content: '',
+      startLine: 100,
+      endLine: 600,
+      language: 'java',
+      chunkType: 'class',
+      name: 'Foo$part1',
+      imports: [],
+      exports: [],
+      score: 1.0,
+      matchedVector: 'semantic',
+      ...overrides,
+    };
+  }
+
+  test('reads one contiguous parent range for an exact parent request', async () => {
+    const chunks = [
+      makeChunk({
+        chunkId: 'split-1',
+        name: 'Foo$part1',
+        startLine: 100,
+        endLine: 600,
+        parentName: 'Foo',
+        parentStartLine: 66,
+        parentEndLine: 1204,
+        partIndex: 1,
+        totalParts: 2,
+      }),
+      makeChunk({
+        chunkId: 'split-2',
+        name: 'Foo$part2',
+        startLine: 601,
+        endLine: 900,
+        parentName: 'Foo',
+        parentStartLine: 66,
+        parentEndLine: 1204,
+        partIndex: 2,
+        totalParts: 2,
+      }),
+    ];
+    const engine = { getFile: vi.fn().mockResolvedValue(chunks) };
+    const parentContent = Array.from({ length: 1139 }, (_, index) => `line ${index + 66}`).join('\n');
+    const readFileFn = vi.fn().mockResolvedValue(parentContent);
+
+    const result = await getFileHandler(
+      engine,
+      { path: 'src/Foo.java', name: 'Foo' },
+      { readFileFn },
+    );
+    const text = (result.content[0] as { text: string }).text;
+
+    expect(readFileFn).toHaveBeenCalledTimes(1);
+    expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', undefined, 66, 1204);
+    expect(text).toContain('### construct: Foo (lines 66-1204)');
+    expect(text).toContain('line 600');
+    expect(text).toContain('line 601');
+    expect(text.match(/```/g)).toHaveLength(2);
+    expect(text).not.toContain('### class: Foo$part1');
+    expect(text).not.toContain('### class: Foo$part2');
+    expect(structuredOf(result).content).toBe(parentContent);
+  });
+
+  test('uses an exact name match instead of selecting FooService by substring', async () => {
+    const foo = makeChunk({
+      chunkId: 'foo',
+      name: 'Foo',
+      startLine: 10,
+      endLine: 20,
+      chunkType: 'class',
+    });
+    const fooService = makeChunk({
+      chunkId: 'foo-service',
+      name: 'FooService',
+      startLine: 30,
+      endLine: 40,
+      chunkType: 'class',
+    });
+    const engine = { getFile: vi.fn().mockResolvedValue([foo, fooService]) };
+    const readFileFn = vi
+      .fn()
+      .mockImplementation((_path: string, _repo?: string, startLine?: number) =>
+        Promise.resolve(startLine === 10 ? 'Foo body' : 'FooService body'),
+      );
+
+    const result = await getFileHandler(
+      engine,
+      { path: 'src/Foo.java', name: 'Foo' },
+      { readFileFn },
+    );
+    const text = (result.content[0] as { text: string }).text;
+
+    expect(readFileFn).toHaveBeenCalledTimes(1);
+    expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', undefined, 10, 20);
+    expect(text).toContain('Foo body');
+    expect(text).not.toContain('FooService body');
+  });
+
+  test('resolves an exact split chunk name through its parent metadata', async () => {
+    const chunk = makeChunk({
+      name: 'Foo$part2',
+      parentName: 'Foo',
+      parentStartLine: 66,
+      parentEndLine: 1204,
+      partIndex: 2,
+      totalParts: 2,
+    });
+    const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
+    const readFileFn = vi.fn().mockResolvedValue('complete Foo body');
+
+    const result = await getFileHandler(
+      engine,
+      { path: 'src/Foo.java', name: 'Foo$part2' },
+      { readFileFn },
+    );
+    const text = (result.content[0] as { text: string }).text;
+
+    expect(readFileFn).toHaveBeenCalledWith('src/Foo.java', undefined, 66, 1204);
+    expect(text).toContain('### construct: Foo (lines 66-1204)');
+    expect(text).toContain('complete Foo body');
   });
 });
 
@@ -642,19 +871,21 @@ describe('Feature 017: get_file cross-repo fallback', () => {
 
   function resolver(map: Record<string, string | null>, skipped: string[] = []) {
     // map: repo -> content (string) or null (not found). skipped: inaccessible repos.
-    return vi.fn(async (relativePath: string, opts?: { startLine?: number; endLine?: number }) =>
-      Object.keys(map).map((repo) => {
-        if (skipped.includes(repo)) {
-          return { repo, found: false, skipped: true, error: 'path inaccessible' };
-        }
-        const content = map[repo];
-        if (content === null) return { repo, found: false };
-        const body =
-          opts?.startLine !== undefined
-            ? `${content} [${opts.startLine}-${opts.endLine}]`
-            : content;
-        return { repo, found: true, content: body };
-      }),
+    return vi.fn((_relativePath: string, opts?: { startLine?: number; endLine?: number }) =>
+      Promise.resolve(
+        Object.keys(map).map((repo) => {
+          if (skipped.includes(repo)) {
+            return { repo, found: false, skipped: true, error: 'path inaccessible' };
+          }
+          const content = map[repo];
+          if (content === null) return { repo, found: false };
+          const body =
+            opts?.startLine !== undefined
+              ? `${content} [${opts.startLine}-${opts.endLine}]`
+              : content;
+          return { repo, found: true, content: body };
+        }),
+      ),
     );
   }
 

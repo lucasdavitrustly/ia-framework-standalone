@@ -8,11 +8,12 @@ import { MetricsStore } from '@ia-framework/observability';
 import { createEmbeddingProvider, discoverDimensions } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { IndexingPipeline } from '@ia-framework/indexer';
-import type { IndexingProgress } from '@ia-framework/indexer';
+import type { IndexRunMetrics, IndexRunSummary, IndexingProgress } from '@ia-framework/indexer';
 import {
-  getLastEmbeddingModel,
-  saveLastIndexedCommit,
   getCurrentCommit,
+  getFullReindexRequired,
+  saveLastIndexedCommit,
+  setFullReindexRequired,
 } from '@ia-framework/indexer';
 import { DependencyGraph } from '@ia-framework/retrieval';
 
@@ -52,6 +53,64 @@ async function checkAndClearStopSentinel(frameworkDir: string): Promise<boolean>
   } catch {
     return false;
   }
+}
+
+function normalizeIndexResult(
+  result: IndexRunSummary,
+  mode: IndexRunMetrics['mode'],
+): IndexRunSummary {
+  const failedFiles = result.failedFiles ?? result.metrics?.failedFiles ?? [];
+  const failedChanges = result.failedChanges ?? result.metrics?.failedChanges ?? [];
+  const existingMetrics = result.metrics;
+  const metrics: IndexRunMetrics = existingMetrics
+    ? {
+        mode: existingMetrics.mode ?? mode,
+        filesChanged: existingMetrics.filesChanged ?? result.filesIndexed,
+        chunksDeleted: existingMetrics.chunksDeleted ?? 0,
+        chunksReindexed: existingMetrics.chunksReindexed ?? result.chunksIndexed,
+        chunksAffected: existingMetrics.chunksAffected ?? result.chunksIndexed,
+        failedFiles: existingMetrics.failedFiles ?? failedFiles,
+        failedChanges: existingMetrics.failedChanges ?? failedChanges,
+      }
+    : {
+        mode,
+        filesChanged: result.filesIndexed,
+        chunksDeleted: 0,
+        chunksReindexed: result.chunksIndexed,
+        chunksAffected: result.chunksIndexed,
+        failedFiles,
+        failedChanges,
+      };
+
+  return { ...result, failedFiles, failedChanges, metrics };
+}
+
+function hasIndexFailures(result: IndexRunSummary): boolean {
+  return (
+    result.skippedChunks > 0 ||
+    (result.failedFiles?.length ?? 0) > 0 ||
+    (result.failedChanges?.length ?? 0) > 0 ||
+    (result.metrics?.failedFiles?.length ?? 0) > 0 ||
+    (result.metrics?.failedChanges?.length ?? 0) > 0
+  );
+}
+
+function isMissingCollectionError(error: unknown): boolean {
+  return /collection.*(?:not found|does not exist)|(?:not found|does not exist).*collection|\b404\b/i.test(
+    String(error),
+  );
+}
+
+function addScopedDeletion(result: IndexRunSummary, deleted: number): IndexRunSummary {
+  if (deleted === 0) return result;
+  return {
+    ...result,
+    metrics: {
+      ...result.metrics,
+      chunksDeleted: result.metrics.chunksDeleted + deleted,
+      chunksAffected: result.metrics.chunksAffected + deleted,
+    },
+  };
 }
 
 /**
@@ -197,6 +256,7 @@ Browse available models: https://ollama.com/search
           process.env['IA_FRAMEWORK_CONFIG'] ||
           join(process.cwd(), '.ia-framework', 'project.json');
         const frameworkDir = resolveFrameworkDir(configPath);
+        let cleanRun = false;
 
         try {
           const config = await loadConfig(configPath);
@@ -270,49 +330,13 @@ Browse available models: https://ollama.com/search
             apiKey: config.vectorStore.apiKey,
           });
 
-          // Mismatch detection: check existing collection vs configured model
-          try {
-            const collectionInfo = await vectorStore.getCollectionInfo();
-            if (collectionInfo.pointCount > 0) {
-              const existingDimensions = collectionInfo.vectorDimensions.text;
-              const configuredDimensions = embeddingProvider.dimensions;
-              const lastModel = await getLastEmbeddingModel(frameworkDir, collectionName);
-              const currentModel = config.embedding.model;
-
-              const dimensionMismatch = existingDimensions !== configuredDimensions;
-              const modelMismatch = lastModel !== null && lastModel !== currentModel;
-
-              if (dimensionMismatch || modelMismatch) {
-                console.log('');
-                console.log('  \u26a0 Embedding model mismatch detected!');
-                console.log(
-                  `    Previous model: ${lastModel ?? 'unknown'} (${existingDimensions}d vectors)`,
-                );
-                console.log(
-                  `    New model:      ${currentModel} (${configuredDimensions}d vectors)`,
-                );
-                console.log('    Existing vectors are incompatible with the new model.');
-                console.log('');
-
-                const rl = createInterface({ input: process.stdin, output: process.stdout });
-                const answer = await rl.question(
-                  '  Delete existing collection and re-index? (y/N): ',
-                );
-                rl.close();
-
-                if (answer.trim().toLowerCase() === 'y') {
-                  await vectorStore.deleteCollection();
-                  console.log('  \u2713 Collection deleted \u2014 starting fresh index');
-                  options.force = true;
-                } else {
-                  console.log('  Aborted \u2014 no changes made');
-                  process.exit(0);
-                }
-              }
-            }
-          } catch {
-            // Collection may not exist yet — no mismatch possible
-          }
+          // Embedding-contract state is owned by ContractStore, persisted inside
+          // the Qdrant collection (EMB-08, AD-002). The legacy per-repo model +
+          // dimension check that lived here is retired (D-3): it wrote per-repo
+          // state after every run while the contract is a per-collection
+          // invariant (D-6), so the two could disagree, and it prompted
+          // interactively to delete a collection. A mismatch is now a loud,
+          // non-destructive refusal at search time naming `ia index --force`.
 
           // Set up dependency graph for building import adjacency during indexing
           const graphDbPath = join(frameworkDir, 'graph.sqlite');
@@ -474,19 +498,33 @@ Browse available models: https://ollama.com/search
           let totalFilesIndexed = 0;
           let totalChunksIndexed = 0;
           let totalSkippedChunks = 0;
+          let totalFilesChanged = 0;
+          let totalChunksDeleted = 0;
+          let totalChunksReindexed = 0;
+          let totalChunksAffected = 0;
+          const failedRepos: Array<{ repo: string; reason: string }> = [];
+          const skippedChunks: Array<{
+            repoId?: string | undefined;
+            relativePath: string;
+            name?: string | undefined;
+            startLine: number;
+            endLine: number;
+            reason: string;
+          }> = [];
+          const signatureOnlyChunks: Array<{
+            repoId?: string | undefined;
+            relativePath: string;
+            name?: string | undefined;
+            startLine: number;
+            endLine: number;
+          }> = [];
 
           try {
             // Per-repo sequential loop (D-03, D-07)
             for (const repo of reposToIndex) {
-              console.log(`\n── Indexing repo: ${repo.name} (${repo.path}) ──\n`);
-
-              // Scoped force-delete: when --force AND --repo, delete only that repo's chunks (D-02)
-              if (options.force && options.repo) {
-                const deleted = await vectorStore.deleteByFilter({
-                  must: [{ key: 'repoId', match: { value: repo.name } }],
-                });
-                console.log(`  Deleted ${deleted} existing chunks for repo "${repo.name}"`);
-              }
+              const repoName = repo.name ?? repo.path;
+              console.log(`\n── Indexing repo: ${repoName} (${repo.path}) ──\n`);
+              if (abortController.signal.aborted) throw new Error('Indexing cancelled');
 
               // Build Maven module graph per-repo if applicable
               let mavenModuleGraph: import('@ia-framework/core').ModuleGraph | undefined;
@@ -526,63 +564,213 @@ Browse available models: https://ollama.com/search
                 }
               }
 
-              const result = await pipeline.run(
-                {
-                  targetProjectPath: repo.path,
-                  frameworkDir,
-                  collectionName,
-                  embeddingProvider,
-                  vectorStore,
-                  includePatterns: config.indexing?.includePatterns,
-                  excludePatterns: config.indexing?.excludePatterns,
-                  maxChunkLines: config.indexing?.maxChunkLines,
-                  embeddingBatchSize: config.indexing?.embeddingBatchSize,
-                  incremental: !options.force,
-                  force: options.force,
-                  dependencyGraph,
-                  embeddingConcurrency: config.indexing?.embeddingConcurrency,
-                  mavenModuleGraph,
-                  repoId: repo.name,
-                  skipEnrichment: options.skipEnrichment,
-                  ...(enrichmentConfig != null ? { enrichmentConfig } : {}),
-                },
-                (progress: IndexingProgress) => {
-                  Object.assign(lastProgress, progress);
-                  renderProgress(progress);
-                  void writeIndexingProgress(frameworkDir, {
-                    running: true,
-                    stage: progress.stage,
-                    strategy: 'ast',
-                    filesTotal: progress.filesTotal,
-                    filesProcessed: progress.filesProcessed,
-                    chunksTotal: progress.chunksTotal,
-                    chunksIndexed: progress.chunksIndexed,
-                    currentFile: progress.currentFile ?? null,
-                    batchesTotal: progress.batchesTotal ?? null,
-                    batchesCompleted: progress.batchesCompleted ?? null,
-                    startedAt,
-                    updatedAt: new Date().toISOString(),
-                  });
-                },
-                abortController.signal,
-              );
+              const runPipeline = async (
+                incrementalRun: boolean,
+                forceRun: boolean,
+              ): Promise<IndexRunSummary> =>
+                normalizeIndexResult(
+                  await pipeline.run(
+                    {
+                      targetProjectPath: repo.path,
+                      frameworkDir,
+                      collectionName,
+                      embeddingProvider,
+                      vectorStore,
+                      includePatterns: config.indexing?.includePatterns,
+                      excludePatterns: config.indexing?.excludePatterns,
+                      maxChunkLines: config.indexing?.maxChunkLines,
+                      embeddingBatchSize: config.indexing?.embeddingBatchSize,
+                      incremental: incrementalRun,
+                      force: forceRun,
+                      dependencyGraph,
+                      embeddingConcurrency: config.indexing?.embeddingConcurrency,
+                      mavenModuleGraph,
+                      repoId: repo.name,
+                      skipEnrichment: options.skipEnrichment,
+                      ...(enrichmentConfig != null ? { enrichmentConfig } : {}),
+                    },
+                    (progress: IndexingProgress) => {
+                      Object.assign(lastProgress, progress);
+                      renderProgress(progress);
+                      void writeIndexingProgress(frameworkDir, {
+                        running: true,
+                        stage: progress.stage,
+                        strategy: 'ast',
+                        filesTotal: progress.filesTotal,
+                        filesProcessed: progress.filesProcessed,
+                        chunksTotal: progress.chunksTotal,
+                        chunksIndexed: progress.chunksIndexed,
+                        currentFile: progress.currentFile ?? null,
+                        batchesTotal: progress.batchesTotal ?? null,
+                        batchesCompleted: progress.batchesCompleted ?? null,
+                        startedAt,
+                        updatedAt: new Date().toISOString(),
+                      });
+                    },
+                    abortController.signal,
+                  ),
+                  incrementalRun ? 'incremental' : 'full',
+                );
 
-              totalFilesIndexed += result.filesIndexed;
-              totalChunksIndexed += result.chunksIndexed;
-              totalSkippedChunks += result.skippedChunks;
+              const purgeRepo = async (): Promise<number> => {
+                const filter = { must: [{ key: 'repoId', match: { value: repoName } }] };
+                let deleted: number;
+                try {
+                  deleted = await vectorStore.deleteByFilter(filter);
+                } catch (error) {
+                  // A first full index can run before the collection exists. There is
+                  // nothing to purge in that case; pipeline.initialize() will create it.
+                  if (isMissingCollectionError(error)) {
+                    console.log(`  No existing chunks to delete for repo "${repoName}"`);
+                    return 0;
+                  }
+                  throw error;
+                }
+                console.log(`  Deleted ${deleted} existing chunks for repo "${repoName}"`);
+                return deleted;
+              };
 
-              process.stdout.write('\n');
+              let result: IndexRunSummary | undefined;
+              let repoFailure: string | undefined;
+              const fullReindexRequired =
+                !options.force &&
+                (await getFullReindexRequired(frameworkDir, collectionName, repoName));
 
-              // Save per-repo indexing state with repoId composite key
-              const currentCommit = await getCurrentCommit(repo.path);
-              await saveLastIndexedCommit(
-                frameworkDir,
-                currentCommit ?? '',
-                collectionName,
-                config.embedding.model,
-                undefined,
-                repo.name,
-              );
+              if (options.force || fullReindexRequired) {
+                try {
+                  if (fullReindexRequired) {
+                    console.log(
+                      `  ⚠ A previous full re-index for ${repoName} did not complete; retrying it before incremental indexing`,
+                    );
+                  }
+                  if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                  const deleted = await purgeRepo();
+                  // Automatic retries must not pass collection-destructive force semantics.
+                  // The scoped purge plus incremental:false provides the full repo rebuild;
+                  // explicit --force retains its existing schema-migration behavior.
+                  result = addScopedDeletion(await runPipeline(false, options.force), deleted);
+                  if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                  if (hasIndexFailures(result)) {
+                    repoFailure = fullReindexRequired
+                      ? 'full re-index retry returned failed files or skipped chunks'
+                      : 'full index returned failed files or skipped chunks';
+                  }
+                } catch (error) {
+                  if (abortController.signal.aborted) throw error;
+                  repoFailure = String(error);
+                }
+              } else {
+                try {
+                  const incrementalResult = await runPipeline(true, false);
+                  if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+
+                  if (hasIndexFailures(incrementalResult)) {
+                    if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                    console.log(
+                      `  ⚠ Incremental index for ${repoName} had failures; running one scoped full-index fallback`,
+                    );
+                    for (const failedFile of incrementalResult.failedFiles) {
+                      console.log(
+                        `  ⚠ Initial failure ${repoName}:${failedFile.relativePath} — ${failedFile.reason}`,
+                      );
+                    }
+                    for (const failedChange of incrementalResult.failedChanges) {
+                      console.log(
+                        `  ⚠ Initial Git failure for ${repoName} (${failedChange.operation}) — ${failedChange.error}`,
+                      );
+                    }
+                    try {
+                      if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                      const deleted = await purgeRepo();
+                      if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                      result = addScopedDeletion(await runPipeline(false, false), deleted);
+                      if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                      if (hasIndexFailures(result)) {
+                        repoFailure = 'full-index fallback returned failed files or skipped chunks';
+                      }
+                    } catch (error) {
+                      if (abortController.signal.aborted) throw error;
+                      repoFailure = String(error);
+                    }
+                  } else {
+                    result = incrementalResult;
+                  }
+                } catch (error) {
+                  if (abortController.signal.aborted) throw error;
+                  console.log(
+                    `  ⚠ Incremental index for ${repoName} threw ${String(error)}; running one scoped full-index fallback`,
+                  );
+                  try {
+                    if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                    const deleted = await purgeRepo();
+                    if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                    result = addScopedDeletion(await runPipeline(false, false), deleted);
+                    if (abortController.signal.aborted) throw new Error('Indexing cancelled');
+                    if (hasIndexFailures(result)) {
+                      repoFailure = 'full-index fallback returned failed files or skipped chunks';
+                    }
+                  } catch (fallbackError) {
+                    if (abortController.signal.aborted) throw fallbackError;
+                    repoFailure = String(fallbackError);
+                  }
+                }
+              }
+
+              if (repoFailure) {
+                await setFullReindexRequired(frameworkDir, collectionName, true, repoName);
+                failedRepos.push({ repo: repoName, reason: repoFailure });
+                console.error(`  ✗ ${repoName}: ${repoFailure}`);
+              }
+
+              if (result) {
+                totalFilesIndexed += result.filesIndexed;
+                totalChunksIndexed += result.chunksIndexed;
+                totalSkippedChunks += result.skippedChunks;
+                totalFilesChanged += result.metrics.filesChanged;
+                totalChunksDeleted += result.metrics.chunksDeleted;
+                totalChunksReindexed += result.metrics.chunksReindexed;
+                totalChunksAffected += result.metrics.chunksAffected;
+                skippedChunks.push(...result.skipped);
+                signatureOnlyChunks.push(...result.signatureOnly);
+
+                console.log(
+                  `  ${result.metrics.mode} metrics for ${repoName}: changed files=${result.metrics.filesChanged}, affected chunks=${result.metrics.chunksAffected}, deleted chunks=${result.metrics.chunksDeleted}, re-indexed chunks=${result.metrics.chunksReindexed}`,
+                );
+                for (const failedFile of result.failedFiles) {
+                  console.log(
+                    `  ⚠ Failed file ${repoName}:${failedFile.relativePath} — ${failedFile.reason}`,
+                  );
+                }
+                for (const failedChange of result.failedChanges) {
+                  console.log(
+                    `  ⚠ Git ${failedChange.operation} change detection failed for ${repoName} — ${failedChange.error}`,
+                  );
+                }
+                process.stdout.write('\n');
+
+                // Keep the CLI-side state write for callers that mock the pipeline, but never
+                // advance it after a failed or cancelled repo run.
+                const currentCommit = await getCurrentCommit(repo.path);
+                if (
+                  !repoFailure &&
+                  !hasIndexFailures(result) &&
+                  currentCommit &&
+                  !abortController.signal.aborted
+                ) {
+                  await saveLastIndexedCommit(
+                    frameworkDir,
+                    currentCommit,
+                    collectionName,
+                    config.embedding.model,
+                    undefined,
+                    repo.name,
+                  );
+                } else {
+                  console.log(
+                    `  ⚠ Not advancing indexed commit for ${repoName}: indexing failed or was cancelled — re-run to retry it`,
+                  );
+                }
+              }
 
               // Persist Maven module graph per-repo
               if (mavenModuleGraph) {
@@ -615,6 +803,7 @@ Browse available models: https://ollama.com/search
                 error: 'Stopped by user',
               });
               process.exit(0);
+              return;
             }
             throw err;
           } finally {
@@ -624,18 +813,42 @@ Browse available models: https://ollama.com/search
 
           if (totalSkippedChunks > 0) {
             console.log(
-              `\n  ⚠ ${totalSkippedChunks} chunks skipped due to embedding failures (will be retried on next index)`,
+              `\n  ⚠ ${totalSkippedChunks} chunks skipped due to embedding failures (indexed commit not advanced for affected repos; re-run \`ia index\` to retry them)`,
             );
+            for (const chunk of skippedChunks) {
+              console.log(
+                `    - ${chunk.repoId ? `${chunk.repoId}:` : ''}${chunk.relativePath}:${chunk.startLine}-${chunk.endLine}${chunk.name ? ` (${chunk.name})` : ''} — ${chunk.reason}`,
+              );
+            }
           }
 
+          if (signatureOnlyChunks.length > 0) {
+            console.log(`\n  ⚠ ${signatureOnlyChunks.length} signature-only chunks indexed`);
+            for (const chunk of signatureOnlyChunks) {
+              console.log(
+                `    - ${chunk.repoId ? `${chunk.repoId}:` : ''}${chunk.relativePath}:${chunk.startLine}-${chunk.endLine}${chunk.name ? ` (${chunk.name})` : ''} — signature-only`,
+              );
+            }
+          }
+
+          const indexingFailed = totalSkippedChunks > 0 || failedRepos.length > 0;
           console.log(
-            `\n\u2713 Indexed ${totalChunksIndexed} chunks from ${totalFilesIndexed} files in ${elapsed}s`,
+            `\n${indexingFailed ? '⚠' : '\u2713'} Indexed ${totalChunksIndexed} chunks from ${totalFilesIndexed} files in ${elapsed}s`,
           );
+          console.log(
+            `  Aggregate metrics: changed files=${totalFilesChanged}, affected chunks=${totalChunksAffected}, deleted chunks=${totalChunksDeleted}, re-indexed chunks=${totalChunksReindexed}`,
+          );
+          if (failedRepos.length > 0) {
+            console.log(`\n  ⚠ ${failedRepos.length} repos failed:`);
+            for (const failedRepo of failedRepos) {
+              console.log(`    - ${failedRepo.repo}: ${failedRepo.reason}`);
+            }
+          }
 
           // Mark indexing complete in the progress file
           await writeIndexingProgress(frameworkDir, {
             running: false,
-            stage: 'done',
+            stage: indexingFailed ? 'error' : 'done',
             strategy: 'ast',
             filesTotal: totalFilesIndexed,
             filesProcessed: totalFilesIndexed,
@@ -647,6 +860,16 @@ Browse available models: https://ollama.com/search
             skippedChunks: totalSkippedChunks,
             startedAt,
             completedAt: new Date().toISOString(),
+            ...(indexingFailed
+              ? {
+                  error: [
+                    ...failedRepos.map((failedRepo) => `${failedRepo.repo}: ${failedRepo.reason}`),
+                    ...(totalSkippedChunks > 0
+                      ? [`${totalSkippedChunks} chunks skipped during indexing`]
+                      : []),
+                  ].join('; '),
+                }
+              : {}),
           });
 
           // Backward-compat check: warn about chunks without repoId (D-09)
@@ -667,6 +890,11 @@ Browse available models: https://ollama.com/search
           } catch {
             // Non-fatal — skip warning if count fails
           }
+
+          if (indexingFailed) {
+            process.exit(1);
+          }
+          cleanRun = true;
         } catch (error) {
           console.error(`\n\u2717 Indexing failed: ${String(error)}`);
           logger.error({ error }, 'Indexing failed');
@@ -684,6 +912,11 @@ Browse available models: https://ollama.com/search
           });
           process.exit(1);
         }
+
+        // Explicit success exit so a clean run reports an observable exit code
+        // rather than an absent one. Outside the try so it is never mistaken for
+        // an indexing failure.
+        if (cleanRun) process.exit(0);
       },
     );
 }

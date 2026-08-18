@@ -14,8 +14,9 @@ codebase context during AI-assisted development:
 
 - \`search_codebase\` — Semantic search across the indexed codebase using
   query auto-classification (semantic / keyword / existence / aggregation).
-  Results include live file content for the top-5 matches and metadata-only
-  for results 6-10. Stale results (file changed since indexing) are flagged.
+  Results contain targeted live source selected by evidence priority and the
+  remaining context budget; there is no fixed rank cutoff. Stale results
+  (file changed since indexing) are flagged.
   Parameters: \`query\` (required), \`limit\` (default 10), \`score_threshold\`
   (default 0.5), \`expand_hops\` (0=no expansion, 1=direct imports, 2=transitive),
   \`fallback\` (default true), \`repo\`, \`stereotype\`, \`archLayer\`, \`module\`,
@@ -82,15 +83,16 @@ matched code *plus* the context it depends on without extra round-trips.
 
 **Bounds & behaviour you can rely on:**
 
-- The value is **clamped to 0–2** and rounded — passing \`5\` is treated as \`2\`,
-  negatives as \`0\`. There is no way to expand deeper than 2.
+- The value must be \`0\`, \`1\`, or \`2\`; invalid values are refused rather than
+  silently clamped. There is no way to expand deeper than 2.
 - Omitting \`expand_hops\` uses the server default (\`2\`). You (the agent) set it
   per call; you cannot raise the ceiling.
-- **Token budget is shared 70/30:** direct results get 70% of the budget,
-  expanded neighbors get the remaining 30%. If direct results already exceed
-  70%, neighbor expansion is suppressed. So a high \`limit\` + \`expand_hops=2\`
-  can crowd out the expansion you asked for — prefer a smaller \`limit\` when you
-  rely on expansion.
+- **Context selection is budget-driven:** retrieval candidate limits are separate
+  from the model-visible budget. After expansion, deduplication, ranking, and
+  live reads, evidence is selected by priority and remaining budget. Exact
+  requested nodes are preferred; lower-priority evidence is compacted or omitted
+  deterministically. An explicit budget wins over the adaptive default; \`0\`
+  means unlimited.
 
 **Examples:**
 
@@ -107,7 +109,7 @@ search_codebase(query="how entries are persisted", expand_hops=2)
 
 **Rule of thumb:** definitions and needle lookups → \`expand_hops=0\`;
 "who implements / how does this flow work" → \`expand_hops=2\` with a modest
-\`limit\` so the 30% neighbor budget isn't starved.
+\`limit\` so the remaining budget can include expansion evidence.
 
 ### When to use
 
@@ -153,7 +155,29 @@ reasoning, planning, or editing. When in doubt, check the MCP.
 - Raise \`score_threshold\` to 0.7 for precise matches
 - Use \`get_file\` with \`name\` or \`startLine\`/\`endLine\` instead of fetching entire files
 - Skip RAG for tasks that don't need codebase context (doc updates, config changes)
-- Top-5 results include live code; results 6-10 are metadata-only to save tokens
+- Search results use targeted ranges and budget-driven priority selection. Do
+  not assume a fixed result rank has source or summary content; inspect the
+  returned anchors and structured diagnostics.
+
+### Diagnostics and failures
+
+Every \`search_codebase\` response includes these compact fields in
+\`structuredContent\`: \`route\`, \`executed_branches\`, \`fallback_mode\`,
+\`candidate_count\`, \`selected_count\`, \`deduplicated_count\`,
+\`omitted_count\`, \`expansion_count\`, \`stale_count\`, \`estimated_tokens\`,
+\`configured_budget\`, \`compaction_count\`, and \`exact_node_overflow\`.
+They describe what actually ran and what the final response cost; they are not
+source evidence and should not be copied into the prose answer.
+
+Failure outcomes are successful tool results with a closed \`status\` value:
+\`ok | empty | low_confidence | unavailable | refused\`. A Qdrant or retrieval
+outage is \`unavailable\` and names the remediation; it does not recommend
+\`grep\` or \`find\` as a substitute. An embedding-contract mismatch or unknown
+contract is \`refused\`; rebuild with \`ia index --force\` after checking the
+active and persisted contracts.
+
+The sparse branch runs only when the adapter declares sparse capability. When
+that capability is unavailable, no sparse branch is executed or reported.
 
 ### Token-efficient retrieval (universal rules)
 
@@ -209,7 +233,7 @@ Pick the tactic by question type. All scenarios still obey the universal rules.
 | Scenario | Strategy |
 |----------|----------|
 | **"What is X?"** (definition) | search (\`limit:5, score_threshold:0.6, expand_hops:0\`) → answer from \`[signature]\` snippet → fetch only field blocks via \`startLine\`/\`endLine\`. Never \`name:\` on a sealed/large class. |
-| **"Who implements / extends X?"** | search \`limit:10\` and read the **metadata-only results 6-10** to enumerate candidates cheaply; or \`get_dependencies(path)\` for reverse edges; or \`expand_hops:2\` to follow the graph. Stop at class signatures — don't fetch each impl body. Narrow with \`stereotype\`. |
+| **"Who implements / extends X?"** | search with a modest candidate limit and \`expand_hops:2\` to follow the graph, then use the returned signatures and anchors. Selection is budget-driven; inspect each returned item rather than assuming a rank-based form. Narrow with \`stereotype\`. |
 | **"How does X work?" / trace a flow** (the expensive one) | search once for the entry point, then **plan the whole call chain up front** from snippets. Per hop, fetch only the specific method via \`startLine\`/\`endLine\` (\`name:\` OK for one *small* method). Use \`get_dependencies\` to find the next hop instead of re-searching. Cost driver is breadth — don't fetch collaborators you won't cite. |
 | **"Where is X called / used?"** | For an exact symbol, \`rg\` returns \`file:line\` cheaply; \`get_dependencies\` reverse edges also list callers without bodies. Use \`search_codebase\` only for conceptual usage. |
 | **"Find the class/method named X"** (needle) | Skip semantic search — \`glob\` the file or \`get_file(path, name:X)\` for one small member. |

@@ -1,8 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import { DependencyGraph, resolveJavaImport } from './dependency-graph.js';
+import { createEffectiveFilter } from './effective-filter.js';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+
+const filter = createEffectiveFilter();
 
 describe('DependencyGraph', () => {
   let graph: DependencyGraph;
@@ -42,7 +45,7 @@ describe('DependencyGraph', () => {
 
     graph.upsertEdges(sourceFile, imports, projectRoot);
 
-    const neighbors = graph.getNeighborFiles([sourceFile], 1);
+    const neighbors = graph.getNeighborFiles([sourceFile], 1, filter);
     expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'types.ts'));
     expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'utils.ts'));
   });
@@ -53,7 +56,7 @@ describe('DependencyGraph', () => {
 
     graph.upsertEdges(sourceFile, imports, projectRoot);
 
-    const neighbors = graph.getNeighborFiles([sourceFile], 1);
+    const neighbors = graph.getNeighborFiles([sourceFile], 1, filter);
     // Only the relative import should resolve
     expect(neighbors).toHaveLength(1);
     expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'types.ts'));
@@ -69,7 +72,7 @@ describe('DependencyGraph', () => {
     // types -> helpers (this is a 2-hop from middleware)
     graph.upsertEdges(types, ['../utils/helpers'], projectRoot);
 
-    const neighbors = graph.getNeighborFiles([middleware], 1);
+    const neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toContain(types);
     expect(neighbors).toContain(helpers);
     // Should NOT include middleware itself
@@ -86,11 +89,11 @@ describe('DependencyGraph', () => {
     // types -> user (2 hops from middleware)
     graph.upsertEdges(types, ['../models/user'], projectRoot);
 
-    const oneHop = graph.getNeighborFiles([middleware], 1);
+    const oneHop = graph.getNeighborFiles([middleware], 1, filter);
     expect(oneHop).toContain(types);
     expect(oneHop).not.toContain(user);
 
-    const twoHop = graph.getNeighborFiles([middleware], 2);
+    const twoHop = graph.getNeighborFiles([middleware], 2, filter);
     expect(twoHop).toContain(types);
     expect(twoHop).toContain(user);
   });
@@ -105,14 +108,14 @@ describe('DependencyGraph', () => {
     graph.upsertEdges(authUtils, ['../utils/helpers'], projectRoot);
 
     // Start from middleware — helpers should appear only once
-    const neighbors = graph.getNeighborFiles([middleware], 2);
+    const neighbors = graph.getNeighborFiles([middleware], 2, filter);
     const helpersCount = neighbors.filter((f) => f === helpers).length;
     expect(helpersCount).toBe(1);
   });
 
   test('returns empty array when no edges found', () => {
     const nonExistent = join(projectRoot, 'src', 'does-not-matter.ts');
-    const neighbors = graph.getNeighborFiles([nonExistent], 1);
+    const neighbors = graph.getNeighborFiles([nonExistent], 1, filter);
     expect(neighbors).toEqual([]);
   });
 
@@ -121,12 +124,12 @@ describe('DependencyGraph', () => {
 
     // First insert: imports types
     graph.upsertEdges(middleware, ['./types'], projectRoot);
-    let neighbors = graph.getNeighborFiles([middleware], 1);
+    let neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'types.ts'));
 
     // Second insert: imports utils instead (replaces)
     graph.upsertEdges(middleware, ['./utils'], projectRoot);
-    neighbors = graph.getNeighborFiles([middleware], 1);
+    neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'utils.ts'));
     expect(neighbors).not.toContain(join(projectRoot, 'src', 'auth', 'types.ts'));
   });
@@ -135,11 +138,11 @@ describe('DependencyGraph', () => {
     const middleware = join(projectRoot, 'src', 'auth', 'middleware.ts');
     graph.upsertEdges(middleware, ['./types', './utils'], projectRoot);
 
-    let neighbors = graph.getNeighborFiles([middleware], 1);
+    let neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toHaveLength(2);
 
     graph.deleteEdgesForFile(middleware);
-    neighbors = graph.getNeighborFiles([middleware], 1);
+    neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toHaveLength(0);
   });
 
@@ -148,7 +151,7 @@ describe('DependencyGraph', () => {
     // ../models resolves to ../models/index.ts
     graph.upsertEdges(middleware, ['../models'], projectRoot);
 
-    const neighbors = graph.getNeighborFiles([middleware], 1);
+    const neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toContain(join(projectRoot, 'src', 'models', 'index.ts'));
   });
 
@@ -161,7 +164,7 @@ describe('DependencyGraph', () => {
     graph.upsertEdges(middleware, ['../utils/helpers'], projectRoot);
     graph.upsertEdges(types, ['../models/user'], projectRoot);
 
-    const neighbors = graph.getNeighborFiles([middleware, types], 1);
+    const neighbors = graph.getNeighborFiles([middleware, types], 1, filter);
     expect(neighbors).toContain(helpers);
     expect(neighbors).toContain(user);
   });
@@ -173,7 +176,7 @@ describe('DependencyGraph', () => {
     // 'express' is external; './types' is local
     graph.upsertEdges(sourceFile, ['express', '@nestjs/common', './types'], projectRoot);
 
-    const neighbors = graph.getNeighborFiles([sourceFile], 1);
+    const neighbors = graph.getNeighborFiles([sourceFile], 1, filter);
     // Only local imports appear in BFS (external are null target)
     expect(neighbors).toHaveLength(1);
     expect(neighbors).toContain(join(projectRoot, 'src', 'auth', 'types.ts'));
@@ -187,11 +190,11 @@ describe('DependencyGraph', () => {
     graph.upsertEdges(file, ['./types'], projectRoot, 'col-a');
     graph.upsertEdges(file, ['../utils/helpers'], projectRoot, 'col-b');
 
-    const neighborsA = graph.getNeighborFiles([file], 1, 'col-a');
+    const neighborsA = graph.getNeighborFiles([file], 1, filter, 'col-a');
     expect(neighborsA).toContain(types);
     expect(neighborsA).not.toContain(helpers);
 
-    const neighborsB = graph.getNeighborFiles([file], 1, 'col-b');
+    const neighborsB = graph.getNeighborFiles([file], 1, filter, 'col-b');
     expect(neighborsB).toContain(helpers);
     expect(neighborsB).not.toContain(types);
   });
@@ -214,8 +217,30 @@ describe('DependencyGraph', () => {
     graph.initialize(); // second call — should be a no-op
     const middleware = join(projectRoot, 'src', 'auth', 'middleware.ts');
     graph.upsertEdges(middleware, ['./types'], projectRoot);
-    const neighbors = graph.getNeighborFiles([middleware], 1);
+    const neighbors = graph.getNeighborFiles([middleware], 1, filter);
     expect(neighbors).toHaveLength(1);
+  });
+
+  test('T33: requires an EffectiveFilter before traversing dependency edges', () => {
+    const sourceFile = join(projectRoot, 'src', 'auth', 'middleware.ts');
+
+    expect(() => graph.getNeighborFiles([sourceFile], 1, undefined as never)).toThrow(
+      /EffectiveFilter is required/,
+    );
+  });
+
+  test('T33: accepts repository and metadata scope while traversing the graph', () => {
+    const sourceFile = join(projectRoot, 'src', 'auth', 'middleware.ts');
+    graph.upsertEdges(sourceFile, ['./types'], projectRoot);
+
+    const scopedFilter = createEffectiveFilter(
+      { must: [{ key: 'language', match: { value: 'typescript' } }] },
+      'repo-a',
+    );
+
+    expect(graph.getNeighborFiles([sourceFile], 1, scopedFilter)).toEqual([
+      join(projectRoot, 'src', 'auth', 'types.ts'),
+    ]);
   });
 });
 
@@ -277,7 +302,7 @@ describe('resolveJavaImport', () => {
       fileManifest,
     );
 
-    const neighbors = g.getNeighborFiles([sourceFile], 1);
+    const neighbors = g.getNeighborFiles([sourceFile], 1, filter);
     expect(neighbors).toContain(fooPath);
     expect(neighbors).toContain(barPath);
     // java.util.List is unresolvable → external (null target), not in BFS

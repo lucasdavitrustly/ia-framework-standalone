@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { MavenModuleParser } from './maven-module-parser.js';
-import type { ModuleGraph, ModuleGraphJSON } from './types.js';
 
 describe('MavenModuleParser', () => {
   const parser = new MavenModuleParser();
@@ -82,7 +81,7 @@ describe('MavenModuleParser', () => {
   <artifactId>child-module</artifactId>
 </project>`;
 
-      const parentInfo = parser.parsePom(parentXml, 'pom.xml');
+      parser.parsePom(parentXml, 'pom.xml');
       const childInfo = parser.parsePom(childXml, 'child-module/pom.xml');
 
       // Child should inherit groupId and version from parent element

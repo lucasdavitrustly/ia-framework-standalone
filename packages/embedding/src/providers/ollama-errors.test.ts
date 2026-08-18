@@ -68,4 +68,46 @@ describe('OllamaEmbeddingProvider error messages', () => {
 
     await expect(provider.embedBatch(['test'])).rejects.toThrow('context length exceeded');
   });
+
+  it('categorizes a stopped llama server runner with recovery guidance', async () => {
+    const provider = new OllamaEmbeddingProvider({
+      model: 'qwen3-embedding:0.6b',
+      dimensions: 1024,
+      baseUrl: 'http://localhost:11434',
+    });
+
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'llama-server process no longer running: unknown' }), {
+        status: 400,
+        statusText: 'Bad Request',
+      }),
+    );
+
+    const error = await provider.embedBatch(['test']).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('runner-failure');
+    expect((error as Error).message).toContain('Ollama logs');
+  });
+
+  it('categorizes a context-length overflow with split guidance', async () => {
+    const provider = new OllamaEmbeddingProvider({
+      model: 'qwen3-embedding:0.6b',
+      dimensions: 1024,
+      baseUrl: 'http://localhost:11434',
+    });
+
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'input length exceeds context length' }), {
+        status: 400,
+        statusText: 'Bad Request',
+      }),
+    );
+
+    const error = await provider.embedBatch(['test']).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('context-length');
+    expect((error as Error).message).toContain('split');
+  });
 });

@@ -61,6 +61,7 @@ export function withDegradation(
   const base = structuredContent ?? {};
   return {
     ...base,
+    status: 'unavailable',
     warnings: caps.degradedReasons,
     degraded_features: caps.degradedFeatures,
   };

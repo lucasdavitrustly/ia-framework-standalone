@@ -1,11 +1,55 @@
 import { describe, it, expect } from 'vitest';
 import {
+  EmbeddingProviderConfigSchema,
   IndexingConfigSchema,
   LlmConfigSchema,
   RetrievalConfigSchema,
   RepoEntrySchema,
   ProjectConfigSchema,
 } from './schema.js';
+
+describe('EmbeddingProviderConfigSchema — prefixes', () => {
+  it('round-trips document and query prefixes', () => {
+    const prefixes = { document: 'passage: ', query: 'query: ' };
+    const result = EmbeddingProviderConfigSchema.parse({
+      provider: 'openai',
+      model: 'text-embedding-3-small',
+      prefixes,
+    });
+
+    expect(result.prefixes?.document).toBe(prefixes.document);
+    expect(result.prefixes?.query).toBe(prefixes.query);
+  });
+
+  it('parses a config without prefixes as undefined', () => {
+    const result = EmbeddingProviderConfigSchema.parse({
+      provider: 'openai',
+      model: 'text-embedding-3-small',
+    });
+
+    expect(result.prefixes).toBeUndefined();
+  });
+
+  it('rejects prefixes missing query', () => {
+    expect(() =>
+      EmbeddingProviderConfigSchema.parse({
+        provider: 'openai',
+        model: 'text-embedding-3-small',
+        prefixes: { document: 'passage: ' },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects non-string prefixes', () => {
+    expect(() =>
+      EmbeddingProviderConfigSchema.parse({
+        provider: 'openai',
+        model: 'text-embedding-3-small',
+        prefixes: { document: 1, query: 'query: ' },
+      }),
+    ).toThrow();
+  });
+});
 
 describe('IndexingConfigSchema — embeddingConcurrency', () => {
   const validBase = {

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
-import { CrossRepoEdgeStore, type CrossRepoEdge } from './cross-repo-edges.js';
+import { CrossRepoEdgeStore } from './cross-repo-edges.js';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -60,8 +60,8 @@ describe('CrossRepoEdgeStore', () => {
 
     const edges = store.getEdgesFrom('frontend', 'src/utils.ts');
     expect(edges).toHaveLength(2);
-    expect(edges[0].targetRepo).toBe('shared');
-    expect(edges[1].targetRepo).toBe('backend');
+    expect(edges[0]!.targetRepo).toBe('shared');
+    expect(edges[1]!.targetRepo).toBe('backend');
   });
 
   test('getEdgesTo retrieves edges by target_repo+target_symbol', () => {

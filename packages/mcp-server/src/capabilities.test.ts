@@ -39,6 +39,7 @@ describe('ServerCapabilities', () => {
     const merged = withDegradation({ answered: true }, caps);
     expect(merged).toMatchObject({
       answered: true,
+      status: 'unavailable',
       warnings: ['Graph expansion unavailable.'],
       degraded_features: ['dependency_graph_expansion'],
     });

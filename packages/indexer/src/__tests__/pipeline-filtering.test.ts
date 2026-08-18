@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CodeChunk } from '@ia-framework/ast-parser';
 import type { EnrichmentConfig } from '@ia-framework/core';
-import {
-  filterChunksForEnrichment,
-  DEFAULT_EXCLUDE_LANGUAGES,
-  DEFAULT_EXCLUDE_STEREOTYPES,
-} from '../pipeline.js';
+import { filterChunksForEnrichment, DEFAULT_EXCLUDE_STEREOTYPES } from '../pipeline.js';
 
 /**
  * Tests for pipeline filtering logic.

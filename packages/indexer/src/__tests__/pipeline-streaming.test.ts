@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { CodeChunk } from '@ia-framework/ast-parser';
 import type { EnrichmentConfig } from '@ia-framework/core';
 
@@ -37,8 +37,7 @@ describe('Pipeline Streaming - Producer-Consumer (US4)', () => {
   it('skipped chunks are immediately available for embedding without waiting for enrichment', async () => {
     // This test verifies that chunks excluded by language/stereotype filters
     // are passed to the embedding queue immediately, not after enrichment completes.
-    const { filterChunksForEnrichment, DEFAULT_EXCLUDE_STEREOTYPES } =
-      await import('../pipeline.js');
+    const { filterChunksForEnrichment } = await import('../pipeline.js');
 
     const enrichableChunk = makeChunk({
       id: 'enrichable-1',
@@ -77,7 +76,7 @@ describe('Pipeline Streaming - Producer-Consumer (US4)', () => {
   });
 
   // T046: Embedding batches start processing before all enrichment batches complete
-  it('embedding batches start processing before all enrichment batches complete', async () => {
+  it('embedding batches start processing before all enrichment batches complete', () => {
     // Simulate the streaming pipeline where embedding flushes happen
     // as enrichment batches complete (not waiting for all enrichment)
     const embeddingBatchSize = 2;
@@ -91,7 +90,7 @@ describe('Pipeline Streaming - Producer-Consumer (US4)', () => {
 
     function flushToEmbedding(force = false) {
       while (pendingEmbed.length >= embeddingBatchSize || (force && pendingEmbed.length > 0)) {
-        const batch = pendingEmbed.splice(0, embeddingBatchSize);
+        pendingEmbed.splice(0, embeddingBatchSize);
         embedCalls.push(enrichBatchesCompleted); // Record which enrichment batch triggered this
       }
     }
@@ -113,7 +112,7 @@ describe('Pipeline Streaming - Producer-Consumer (US4)', () => {
   });
 
   // T047: Remaining chunks in accumulator are flushed to embedding when enrichment finishes
-  it('remaining chunks in accumulator are flushed when enrichment finishes (partial final batch)', async () => {
+  it('remaining chunks in accumulator are flushed when enrichment finishes (partial final batch)', () => {
     const embeddingBatchSize = 5;
     const embedBatches: CodeChunk[][] = [];
     const pendingEmbed: CodeChunk[] = [];
@@ -157,11 +156,11 @@ describe('Pipeline Streaming - Producer-Consumer (US4)', () => {
 
     // Add tasks to both queues
     for (let i = 0; i < 10; i++) {
-      enrichQueue.add(async () => {
+      void enrichQueue.add(async () => {
         await new Promise((r) => setTimeout(r, 50));
         enrichTasksCompleted++;
       });
-      embedQueue.add(async () => {
+      void embedQueue.add(async () => {
         await new Promise((r) => setTimeout(r, 50));
         embedTasksCompleted++;
       });
@@ -199,7 +198,7 @@ describe('Pipeline Streaming - Producer-Consumer (US4)', () => {
 
     // Simulate 5 embedding batches where batch #2 fails
     for (let i = 0; i < 5; i++) {
-      embedQueue.add(async () => {
+      void embedQueue.add(async () => {
         if (i === 2) {
           // Batch 2 fails
           try {

@@ -19,9 +19,7 @@ interface CachedEnrichment {
 
 // ── Import under test (WILL FAIL — module does not exist yet) ─────────────────
 const cacheSpecifier = './cache.js';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const cacheModule = (await import(cacheSpecifier).catch(() => null)) as any;
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+const cacheModule = (await import(cacheSpecifier).catch(() => null)) as Record<string, unknown> | null;
 const EnrichmentCache = cacheModule?.EnrichmentCache as
   | (new () => {
       get(contentHash: string): CachedEnrichment | undefined;
@@ -70,14 +68,14 @@ describe('EnrichmentCache (T016)', () => {
     expect(EnrichmentCache, 'EnrichmentCache must be exported from ./cache.ts').toBeDefined();
 
     const cache = new EnrichmentCache!();
-    const mockLlmCall = vi.fn().mockResolvedValue(makeEntry('from LLM'));
+    const mockLlmCall = vi.fn((_hash: string) => Promise.resolve(makeEntry('from LLM')));
 
     // Simulate: first call is cache miss → call LLM → store result
     const hash = 'sha256-content-xyz';
     let result = cache.get(hash);
     if (!result) {
       result = await mockLlmCall(hash);
-      cache.set(hash, result!);
+      cache.set(hash, result);
     }
     expect(mockLlmCall).toHaveBeenCalledOnce();
 

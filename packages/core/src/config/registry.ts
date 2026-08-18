@@ -58,7 +58,7 @@ export class RepoRegistry {
     // Extra injection-only targets (US5) — resolved to absolute, never indexed.
     const extra = (config.agentInjectionTargets ?? []).map((p) => resolve(configDir, p));
 
-    return new RepoRegistry(rawEntries as RepoEntry[], extra);
+    return new RepoRegistry(rawEntries, extra);
   }
 
   getRepos(): RepoEntry[] {

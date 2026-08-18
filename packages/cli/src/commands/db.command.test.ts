@@ -279,7 +279,7 @@ describe('writeDbConfig', () => {
     expect(dirStat.isDirectory()).toBe(true);
 
     // File contents match the config shape
-    const written = JSON.parse(await readFile(dbConfigPath, 'utf-8'));
+    const written: unknown = JSON.parse(await readFile(dbConfigPath, 'utf-8'));
     expect(written).toMatchObject(config);
 
     await rm(tmpRoot, { recursive: true, force: true });

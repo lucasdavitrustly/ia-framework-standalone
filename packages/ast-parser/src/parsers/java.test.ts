@@ -116,6 +116,88 @@ public class BigAspect {
   });
 });
 
+describe('parseJava - documentation and annotation start lines', () => {
+  it('records the Javadoc start line for a documented method', () => {
+    const source = [
+      'public class AccountService {',
+      '  /** Loads an account. */',
+      '  public Account load() {',
+      '    return null;',
+      '  }',
+      '}',
+    ].join('\n');
+
+    const method = parseJava(source, '/src/AccountService.java', 'src/AccountService.java').find(
+      (chunk) => chunk.name === 'load',
+    );
+
+    expect(method?.docCommentStartLine).toBe(2);
+    expect(method?.annotationStartLine).toBeUndefined();
+  });
+
+  it('records the annotation start line for an annotated method', () => {
+    const source = [
+      'public class AccountService {',
+      '  @Transactional',
+      '  public void save() {}',
+      '}',
+    ].join('\n');
+
+    const method = parseJava(source, '/src/AccountService.java', 'src/AccountService.java').find(
+      (chunk) => chunk.name === 'save',
+    );
+
+    expect(method?.annotationStartLine).toBe(2);
+    expect(method?.docCommentStartLine).toBeUndefined();
+  });
+
+  it('records both offsets when Javadoc and annotations precede a method', () => {
+    const source = [
+      'public class AccountService {',
+      '  /** Updates an account. */',
+      '  @Transactional',
+      '  public void update() {}',
+      '}',
+    ].join('\n');
+
+    const method = parseJava(source, '/src/AccountService.java', 'src/AccountService.java').find(
+      (chunk) => chunk.name === 'update',
+    );
+
+    expect(method?.docCommentStartLine).toBe(2);
+    expect(method?.annotationStartLine).toBe(3);
+    expect(method?.docCommentStartLine).toBeLessThan(method?.annotationStartLine ?? Infinity);
+  });
+
+  it('leaves both offsets undefined for a bare method', () => {
+    const source = ['public class AccountService {', '  public void clear() {}', '}'].join('\n');
+
+    const method = parseJava(source, '/src/AccountService.java', 'src/AccountService.java').find(
+      (chunk) => chunk.name === 'clear',
+    );
+
+    expect(method?.docCommentStartLine).toBeUndefined();
+    expect(method?.annotationStartLine).toBeUndefined();
+  });
+
+  it('uses the opening line of a multiline Javadoc block', () => {
+    const source = [
+      'public class AccountService {',
+      '  /**',
+      '   * Loads an account.',
+      '   */',
+      '  public Account load() {}',
+      '}',
+    ].join('\n');
+
+    const method = parseJava(source, '/src/AccountService.java', 'src/AccountService.java').find(
+      (chunk) => chunk.name === 'load',
+    );
+
+    expect(method?.docCommentStartLine).toBe(2);
+  });
+});
+
 // ── T034: dependency edge extraction ─────────────────────────────────────────
 
 describe('parseJava - dependency edges (T034)', () => {
@@ -250,7 +332,6 @@ public class EntryController {
     `.trim();
 
     const chunks = parseJava(source, '/src/EntryController.java', 'src/EntryController.java');
-    const classChunk = chunks.find((c) => c.chunkType === 'class' && c.name === 'EntryController');
     const sigChunk = chunks.find(
       (c) => c.chunkType === 'class-signature' && c.name === 'EntryController',
     );

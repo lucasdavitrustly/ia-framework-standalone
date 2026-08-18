@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { searchCodebaseHandler } from '../search-codebase.js';
-import type { SearchCodebaseInput } from '../search-codebase.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 
 function makeResult(score: number, id = 'chunk-1'): RetrievalResult {
@@ -37,6 +36,8 @@ describe('searchCodebaseHandler — engine call (no server-side threshold)', () 
     expect(searchWithExpansion).toHaveBeenCalledWith(
       expect.objectContaining({ scoreThreshold: undefined }),
       expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -51,6 +52,8 @@ describe('searchCodebaseHandler — engine call (no server-side threshold)', () 
 
     expect(searchWithExpansion).toHaveBeenCalledWith(
       expect.objectContaining({ scoreThreshold: 0.5 }),
+      expect.anything(),
+      expect.anything(),
       expect.anything(),
     );
   });

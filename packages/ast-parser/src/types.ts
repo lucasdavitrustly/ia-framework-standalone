@@ -36,12 +36,26 @@ export interface CodeChunk {
   startLine: number;
   /** 1-indexed end line in source file */
   endLine: number;
+  /** 1-indexed line where the associated documentation comment starts, if present */
+  docCommentStartLine?: number | undefined;
+  /** 1-indexed line where the associated annotation/decorator starts, if present */
+  annotationStartLine?: number | undefined;
   /** Module specifiers this chunk imports from */
   imports: string[];
   /** Names this chunk exports */
   exports: string[];
   /** Parent construct name when this chunk is a sub-chunk */
   parentName?: string | undefined;
+  /** For sub-chunks: 1-indexed start line of the parent construct in the source file */
+  parentStartLine?: number | undefined;
+  /** For sub-chunks: 1-indexed end line of the parent construct in the source file */
+  parentEndLine?: number | undefined;
+  /** For sub-chunks: 1-based index of this part within the parent construct */
+  partIndex?: number | undefined;
+  /** For sub-chunks: total number of parts the parent construct was split into */
+  totalParts?: number | undefined;
+  /** True when embedding used a bounded head prefix because no declaration was recoverable */
+  truncated?: boolean | undefined;
   /** Direct superclass name (e.g., "BaseService"). Extracted from extends clause. */
   superclass?: string | undefined;
   /** Interfaces/traits this class implements. Extracted from implements clause. */

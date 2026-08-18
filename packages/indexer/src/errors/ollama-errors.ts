@@ -9,6 +9,7 @@ export type OllamaErrorCategory =
   | 'connection'
   | 'model-not-found'
   | 'parse-failure'
+  | 'truncation'
   | 'server-error'
   | 'unknown';
 
@@ -25,6 +26,8 @@ export interface OllamaErrorContext {
   phase: 'enrichment' | 'embedding';
   /** Whether this was a JSON parse failure on a 200 OK response */
   parseFailure?: boolean;
+  /** Whether generation was cut off at num_predict (done_reason === 'length') */
+  truncated?: boolean;
 }
 
 /**
@@ -43,6 +46,13 @@ export function truncateBody(body: string, maxLength: number = MAX_ERROR_BODY_LE
  */
 export function categorizeOllamaError(ctx: OllamaErrorContext): OllamaErrorCategory {
   const bodyLower = ctx.body.toLowerCase();
+
+  // Truncation: generation hit the num_predict ceiling (done_reason 'length').
+  // Checked before parse-failure because a truncated response is also invalid
+  // JSON, but the actionable cause is the output budget, not a flaky server.
+  if (ctx.truncated) {
+    return 'truncation';
+  }
 
   // Parse failure explicitly flagged
   if (ctx.parseFailure) {
@@ -114,6 +124,8 @@ function getSuggestion(category: OllamaErrorCategory, ctx: OllamaErrorContext): 
       return `Try running: ollama pull ${ctx.model}`;
     case 'parse-failure':
       return 'Ollama returned invalid JSON — check server logs or restart Ollama';
+    case 'truncation':
+      return 'Output exceeded num_predict and was cut off — the batch will be split and retried; if it persists, lower maxBatchChunks or raise outputTokensPerChunk';
     case 'server-error':
       return 'Ollama internal error — check server logs or restart Ollama';
     case 'unknown':

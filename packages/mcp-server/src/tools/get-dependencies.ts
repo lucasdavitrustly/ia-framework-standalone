@@ -1,13 +1,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { RetrievalResult } from '@ia-framework/retrieval';
+import { createEffectiveFilter } from '@ia-framework/retrieval';
+import type { RetrievalResult, EffectiveFilter } from '@ia-framework/retrieval';
 import { resolveImportToRepo } from '@ia-framework/core';
 import { parseRepoPath } from './get-file.js';
 import { coercedNumber } from './coerce.js';
 
 type Engine = {
-  getFile(path: string): Promise<RetrievalResult[]>;
+  getFile(path: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   search?(query: {
     text: string;
     limit?: number | undefined;
@@ -44,7 +45,7 @@ export async function getDependenciesHandler(
   input: GetDependenciesInput,
 ): Promise<ToolOutput> {
   // Validate mutual exclusion
-  if (input.path !== undefined && (input as any).module !== undefined) {
+  if (input.path !== undefined && input.module !== undefined) {
     return {
       content: [
         {
@@ -55,8 +56,8 @@ export async function getDependenciesHandler(
     };
   }
 
-  if ((input as any).module !== undefined) {
-    return getDependenciesForModule(engine, (input as any).module as string, input);
+  if (input.module !== undefined) {
+    return getDependenciesForModule(engine, input.module, input);
   }
 
   // Path-mode (default): backward-compat with original behavior
@@ -77,7 +78,7 @@ async function getDependenciesForPath(
   let fallbackNote: string | undefined;
 
   try {
-    results = await engine.getFile(filePath);
+    results = await engine.getFile(filePath, createEffectiveFilter({}, repo));
   } catch (error) {
     if (!engine.search) {
       throw error;
@@ -255,7 +256,7 @@ async function getDependenciesForModule(
 
   // Collect starting file paths
   const startPaths = new Set<string>(
-    startChunks.map((c) => c.relativePath).filter(Boolean) as string[],
+    startChunks.map((c) => c.relativePath).filter(Boolean),
   );
 
   for (const chunk of startChunks) {
@@ -279,7 +280,7 @@ async function getDependenciesForModule(
       visitedPaths.add(targetPath);
 
       try {
-        const chunks = await engine.getFile(targetPath);
+        const chunks = await engine.getFile(targetPath, createEffectiveFilter({}, input.repo));
         for (const chunk of chunks) {
           for (const edge of chunk.dependencyEdges ?? []) {
             if (!visitedPaths.has(edge.targetPath)) {

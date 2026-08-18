@@ -98,4 +98,37 @@ describe('formatRetrievalContext', () => {
     expect(result).toContain('Anchor: src/b.ts:5-20');
     expect(result).not.toContain('[');
   });
+
+  it('describes a split construct with its grounded parent range and fetch hint', () => {
+    const result = formatRetrievalContext({
+      relativePath: 'src/Foo.ts',
+      startLine: 300,
+      endLine: 500,
+      name: 'Foo$part2',
+      parentName: 'Foo',
+      parentStartLine: 66,
+      parentEndLine: 1204,
+      partIndex: 2,
+      totalParts: 5,
+    });
+
+    expect(result).toContain(
+      'Construct: Foo (lines 66-1204, part 2/5). Use get_file(path="src/Foo.ts", name="Foo") to retrieve the complete construct.',
+    );
+  });
+
+  it('reports part metadata without fabricating a parent range', () => {
+    const result = formatRetrievalContext({
+      relativePath: 'src/Foo.ts',
+      startLine: 300,
+      endLine: 500,
+      name: 'Foo$part2',
+      parentName: 'Foo',
+      partIndex: 2,
+      totalParts: 5,
+    });
+
+    expect(result).toContain('Construct: Foo (part 2/5).');
+    expect(result).not.toContain('lines undefined');
+  });
 });

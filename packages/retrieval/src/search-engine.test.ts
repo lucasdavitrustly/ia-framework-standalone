@@ -1,6 +1,26 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { SearchEngine, computeTermFrequencySparseVector } from './search-engine.js';
-import type { SearchEngineConfig } from './types.js';
+import { SearchEngine } from './search-engine.js';
+import { buildSparseVector } from '@ia-framework/core';
+import { createEffectiveFilter } from './effective-filter.js';
+import type { RetrievalResult, SearchEngineConfig } from './types.js';
+import type { EmbeddingContract, VectorBranch } from '@ia-framework/core';
+import type { ChunkPayload } from '@ia-framework/vector-store';
+import { QueryPlanner, type PlannedQuery } from './planning/query-planner.js';
+
+const MOCK_CONTRACT: EmbeddingContract = {
+  provider: 'openai',
+  model: 'mock-model',
+  dimension: 3,
+  tokenizerVersion: 1,
+  sparseHashVersion: 1,
+};
+
+/**
+ * Vitest asymmetric matchers are typed `any`; these wrappers narrow them to
+ * `unknown` so nested matcher shapes stay lint-clean without suppressions.
+ */
+const arrayContaining = (items: unknown[]): unknown[] =>
+  expect.arrayContaining(items) as unknown[];
 
 type MockSearchFn = ReturnType<typeof vi.fn>;
 
@@ -10,7 +30,6 @@ function getMockSearch(config: SearchEngineConfig): MockSearchFn {
 }
 
 function getMockEmbed(config: SearchEngineConfig): MockSearchFn {
-  // eslint-disable-next-line @typescript-eslint/unbound-method
   return vi.mocked(config.embeddingProvider.embed);
 }
 
@@ -25,7 +44,7 @@ function makeMockResult(
     filePath: string;
     imports: string[];
     exports: string[];
-  }> = {},
+  }> & { payload?: Partial<ChunkPayload> } = {},
 ) {
   return {
     id: `qdrant-uuid-${chunkId}`,
@@ -47,6 +66,7 @@ function makeMockResult(
       packageName: 'com.acme.billing',
       layerHints: ['controller'],
       indexedAt: '2026-04-01T00:00:00Z',
+      ...overrides.payload,
     },
   };
 }
@@ -59,12 +79,30 @@ function makeConfig(overrides: Partial<SearchEngineConfig> = {}): SearchEngineCo
     embeddingProvider: {
       embed: mockEmbed,
       dimensions: 3,
+      contract: MOCK_CONTRACT,
     },
     vectorStore: {
       search: mockSearch,
     },
     ...overrides,
   };
+}
+
+async function retrieveSinglePayload(payload: Partial<ChunkPayload>): Promise<RetrievalResult> {
+  const config = makeConfig();
+  getMockSearch(config).mockResolvedValueOnce([
+    makeMockResult('metadata-chunk', 0.9, 'semantic', { payload }),
+  ]);
+  const result = (await new SearchEngine(config).search({ text: 'authentication middleware' }))[0];
+  expect(result).toBeDefined();
+  return result as RetrievalResult;
+}
+
+function makePlan(query: string, input: { repo?: string } = {}, sparse = true): PlannedQuery {
+  return new QueryPlanner().plan(
+    { query, ...input },
+    { sparse, filterOnly: true, payloadIndexes: [] },
+  );
 }
 
 describe('SearchEngine', () => {
@@ -153,16 +191,15 @@ describe('SearchEngine', () => {
       relativePath: 'src/auth.ts',
     });
 
-    getMockSearch(config).mockResolvedValue([fileResult]);
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: [{ id: fileResult.id, payload: fileResult.payload }],
+      nextOffset: undefined,
+    });
+    config.vectorStore.scroll = mockScroll;
 
-    const results = await engine.getFile('src/auth.ts');
+    const results = await engine.getFile('src/auth.ts', createEffectiveFilter());
 
-    const searchCalls = getMockSearch(config).mock.calls as [
-      number[],
-      { filter?: Record<string, unknown> | undefined },
-    ][];
-    expect(searchCalls.length).toBeGreaterThan(0);
-    const filterUsed = searchCalls[0]![1].filter;
+    const filterUsed = (mockScroll.mock.calls[0]![0] as { filter?: unknown }).filter;
     expect(filterUsed).toBeDefined();
     // Filter should reference relativePath
     expect(JSON.stringify(filterUsed)).toContain('relativePath');
@@ -174,15 +211,15 @@ describe('SearchEngine', () => {
     const fileResult = makeMockResult('chunk-file', 0.99, 'text', {
       relativePath: 'src/auth.ts',
     });
-    getMockSearch(config).mockResolvedValue([fileResult]);
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: [{ id: fileResult.id, payload: { ...fileResult.payload, repoId: 'achpro' } }],
+      nextOffset: undefined,
+    });
+    config.vectorStore.scroll = mockScroll;
 
-    await engine.getFile('src/auth.ts', 'achpro');
+    await engine.getFile('src/auth.ts', createEffectiveFilter({}, 'achpro'));
 
-    const searchCalls = getMockSearch(config).mock.calls as [
-      number[],
-      { filter?: Record<string, unknown> | undefined },
-    ][];
-    const filterUsed = searchCalls[0]![1].filter;
+    const filterUsed = (mockScroll.mock.calls[0]![0] as { filter?: unknown }).filter;
     const serialized = JSON.stringify(filterUsed);
     expect(serialized).toContain('relativePath');
     expect(serialized).toContain('repoId');
@@ -193,16 +230,123 @@ describe('SearchEngine', () => {
     const fileResult = makeMockResult('chunk-file', 0.99, 'text', {
       relativePath: 'src/auth.ts',
     });
-    getMockSearch(config).mockResolvedValue([fileResult]);
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: [{ id: fileResult.id, payload: fileResult.payload }],
+      nextOffset: undefined,
+    });
+    config.vectorStore.scroll = mockScroll;
 
-    await engine.getFile('src/auth.ts');
+    await engine.getFile('src/auth.ts', createEffectiveFilter());
 
-    const searchCalls = getMockSearch(config).mock.calls as [
-      number[],
-      { filter?: Record<string, unknown> | undefined },
-    ][];
-    const filterUsed = searchCalls[0]![1].filter;
+    const filterUsed = (mockScroll.mock.calls[0]![0] as { filter?: unknown }).filter;
     expect(JSON.stringify(filterUsed)).not.toContain('repoId');
+  });
+
+  test('T31: getFile() pages filter-only results and preserves repo/test filters', async () => {
+    const mockSearch = vi.fn();
+    const mockScroll = vi
+      .fn()
+      .mockResolvedValueOnce({
+        points: [makeMockResult('file-2', 0, 'semantic', { relativePath: 'src/auth.ts' })],
+        nextOffset: 'next',
+      })
+      .mockResolvedValueOnce({
+        points: [makeMockResult('file-1', 0, 'semantic', { relativePath: 'src/auth.ts' })],
+        nextOffset: undefined,
+      });
+    const engine = new SearchEngine({
+      ...makeConfig(),
+      vectorStore: { search: mockSearch, scroll: mockScroll },
+    });
+
+    const results = await engine.getFile('src/auth.ts', {
+      repoId: 'repo-a',
+      userFilters: {},
+      excludeTests: true,
+      reservedExclusion: true,
+    });
+
+    expect(results).toHaveLength(2);
+    expect(mockSearch).not.toHaveBeenCalled();
+    expect(mockScroll).toHaveBeenCalledTimes(2);
+    expect(mockScroll.mock.calls[0]?.[0]).toMatchObject({
+      filter: {
+        must: arrayContaining([
+          { key: 'relativePath', match: { value: 'src/auth.ts' } },
+          { key: 'repoId', match: { value: 'repo-a' } },
+        ]),
+        must_not: arrayContaining([
+          { key: 'stereotype', match: { value: 'test' } },
+          { key: 'kind', match: { value: '__ia_contract__' } },
+        ]),
+      },
+    });
+  });
+
+  test('T31: expandCallChain() uses filter-only retrieval for calledBy results', async () => {
+    const mockSearch = vi.fn();
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: [
+        {
+          ...makeMockResult('caller', 0, 'semantic', { name: 'createPayment' }),
+          payload: {
+            ...makeMockResult('caller', 0, 'semantic', { name: 'createPayment' }).payload,
+            calledBy: ['createPayment'],
+            defines: ['createPayment'],
+          },
+        },
+      ],
+      nextOffset: undefined,
+    });
+    const engine = new SearchEngine({
+      embeddingProvider: { embed: vi.fn(), dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
+    });
+
+    const results = await engine.expandCallChain(
+      [
+        {
+          ...makeMockResult('base', 0.9, 'semantic'),
+          calledBy: ['createPayment'],
+        } as never,
+      ],
+      {
+        repoId: 'repo-a',
+        userFilters: {},
+        excludeTests: true,
+        reservedExclusion: true,
+      },
+      'calledBy',
+    );
+
+    expect(results[0]?.name).toBe('createPayment');
+    expect(results[0]?.expansionSource).toBe('call-chain');
+    expect(mockSearch).not.toHaveBeenCalled();
+    expect(mockScroll.mock.calls[0]?.[0]).toMatchObject({
+      filter: {
+        must: arrayContaining([
+          { key: 'defines', match: { any: ['createPayment'] } },
+          { key: 'repoId', match: { value: 'repo-a' } },
+        ]),
+      },
+    });
+  });
+
+  test('T31: getFile() propagates filter-only ceiling truncation', async () => {
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: Array.from({ length: 10_000 }, (_, index) =>
+        makeMockResult(`file-${index}`, 0, 'semantic', { relativePath: 'src/auth.ts' }),
+      ),
+      nextOffset: 'more',
+    });
+    const engine = new SearchEngine({
+      ...makeConfig(),
+      vectorStore: { search: vi.fn(), scroll: mockScroll },
+    });
+
+    await expect(engine.getFile('src/auth.ts', createEffectiveFilter())).rejects.toThrow(
+      /partial|ceiling|truncat/i,
+    );
   });
 
   test('Test 8: search() with scoreThreshold passes it to the semantic vector search', async () => {
@@ -225,15 +369,269 @@ describe('SearchEngine', () => {
   });
 });
 
+describe('SearchEngine RetrievalResult metadata mapping', () => {
+  test('maps every direct payload field declared by RetrievalResult', async () => {
+    const payload = {
+      chunkId: 'metadata-chunk',
+      filePath: '/workspace/src/metadata.ts',
+      relativePath: 'src/metadata.ts',
+      language: 'typescript',
+      chunkType: 'method',
+      name: 'loadMetadata',
+      content: 'function loadMetadata() {}',
+      startLine: 10,
+      endLine: 20,
+      imports: ['node:fs'],
+      exports: ['loadMetadata'],
+      contentHash: 'hash-1',
+      modulePath: 'metadata-service',
+      packageName: 'com.acme.metadata',
+      layerHints: ['service'],
+      superclass: 'BaseLoader',
+      interfaces: ['Loader'],
+      isInnerClass: false,
+      chunkIndex: 2,
+      totalChunks: 4,
+      defines: ['loadMetadata'],
+      calls: ['readFile'],
+      calledBy: ['MetadataController.get'],
+      repoId: 'repo-a',
+      dependencyEdges: [
+        { targetPath: 'src/storage.ts', relation: 'imports', symbols: ['readFile'] },
+      ],
+      signature: 'loadMetadata(): Metadata',
+      classSignature: 'class MetadataLoader extends BaseLoader',
+      parentName: 'MetadataLoader',
+      parentStartLine: 66,
+      parentEndLine: 1204,
+      partIndex: 2,
+      totalParts: 5,
+      truncated: true,
+      stereotype: 'service',
+      archLayer: 'service',
+      docCommentStartLine: 7,
+      annotationStartLine: 9,
+      signatureOnly: true,
+    } satisfies Partial<ChunkPayload>;
+    const result = await retrieveSinglePayload(payload);
+
+    const fieldPairs = [
+      ['chunkId', 'chunkId'],
+      ['filePath', 'filePath'],
+      ['relativePath', 'relativePath'],
+      ['language', 'language'],
+      ['chunkType', 'chunkType'],
+      ['name', 'name'],
+      ['content', 'content'],
+      ['startLine', 'startLine'],
+      ['endLine', 'endLine'],
+      ['imports', 'imports'],
+      ['exports', 'exports'],
+      ['contentHash', 'contentHash'],
+      ['modulePath', 'modulePath'],
+      ['packageName', 'packageName'],
+      ['layerHints', 'layerHints'],
+      ['superclass', 'superclass'],
+      ['interfaces', 'interfaces'],
+      ['isInnerClass', 'isInnerClass'],
+      ['chunkIndex', 'chunkIndex'],
+      ['totalChunks', 'totalChunks'],
+      ['defines', 'defines'],
+      ['calls', 'calls'],
+      ['calledBy', 'calledBy'],
+      ['repoId', 'repoId'],
+      ['dependencyEdges', 'dependencyEdges'],
+      ['signature', 'signature'],
+      ['classSignature', 'classSignature'],
+      ['parentName', 'parentName'],
+      ['parentStartLine', 'parentStartLine'],
+      ['parentEndLine', 'parentEndLine'],
+      ['partIndex', 'partIndex'],
+      ['totalParts', 'totalParts'],
+      ['truncated', 'truncated'],
+      ['stereotype', 'stereotype'],
+      ['archLayer', 'archLayer'],
+      ['docCommentStartLine', 'docCommentStartLine'],
+      ['annotationStartLine', 'annotationStartLine'],
+      ['signatureOnly', 'signatureOnly'],
+    ] as const;
+
+    for (const [payloadField, resultField] of fieldPairs) {
+      expect(result[resultField], `${resultField} should be mapped`).toEqual(payload[payloadField]);
+    }
+  });
+
+  test('maps an enriched payload into one populated enrichment group', async () => {
+    const result = await retrieveSinglePayload({
+      description: 'Loads metadata from durable storage.',
+      businessContext: 'Metadata persistence',
+      semanticTags: ['metadata', 'persistence'],
+      relationships: [{ target: 'MetadataStore', type: 'uses', label: 'storage' }],
+      enrichedAt: '2026-08-11T10:00:00.000Z',
+      enrichmentModel: 'qwen-coder',
+    });
+
+    expect(result.enrichment).toEqual({
+      description: 'Loads metadata from durable storage.',
+      businessContext: 'Metadata persistence',
+      semanticTags: ['metadata', 'persistence'],
+      relationships: [{ target: 'MetadataStore', type: 'uses', label: 'storage' }],
+      enrichedAt: '2026-08-11T10:00:00.000Z',
+      enrichmentModel: 'qwen-coder',
+    });
+  });
+
+  test('leaves enrichment undefined when the payload has no enrichment fields', async () => {
+    const result = await retrieveSinglePayload({
+      signature: 'loadMetadata(): Metadata',
+      stereotype: 'service',
+    });
+
+    expect(result.enrichment).toBeUndefined();
+  });
+
+  test('does not manufacture empty enrichment fields for partial enrichment', async () => {
+    const result = await retrieveSinglePayload({ description: 'Loads metadata.' });
+
+    expect(result.enrichment).toEqual({ description: 'Loads metadata.' });
+    expect(result.enrichment?.semanticTags).toBeUndefined();
+    expect(result.enrichment?.relationships).toBeUndefined();
+  });
+
+  test('preserves the signature and class signature for structural assembly', async () => {
+    const result = await retrieveSinglePayload({
+      signature: 'loadMetadata(): Metadata',
+      classSignature: 'class MetadataLoader extends BaseLoader',
+    });
+
+    expect(result.signature).toBe('loadMetadata(): Metadata');
+    expect(result.classSignature).toBe('class MetadataLoader extends BaseLoader');
+  });
+
+  test('preserves parent and classification metadata', async () => {
+    const result = await retrieveSinglePayload({
+      parentName: 'MetadataLoader',
+      stereotype: 'service',
+      archLayer: 'service',
+    });
+
+    expect(result.parentName).toBe('MetadataLoader');
+    expect(result.stereotype).toBe('service');
+    expect(result.archLayer).toBe('service');
+  });
+
+  test('preserves expanded source range anchors', async () => {
+    const result = await retrieveSinglePayload({
+      startLine: 10,
+      endLine: 20,
+      docCommentStartLine: 7,
+      annotationStartLine: 9,
+    });
+
+    expect(result.startLine).toBe(10);
+    expect(result.endLine).toBe(20);
+    expect(result.docCommentStartLine).toBe(7);
+    expect(result.annotationStartLine).toBe(9);
+  });
+
+  test('preserves the signature-only degradation marker', async () => {
+    const result = await retrieveSinglePayload({ signatureOnly: true });
+
+    expect(result.signatureOnly).toBe(true);
+  });
+
+  test('preserves repository identity alongside the relative source path', async () => {
+    const result = await retrieveSinglePayload({
+      repoId: 'repo-a',
+      relativePath: 'src/metadata.ts',
+      name: 'loadMetadata',
+      chunkType: 'method',
+      startLine: 10,
+      endLine: 20,
+    });
+
+    expect(result.repoId).toBe('repo-a');
+    expect(result.relativePath).toBe('src/metadata.ts');
+    expect(result.name).toBe('loadMetadata');
+    expect(result.chunkType).toBe('method');
+    expect(result.startLine).toBe(10);
+    expect(result.endLine).toBe(20);
+  });
+
+  test('maps metadata through the filter-only getFile result path', async () => {
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        scroll: vi.fn().mockResolvedValue({
+          points: [
+            {
+              id: 'metadata-chunk',
+              payload: {
+                ...makeMockResult('metadata-chunk', 0, 'semantic').payload,
+                description: 'File metadata result',
+                signature: 'loadMetadata(): Metadata',
+                signatureOnly: true,
+              },
+            },
+          ],
+          nextOffset: undefined,
+        }),
+      },
+    });
+
+    const [result] = await new SearchEngine(config).getFile(
+      'src/auth.ts',
+      createEffectiveFilter(),
+    );
+
+    expect(result?.enrichment).toEqual({ description: 'File metadata result' });
+    expect(result?.signature).toBe('loadMetadata(): Metadata');
+    expect(result?.signatureOnly).toBe(true);
+  });
+
+  test('maps metadata through the hybrid result path', async () => {
+    const mockSearchHybrid = vi.fn().mockResolvedValue([
+      {
+        id: 'metadata-chunk',
+        score: 0.02,
+        vectorName: 'both',
+        payload: {
+          ...makeMockResult('metadata-chunk', 0.02, 'both').payload,
+          description: 'Hybrid metadata result',
+          semanticTags: ['metadata'],
+          archLayer: 'service',
+        },
+      },
+    ]);
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchHybrid: mockSearchHybrid,
+      },
+    });
+
+    const [result] = await new SearchEngine(config).searchHybrid({
+      text: 'how does MetadataLoader work',
+    });
+
+    expect(result?.enrichment).toEqual({
+      description: 'Hybrid metadata result',
+      semanticTags: ['metadata'],
+    });
+    expect(result?.archLayer).toBe('service');
+  });
+});
+
 describe('SearchEngine.searchWithExpansion', () => {
   const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
   const mockSearch = vi.fn().mockResolvedValue([]);
+  const mockScroll = vi.fn().mockResolvedValue({ points: [], nextOffset: undefined });
   const mockGetNeighborFiles = vi.fn().mockResolvedValue([]);
 
   function makeExpandConfig(opts: { withGraph?: boolean } = {}): SearchEngineConfig {
     return {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
-      vectorStore: { search: mockSearch },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
       ...(opts.withGraph ? { dependencyGraph: { getNeighborFiles: mockGetNeighborFiles } } : {}),
     };
   }
@@ -241,6 +639,7 @@ describe('SearchEngine.searchWithExpansion', () => {
   beforeEach(() => {
     mockEmbed.mockReset().mockResolvedValue([0.1, 0.2, 0.3]);
     mockSearch.mockReset().mockResolvedValue([]);
+    mockScroll.mockReset().mockResolvedValue({ points: [], nextOffset: undefined });
     mockGetNeighborFiles.mockReset().mockResolvedValue([]);
   });
 
@@ -251,7 +650,7 @@ describe('SearchEngine.searchWithExpansion', () => {
     const baseResult = makeMockResult('chunk-1', 0.9, 'text');
     mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([]);
 
-    const results = await eng.searchWithExpansion({ text: 'auth' });
+    const results = await eng.searchWithExpansion({ text: 'auth' }, createEffectiveFilter());
 
     expect(results).toHaveLength(1);
     expect(results[0]!.chunkId).toBe('chunk-1');
@@ -273,17 +672,24 @@ describe('SearchEngine.searchWithExpansion', () => {
     });
 
     // First search call returns base results (semantic vector)
-    mockSearch
-      .mockResolvedValueOnce([baseResult])
-      // Expansion: search for files from graph (semantic vector with filePath filter)
-      .mockResolvedValueOnce([expandedResult]);
+    mockSearch.mockResolvedValue([baseResult]);
+    mockScroll.mockResolvedValueOnce({
+      points: [{ id: expandedResult.id, payload: expandedResult.payload }],
+      nextOffset: undefined,
+    });
 
     mockGetNeighborFiles.mockResolvedValue(['/project/src/types.ts']);
 
-    const results = await eng.searchWithExpansion({ text: 'auth' }, { hops: 1 });
+    const results = await eng.searchWithExpansion({ text: 'auth' }, createEffectiveFilter(), {
+      hops: 1,
+    });
 
     // T094 fix: getNeighborFiles is now called with relativePath, not absolute filePath
-    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['src/auth.ts'], 1);
+    expect(mockGetNeighborFiles).toHaveBeenCalledWith(
+      ['src/auth.ts'],
+      1,
+      expect.objectContaining({ excludeTests: true, reservedExclusion: true }),
+    );
     expect(results).toHaveLength(2);
     expect(results[0]!.chunkId).toBe('chunk-base');
     expect(results[0]!.score).toBe(0.9);
@@ -304,14 +710,24 @@ describe('SearchEngine.searchWithExpansion', () => {
       relativePath: 'src/utils.ts',
     });
 
-    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([expandedResult]);
+    mockSearch.mockResolvedValue([baseResult]);
+    mockScroll.mockResolvedValueOnce({
+      points: [{ id: expandedResult.id, payload: expandedResult.payload }],
+      nextOffset: undefined,
+    });
 
     mockGetNeighborFiles.mockResolvedValue(['/project/src/utils.ts']);
 
-    const results = await eng.searchWithExpansion({ text: 'handler' }, { hops: 2 });
+    const results = await eng.searchWithExpansion({ text: 'handler' }, createEffectiveFilter(), {
+      hops: 2,
+    });
 
     // T094 fix: getNeighborFiles is now called with relativePath, not absolute filePath
-    expect(mockGetNeighborFiles).toHaveBeenCalledWith(['src/handler.ts'], 2);
+    expect(mockGetNeighborFiles).toHaveBeenCalledWith(
+      ['src/handler.ts'],
+      2,
+      expect.objectContaining({ excludeTests: true, reservedExclusion: true }),
+    );
     expect(results).toHaveLength(2);
   });
 
@@ -324,15 +740,12 @@ describe('SearchEngine.searchWithExpansion', () => {
       relativePath: 'src/auth.ts',
     });
 
-    mockSearch
-      .mockResolvedValueOnce([baseResult])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+    mockSearch.mockResolvedValueOnce([baseResult]);
 
     // Graph returns a file that already has a base result
     mockGetNeighborFiles.mockResolvedValue(['/project/src/auth.ts']);
 
-    const results = await eng.searchWithExpansion({ text: 'auth' });
+    const results = await eng.searchWithExpansion({ text: 'auth' }, createEffectiveFilter());
 
     // Should still be 1 result, not duplicated
     expect(results).toHaveLength(1);
@@ -353,11 +766,15 @@ describe('SearchEngine.searchWithExpansion', () => {
       relativePath: 'src/types.ts',
     });
 
-    mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([expandedResult]);
+    mockSearch.mockResolvedValueOnce([baseResult]);
+    mockScroll.mockResolvedValueOnce({
+      points: [{ id: expandedResult.id, payload: expandedResult.payload }],
+      nextOffset: undefined,
+    });
 
     mockGetNeighborFiles.mockResolvedValue(['/project/src/types.ts']);
 
-    const results = await eng.searchWithExpansion({ text: 'auth' });
+    const results = await eng.searchWithExpansion({ text: 'auth' }, createEffectiveFilter());
 
     expect(results[0]!.score).toBe(0.85);
     // Expanded results have their score overridden to 0
@@ -371,10 +788,140 @@ describe('SearchEngine.searchWithExpansion', () => {
     const baseResult = makeMockResult('chunk-base', 0.9, 'text');
     mockSearch.mockResolvedValueOnce([baseResult]).mockResolvedValueOnce([]);
 
-    const results = await eng.searchWithExpansion({ text: 'auth' }, { hops: 0 });
+    const results = await eng.searchWithExpansion({ text: 'auth' }, createEffectiveFilter(), {
+      hops: 0,
+    });
 
     expect(mockGetNeighborFiles).not.toHaveBeenCalled();
     expect(results).toHaveLength(1);
+  });
+
+  test('T33: every SearchEngine expansion entry point rejects an omitted filter', async () => {
+    const eng = new SearchEngine(makeExpandConfig());
+    const result = makeMockResult('base', 0.9, 'semantic');
+
+    await expect(eng.searchWithExpansion({ text: 'auth' }, undefined as never)).rejects.toThrow(
+      /EffectiveFilter is required/,
+    );
+    await expect(eng.getAdjacentChunks('src/auth.ts', 0, 2, undefined as never)).rejects.toThrow(
+      /EffectiveFilter is required/,
+    );
+    await expect(eng.expandCallChain([result as never], undefined as never)).rejects.toThrow(
+      /EffectiveFilter is required/,
+    );
+    await expect(eng.getFile('src/auth.ts', undefined as never)).rejects.toThrow(
+      /EffectiveFilter is required/,
+    );
+    await expect(
+      eng.searchWithInterfaceExpansion({ text: 'AuthService' }, undefined as never),
+    ).rejects.toThrow(/EffectiveFilter is required/);
+  });
+
+  test('T30: relative-path expansion uses paged filter-only retrieval and preserves repo scope', async () => {
+    const mockScroll = vi
+      .fn()
+      .mockResolvedValueOnce({
+        points: [
+          {
+            ...makeMockResult('repo-a-chunk', 0, 'semantic', { relativePath: 'src/types.ts' }),
+            payload: {
+              ...makeMockResult('repo-a-chunk', 0, 'semantic', { relativePath: 'src/types.ts' })
+                .payload,
+              repoId: 'repo-a',
+            },
+          },
+          {
+            ...makeMockResult('repo-b-chunk', 0, 'semantic', { relativePath: 'src/types.ts' }),
+            payload: {
+              ...makeMockResult('repo-b-chunk', 0, 'semantic', { relativePath: 'src/types.ts' })
+                .payload,
+              repoId: 'repo-b',
+            },
+          },
+        ],
+        nextOffset: 'next',
+      })
+      .mockResolvedValueOnce({
+        points: [],
+        nextOffset: undefined,
+      });
+    const baseResult = makeMockResult('repo-a-base', 0.9, 'semantic', {
+      relativePath: 'src/auth.ts',
+    });
+    const cfg: SearchEngineConfig = {
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([baseResult]),
+        scroll: vi.fn(
+          async (options: {
+            limit: number;
+            offset?: string | number;
+            filter?: Record<string, unknown>;
+          }) => {
+            const hasRepoScope = JSON.stringify(options.filter).includes('repo-a');
+            const page = (await mockScroll()) as {
+              points: Array<{ id: string; payload: ChunkPayload }>;
+              nextOffset?: string | number | undefined;
+            };
+            return {
+              points: hasRepoScope
+                ? page.points.filter((point) => point.payload?.repoId !== 'repo-b')
+                : page.points,
+              nextOffset: page.nextOffset,
+            };
+          },
+        ),
+      },
+      dependencyGraph: { getNeighborFiles: vi.fn().mockResolvedValue(['src/types.ts']) },
+    };
+
+    const results = await new SearchEngine(cfg).searchWithExpansion(
+      {
+        text: 'auth',
+        filter: { must: [{ key: 'repoId', match: { value: 'repo-a' } }] },
+      },
+      createEffectiveFilter({ must: [{ key: 'repoId', match: { value: 'repo-a' } }] }),
+      { hops: 1 },
+    );
+
+    expect(results.map((result) => result.chunkId)).toEqual(['repo-a-base', 'repo-a-chunk']);
+    expect(mockScroll).toHaveBeenCalledTimes(2);
+  });
+
+  test('T30: adjacent chunks use decoded chunkIndex ordering without a vector search', async () => {
+    const mockSearch = vi.fn();
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: [
+        {
+          ...makeMockResult('chunk-2', 0, 'semantic'),
+          payload: { ...makeMockResult('chunk-2', 0, 'semantic').payload, chunkIndex: 2 },
+        },
+        {
+          ...makeMockResult('chunk-0', 0, 'semantic'),
+          payload: { ...makeMockResult('chunk-0', 0, 'semantic').payload, chunkIndex: 0 },
+        },
+      ],
+      nextOffset: undefined,
+    });
+    const engine = new SearchEngine({
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
+    });
+
+    const results = await engine.getAdjacentChunks(
+      'src/auth.ts',
+      1,
+      3,
+      {
+        userFilters: {},
+        excludeTests: true,
+        reservedExclusion: true,
+      },
+      1,
+    );
+
+    expect(results.map((result) => result.chunkIndex)).toEqual([0, 2]);
+    expect(mockSearch).not.toHaveBeenCalled();
   });
 });
 
@@ -389,7 +936,7 @@ describe('SearchEngine.searchHybrid', () => {
       ...(withHybrid ? { searchHybrid: mockSearchHybrid } : {}),
     };
     return {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
       vectorStore,
     };
   }
@@ -400,7 +947,7 @@ describe('SearchEngine.searchHybrid', () => {
     mockSearchHybrid.mockReset().mockResolvedValue([]);
   });
 
-  test('searchHybrid() calls vectorStore.searchHybrid() with denseVector and non-empty sparseVector', async () => {
+  test('searchHybrid() calls vectorStore.searchHybrid() with semantic/signature vectors and non-empty sparseVector', async () => {
     const mockResult = makeMockResult('chunk-hybrid', 0.9, 'text');
     mockSearchHybrid.mockResolvedValue([mockResult]);
 
@@ -412,12 +959,14 @@ describe('SearchEngine.searchHybrid', () => {
     expect(mockSearchHybrid).toHaveBeenCalledOnce();
     const [args] = mockSearchHybrid.mock.calls[0] as [
       {
-        denseVector: number[];
+        semanticVector: number[];
+        signatureVector: number[];
         sparseVector: { indices: number[]; values: number[] };
         limit: number;
       },
     ];
-    expect(args.denseVector).toEqual([0.1, 0.2, 0.3]);
+    expect(args.semanticVector).toEqual([0.1, 0.2, 0.3]);
+    expect(args.signatureVector).toEqual([0.1, 0.2, 0.3]);
     expect(args.sparseVector.indices.length).toBeGreaterThan(0);
     expect(args.sparseVector.values.length).toBeGreaterThan(0);
     expect(args.limit).toBe(15); // limit(5) * mmrCandidateMultiplier(3) = 15 (over-fetch for MMR per D-06)
@@ -476,7 +1025,7 @@ describe('SearchEngine.searchHybrid', () => {
     mockSearchHybrid.mockResolvedValue([]);
 
     const cfg: SearchEngineConfig = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
       vectorStore: { search: mockSearch, searchHybrid: mockSearchHybrid },
       keywordPrefetchMultiplier: 5,
       semanticPrefetchMultiplier: 2,
@@ -505,40 +1054,358 @@ describe('SearchEngine.searchHybrid', () => {
   });
 });
 
+describe('SearchEngine shared query plan consumption', () => {
+  test('uses the supplied plan branches instead of deriving a route from query text', async () => {
+    const mockSearch = vi.fn().mockResolvedValue([]);
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const config = makeConfig({
+      vectorStore: {
+        search: mockSearch,
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+    const plan = makePlan('payment retry logic');
+
+    await new SearchEngine(config).search({ text: 'PaymentService.refund' }, plan);
+
+    const calls = mockSearch.mock.calls as Array<[number[], { vectorName: string }]>;
+    expect(calls.map(([, options]) => options.vectorName)).toEqual(['semantic']);
+    expect(mockSearchSparse).not.toHaveBeenCalled();
+  });
+
+  test('does not re-plan when a plan is supplied', async () => {
+    const plannerSpy = vi.spyOn(QueryPlanner.prototype, 'plan');
+    const plan = makePlan('payment retry logic');
+    plannerSpy.mockClear();
+    await new SearchEngine(makeConfig()).search({ text: plan.originalQuery }, plan);
+
+    expect(plannerSpy).not.toHaveBeenCalled();
+    plannerSpy.mockRestore();
+  });
+
+  test('embeds semantic and signature representations independently', async () => {
+    const mockEmbed = vi
+      .fn()
+      .mockResolvedValueOnce([0.1, 0.2, 0.3])
+      .mockResolvedValueOnce([0.4, 0.5, 0.6]);
+    const mockSearch = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('how does PaymentService handle retries');
+    const config = makeConfig({
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: {
+        search: mockSearch,
+        capabilities: () => ({ sparse: false, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    await new SearchEngine(config).search({ text: plan.originalQuery }, plan);
+
+    expect(mockEmbed).toHaveBeenNthCalledWith(1, plan.representations.semantic, 'query');
+    expect(mockEmbed).toHaveBeenNthCalledWith(2, plan.representations.signature, 'query');
+    const calls = mockSearch.mock.calls as Array<[number[], { vectorName: string }]>;
+    expect(calls.map(([vector]) => vector)).toEqual([
+      [0.1, 0.2, 0.3],
+      [0.4, 0.5, 0.6],
+    ]);
+  });
+
+  test('passes the plan sparse representation to direct sparse retrieval', async () => {
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('PaymentService.refund');
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    await new SearchEngine(config).search({ text: plan.originalQuery }, plan);
+
+    // SPR-03: the exact filter structure and the exact computed limit, not
+    // `expect.any(Number)` with `filter` unexamined. searchLimit is
+    // candidateLimits.retrieval (10) × the default MMR multiplier (3).
+    expect(plan.candidateLimits.retrieval).toBe(10);
+    expect(mockSearchSparse).toHaveBeenCalledWith(plan.representations.sparse, {
+      limit: 30,
+      filter: {
+        must_not: [
+          { key: 'stereotype', match: { value: 'test' } },
+          { key: 'kind', match: { value: '__ia_contract__' } },
+        ],
+      },
+    });
+  });
+
+  test('passes the exact repo filter and limit to the sparse branch', async () => {
+    // SPR-03/FLT-06: with a repo in scope the repoId condition must reach the
+    // sparse call verbatim — dropping it is cross-repo leakage.
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('PaymentService.refund', { repo: 'repo-a' });
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    await new SearchEngine(config).search({ text: plan.originalQuery, limit: 7 }, plan);
+
+    expect(mockSearchSparse).toHaveBeenCalledWith(plan.representations.sparse, {
+      // query.limit (7) overrides candidateLimits.retrieval, × multiplier 3.
+      limit: 21,
+      filter: {
+        must: [{ key: 'repoId', match: { value: 'repo-a' } }],
+        must_not: [
+          { key: 'stereotype', match: { value: 'test' } },
+          { key: 'kind', match: { value: '__ia_contract__' } },
+        ],
+      },
+    });
+  });
+
+  test('sparse retrieval returns no chunk from another repository', async () => {
+    // FLT-06 / spec WS3 Independent Test: two repos hold the SAME relative path.
+    // The fake store honours the filter and limit it is given, exactly as Qdrant
+    // does, so dropping either is observable in the returned results.
+    const points = [
+      makeMockResult('a-1', 0.9, 'sparse', { relativePath: 'src/PaymentService.ts' }),
+      makeMockResult('a-2', 0.8, 'sparse', { relativePath: 'src/PaymentService.ts' }),
+      makeMockResult('b-1', 0.95, 'sparse', { relativePath: 'src/PaymentService.ts' }),
+    ];
+    points[0]!.payload.repoId = 'repo-a';
+    points[1]!.payload.repoId = 'repo-a';
+    points[2]!.payload.repoId = 'repo-b';
+
+    const filteringSearchSparse = vi.fn(
+      (_vector: unknown, options: { limit: number; filter?: Record<string, unknown> }) => {
+        const must = (options.filter?.must ?? []) as Array<{
+          key: string;
+          match: { value: string };
+        }>;
+        const matches = points.filter((point) =>
+          must.every(
+            (condition) =>
+              (point.payload as Record<string, unknown>)[condition.key] === condition.match.value,
+          ),
+        );
+        return Promise.resolve(matches.slice(0, options.limit));
+      },
+    );
+
+    const plan = makePlan('PaymentService.refund', { repo: 'repo-a' });
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: filteringSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+      mmrEnabled: false,
+    });
+
+    const results = await new SearchEngine(config).search(
+      { text: plan.originalQuery, scoreThreshold: 0 },
+      plan,
+    );
+
+    // Both of repo-a's chunks survive (so a truncated limit fails) and repo-b's
+    // identically-pathed chunk never appears (so a dropped filter fails).
+    expect(results.map((r) => r.chunkId).sort()).toEqual(['a-1', 'a-2']);
+    expect(results.every((r) => r.repoId === 'repo-a')).toBe(true);
+  });
+
+  test('does not report a sparse branch the plan selected but the engine skipped', async () => {
+    // SPR-04 / spec Edge Cases → Sparse retrieval: an empty sparse vector is
+    // SKIPPED, so it must never be reported as executed.
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const planned = makePlan('PaymentService.refund');
+    const plan: PlannedQuery = {
+      ...planned,
+      representations: { ...planned.representations, sparse: { indices: [], values: [] } },
+    };
+    expect(plan.branches).toContain('sparse');
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+    const executed: VectorBranch[] = [];
+
+    await new SearchEngine(config).search(
+      { text: plan.originalQuery, onBranchExecuted: (branch) => executed.push(branch) },
+      plan,
+    );
+
+    expect(mockSearchSparse).not.toHaveBeenCalled();
+    expect(executed).not.toContain('sparse');
+    expect(executed).toEqual(['signature']);
+  });
+
+  test('reports a branch that executed and returned zero results', async () => {
+    // The distinguishing half of SPR-04: executed-with-zero-results IS reported.
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('PaymentService.refund');
+    expect(plan.representations.sparse.indices.length).toBeGreaterThan(0);
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+    const executed: VectorBranch[] = [];
+
+    await new SearchEngine(config).search(
+      { text: plan.originalQuery, onBranchExecuted: (branch) => executed.push(branch) },
+      plan,
+    );
+
+    expect(mockSearchSparse).toHaveBeenCalledOnce();
+    expect(executed).toEqual(['signature', 'sparse']);
+  });
+
+  test('reports no sparse branch when the adapter declares no sparse support', async () => {
+    // SPR-06: without adapter capability the branch is neither selected nor reported.
+    const plan = makePlan('PaymentService.refund', {}, false);
+    expect(plan.branches).not.toContain('sparse');
+    const config = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: vi.fn().mockResolvedValue([]),
+        capabilities: () => ({ sparse: false, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+    const executed: VectorBranch[] = [];
+
+    await new SearchEngine(config).search(
+      { text: plan.originalQuery, onBranchExecuted: (branch) => executed.push(branch) },
+      plan,
+    );
+
+    expect(executed).not.toContain('sparse');
+    expect(executed).toEqual(['signature']);
+  });
+
+  test('uses the plan filter for vector retrieval', async () => {
+    const mockSearch = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('payment retry logic', { repo: 'repo-a' });
+    const config = makeConfig({
+      vectorStore: {
+        search: mockSearch,
+        capabilities: () => ({ sparse: false, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    await new SearchEngine(config).search({ text: plan.originalQuery }, plan);
+
+    const calls = mockSearch.mock.calls as Array<[
+      number[],
+      { filter?: Record<string, unknown> | undefined },
+    ]>;
+    expect(calls[0]?.[1].filter).toEqual(
+      expect.objectContaining({
+        must: [{ key: 'repoId', match: { value: 'repo-a' } }],
+        must_not: [
+          { key: 'stereotype', match: { value: 'test' } },
+          { key: 'kind', match: { value: '__ia_contract__' } },
+        ],
+      }),
+    );
+  });
+
+  test('sends distinct semantic and signature vectors to hybrid search', async () => {
+    const mockEmbed = vi
+      .fn()
+      .mockResolvedValueOnce([0.1, 0.2, 0.3])
+      .mockResolvedValueOnce([0.4, 0.5, 0.6]);
+    const mockSearchHybrid = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('how does PaymentService handle retries');
+    const config = makeConfig({
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: vi.fn().mockResolvedValue([]), searchHybrid: mockSearchHybrid },
+    });
+
+    await new SearchEngine(config).searchHybrid({ text: plan.originalQuery }, plan);
+
+    const [options] = mockSearchHybrid.mock.calls[0] as [
+      { semanticVector: number[]; signatureVector: number[]; sparseVector?: unknown },
+    ];
+    expect(options.semanticVector).toEqual([0.1, 0.2, 0.3]);
+    expect(options.signatureVector).toEqual([0.4, 0.5, 0.6]);
+    expect(options.semanticVector).not.toEqual(options.signatureVector);
+    expect(options.sparseVector).toEqual(plan.representations.sparse);
+  });
+
+  test('does not send a sparse hybrid branch when the plan omits it', async () => {
+    const mockSearchHybrid = vi.fn().mockResolvedValue([]);
+    const plan = makePlan('payment retry logic', {}, false);
+    const config = makeConfig({
+      vectorStore: { search: vi.fn().mockResolvedValue([]), searchHybrid: mockSearchHybrid },
+    });
+
+    await new SearchEngine(config).searchHybrid({ text: plan.originalQuery }, plan);
+
+    const calls = mockSearchHybrid.mock.calls as Array<[{ sparseVector?: unknown }]>;
+    expect(calls[0]?.[0].sparseVector).toBeUndefined();
+  });
+
+  test('reuses the supplied plan through expansion base search', async () => {
+    const plannerSpy = vi.spyOn(QueryPlanner.prototype, 'plan');
+    const plan = makePlan('payment retry logic');
+    plannerSpy.mockClear();
+    const config = makeConfig();
+
+    await new SearchEngine(config).searchWithExpansion(
+      { text: plan.originalQuery },
+      createEffectiveFilter(),
+      { hops: 0 },
+      plan,
+    );
+
+    expect(plannerSpy).not.toHaveBeenCalled();
+    plannerSpy.mockRestore();
+  });
+});
+
 describe('SearchEngine module-aware expansion', () => {
   test('searchWithExpansion biases same-module neighbors for architecture queries', async () => {
     const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
     const mockSearch = vi.fn();
+    const mockScroll = vi.fn();
     const mockGetNeighborFiles = vi
       .fn()
       .mockResolvedValue([
         '/project/orders-service/src/main/java/com/acme/orders/OrderRepository.java',
       ]);
 
-    mockSearch
-      .mockResolvedValueOnce([
-        makeMockResult('chunk-base', 0.9, 'text', {
-          filePath: '/project/orders-service/src/main/java/com/acme/orders/OrderController.java',
-          relativePath: 'orders-service/src/main/java/com/acme/orders/OrderController.java',
-        }),
-      ])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        makeMockResult('chunk-neighbor', 0.1, 'text', {
-          filePath: '/project/orders-service/src/main/java/com/acme/orders/OrderRepository.java',
-          relativePath: 'orders-service/src/main/java/com/acme/orders/OrderRepository.java',
-          name: 'OrderRepository',
-        }),
-      ]);
+    const baseResult = makeMockResult('chunk-base', 0.9, 'text', {
+      filePath: '/project/orders-service/src/main/java/com/acme/orders/OrderController.java',
+      relativePath: 'orders-service/src/main/java/com/acme/orders/OrderController.java',
+    });
+    const neighborResult = makeMockResult('chunk-neighbor', 0.1, 'text', {
+      filePath: '/project/orders-service/src/main/java/com/acme/orders/OrderRepository.java',
+      relativePath: 'orders-service/src/main/java/com/acme/orders/OrderRepository.java',
+      name: 'OrderRepository',
+    });
+    mockSearch.mockResolvedValue([baseResult]);
+    mockScroll.mockResolvedValueOnce({
+      points: [{ id: neighborResult.id, payload: neighborResult.payload }],
+      nextOffset: undefined,
+    });
 
     const eng = new SearchEngine({
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
-      vectorStore: { search: mockSearch },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
       dependencyGraph: { getNeighborFiles: mockGetNeighborFiles },
     });
 
     const results = await eng.searchWithExpansion(
       { text: 'Describe the architecture and data flow for orders-service' },
+      createEffectiveFilter(),
       { hops: 1 },
     );
 
@@ -579,14 +1446,13 @@ describe('T056: Unified search pipeline routing', () => {
     expect(vectorNames).not.toContain('sparse');
   });
 
-  test('keyword query routes to semantic vector (sparse filtered out of dense path)', async () => {
+  test('exact-symbol query routes to signature vector from the shared plan', async () => {
     await engine.search({ text: 'PaymentService' });
 
     const calls = getMockSearch(config).mock.calls as [number[], { vectorName: string }][];
     const vectorNames = calls.map((c) => c[1].vectorName);
-    // Keyword: ['sparse', 'semantic'] → sparse excluded → only 'semantic' dense call
-    expect(vectorNames).toContain('semantic');
-    expect(vectorNames).not.toContain('signature');
+    expect(vectorNames).toContain('signature');
+    expect(vectorNames).not.toContain('semantic');
   });
 
   test('mixed query routes to semantic and signature vectors (2 dense calls)', async () => {
@@ -621,9 +1487,9 @@ describe('T056: Unified search pipeline routing', () => {
   });
 });
 
-describe('computeTermFrequencySparseVector', () => {
+describe('canonical sparse vector routing', () => {
   test('tokenizes text and returns sorted indices with TF values', () => {
-    const result = computeTermFrequencySparseVector('the quick brown fox the');
+    const result = buildSparseVector(['the quick brown fox the']);
 
     // Should have unique tokens: "the", "quick", "brown", "fox"
     // "the" appears twice, others once
@@ -641,7 +1507,7 @@ describe('computeTermFrequencySparseVector', () => {
   });
 
   test('returns empty indices and values for empty string', () => {
-    const result = computeTermFrequencySparseVector('');
+    const result = buildSparseVector(['']);
 
     expect(result.indices).toHaveLength(0);
     expect(result.values).toHaveLength(0);
@@ -650,7 +1516,7 @@ describe('computeTermFrequencySparseVector', () => {
   test('indices are always unique (no duplicates even on hash collision)', () => {
     // Generate a large text with many tokens to maximise collision surface
     const words = Array.from({ length: 200 }, (_, i) => `token${i}`).join(' ');
-    const result = computeTermFrequencySparseVector(words);
+    const result = buildSparseVector([words]);
 
     const uniqueIndices = new Set(result.indices);
     expect(uniqueIndices.size).toBe(result.indices.length);
@@ -717,7 +1583,7 @@ describe('MMR integration', () => {
       .mockResolvedValueOnce(candidates) // text vector
       .mockResolvedValueOnce([]); // code vector (empty — no dedup needed)
     return {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
       vectorStore: { search: mockSearch },
       mmrEnabled,
       defaultLimit: 4,
@@ -729,7 +1595,7 @@ describe('MMR integration', () => {
     const mockSearchHybrid = vi.fn().mockResolvedValue(candidates);
     const mockSearch = vi.fn().mockResolvedValue([]);
     return {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
       vectorStore: { search: mockSearch, searchHybrid: mockSearchHybrid },
       mmrEnabled: true,
       defaultLimit: 4,
@@ -847,14 +1713,16 @@ describe('T068: searchWithFallback() glob/grep zero-result fallback', () => {
     };
   }
 
-  function makeScrollConfig(scrollPoints: ReturnType<typeof makeScrollPoint>[]) {
+  function makeScrollConfig(scrollPoints: ReturnType<typeof makeScrollPoint>[]): {
+    cfg: SearchEngineConfig;
+    scroll: MockSearchFn;
+  } {
     const cfg = makeConfig();
     // All vector searches return empty → force fallback path
-    vi.mocked(cfg.vectorStore.search).mockResolvedValue([]);
-    (cfg.vectorStore as Record<string, unknown>).scroll = vi
-      .fn()
-      .mockResolvedValue({ points: scrollPoints });
-    return cfg;
+    getMockSearch(cfg).mockResolvedValue([]);
+    const scroll = vi.fn().mockResolvedValue({ points: scrollPoints });
+    cfg.vectorStore.scroll = scroll;
+    return { cfg, scroll };
   }
 
   test('uses scroll to glob-match path-like query when dense search returns empty', async () => {
@@ -862,12 +1730,12 @@ describe('T068: searchWithFallback() glob/grep zero-result fallback', () => {
       makeScrollPoint('src/auth/middleware.ts', 'authMiddleware'),
       makeScrollPoint('src/auth/utils.ts', 'hashPassword'),
     ];
-    const cfg = makeScrollConfig(points);
+    const { cfg, scroll } = makeScrollConfig(points);
     const eng = new SearchEngine(cfg);
 
     const result = await eng.searchWithFallback({ text: 'src/auth/middleware.ts' });
 
-    expect((cfg.vectorStore as any).scroll).toHaveBeenCalled();
+    expect(scroll).toHaveBeenCalled();
     expect(result.fallback_used).toBe(true);
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.results[0]!.relativePath).toContain('middleware.ts');
@@ -875,18 +1743,18 @@ describe('T068: searchWithFallback() glob/grep zero-result fallback', () => {
 
   test('uses scroll to grep-match CamelCase identifier when dense search returns empty', async () => {
     const points = [makeScrollPoint('src/payment/service.ts', 'PaymentService')];
-    const cfg = makeScrollConfig(points);
+    const { cfg, scroll } = makeScrollConfig(points);
     const eng = new SearchEngine(cfg);
 
     const result = await eng.searchWithFallback({ text: 'PaymentService' });
 
-    expect((cfg.vectorStore as any).scroll).toHaveBeenCalled();
+    expect(scroll).toHaveBeenCalled();
     expect(result.fallback_used).toBe(true);
     expect(result.results.some((r) => r.name === 'PaymentService')).toBe(true);
   });
 
   test('returns found=false with empty results when scroll also finds nothing', async () => {
-    const cfg = makeScrollConfig([]);
+    const { cfg } = makeScrollConfig([]);
     const eng = new SearchEngine(cfg);
 
     const result = await eng.searchWithFallback({ text: 'NonExistentClass' });
@@ -1044,6 +1912,60 @@ describe('Phase 11 (US6): Lean-payload retrieval correctness', () => {
     expect(args.sparseVector).toHaveProperty('values');
   });
 
+  test('T26: search() calls direct searchSparse when the adapter declares sparse support', async () => {
+    const mockSearchSparse = vi
+      .fn()
+      .mockResolvedValue([
+        makeMockResult('exact-symbol', 0.99, 'sparse', { name: 'PaymentProcessor' }),
+      ]);
+    const cfg = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    const results = await new SearchEngine(cfg).search({
+      text: 'PaymentProcessor',
+      scoreThreshold: 0,
+    });
+
+    expect(mockSearchSparse).toHaveBeenCalledOnce();
+    expect(results[0]?.matchedVector).toBe('sparse');
+  });
+
+  test('T26: search() does not call sparse retrieval when adapter capability is false', async () => {
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const mockSearch = vi.fn().mockResolvedValue([]);
+    const cfg = makeConfig({
+      vectorStore: {
+        search: mockSearch,
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: false, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    await new SearchEngine(cfg).search({ text: 'PaymentProcessor', scoreThreshold: 0 });
+
+    expect(mockSearchSparse).not.toHaveBeenCalled();
+  });
+
+  test('T26: empty sparse vectors are skipped rather than executed', async () => {
+    const mockSearchSparse = vi.fn().mockResolvedValue([]);
+    const cfg = makeConfig({
+      vectorStore: {
+        search: vi.fn().mockResolvedValue([]),
+        searchSparse: mockSearchSparse,
+        capabilities: () => ({ sparse: true, filterOnly: false, payloadIndexes: [] }),
+      },
+    });
+
+    await new SearchEngine(cfg).search({ text: 'a', scoreThreshold: 0 });
+
+    expect(mockSearchSparse).not.toHaveBeenCalled();
+  });
+
   test('T087: search() MMR provides file diversity for lean-payload chunks with empty content', async () => {
     // 4 chunks from src/A.java (all top by raw score), 2 from src/B.java
     // With content='', jaccardSim=0 for every pair → MMR degrades to pure score sort → no diversity
@@ -1079,42 +2001,33 @@ describe('Phase 11 (US6): Lean-payload retrieval correctness', () => {
   test('T089: searchWithExpansion() filters neighbor chunks by relativePath, not filePath', async () => {
     const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
     const mockSearch = vi.fn();
+    const mockScroll = vi.fn().mockResolvedValue({ points: [], nextOffset: undefined });
     const mockGetNeighborFiles = vi
       .fn()
       .mockResolvedValue(['src/main/java/com/acme/OrderRepository.java']);
 
     // Call 1: base semantic search
-    mockSearch
-      .mockResolvedValueOnce([
-        makeLean('base-chunk', 0.9, {
-          relativePath: 'src/main/java/com/acme/OrderController.java',
-          name: 'createOrder',
-        }),
-      ])
-      // Call 2: SQLite graph expansion fetch (should use relativePath key)
-      .mockResolvedValueOnce([]);
+    mockSearch.mockResolvedValueOnce([
+      makeLean('base-chunk', 0.9, {
+        relativePath: 'src/main/java/com/acme/OrderController.java',
+        name: 'createOrder',
+      }),
+    ]);
 
     const cfg: SearchEngineConfig = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
-      vectorStore: { search: mockSearch },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
       dependencyGraph: { getNeighborFiles: mockGetNeighborFiles },
     };
     const engine = new SearchEngine(cfg);
 
     await engine.searchWithExpansion(
       { text: 'order repository data access', scoreThreshold: 0 },
+      createEffectiveFilter(),
       { hops: 1 },
     );
 
-    // The second vectorStore.search call is the SQLite graph expansion fetch
-    const calls = mockSearch.mock.calls as Array<
-      [number[], { filter?: { should?: Array<{ key: string; match: { value: string } }> } }]
-    >;
-    const expansionCall = calls[1];
-    expect(expansionCall).toBeDefined();
-    // After fix: key must be 'relativePath', not the deprecated 'filePath'
-    const filterKey = expansionCall?.[1]?.filter?.should?.[0]?.key;
-    expect(filterKey).toBe('relativePath');
+    expect(mockScroll).toHaveBeenCalled();
   });
 });
 
@@ -1153,9 +2066,11 @@ describe('Phase 16 (US6): test file exclusion', () => {
       [number[], { filter?: Record<string, unknown> }]
     >;
     // At least one call should have the must_not filter
-    const filterUsed = calls[0]?.[1]?.filter as Record<string, unknown> | undefined;
-    expect(filterUsed).toBeDefined();
-    expect(filterUsed!.must_not).toEqual([{ key: 'stereotype', match: { value: 'test' } }]);
+    const filterUsed = calls[0]?.[1]?.filter;
+    if (!filterUsed) throw new Error('expected a retrieval filter');
+    expect(filterUsed.must_not).toEqual(
+      expect.arrayContaining([{ key: 'stereotype', match: { value: 'test' } }]),
+    );
   });
 
   test('T130: search() does NOT apply test exclusion filter when query has test intent', async () => {
@@ -1167,10 +2082,12 @@ describe('Phase 16 (US6): test file exclusion', () => {
     const calls = getMockSearch(config).mock.calls as Array<
       [number[], { filter?: Record<string, unknown> }]
     >;
-    const filterUsed = calls[0]?.[1]?.filter as Record<string, unknown> | undefined;
+    const filterUsed = calls[0]?.[1]?.filter;
     // Should NOT have must_not for test stereotype
     if (filterUsed) {
-      expect(filterUsed.must_not).toBeUndefined();
+      expect(filterUsed.must_not).toEqual([
+        { key: 'kind', match: { value: '__ia_contract__' } },
+      ]);
     }
   });
 
@@ -1188,11 +2105,13 @@ describe('Phase 16 (US6): test file exclusion', () => {
     const calls = getMockSearch(config).mock.calls as Array<
       [number[], { filter?: Record<string, unknown> }]
     >;
-    const filterUsed = calls[0]?.[1]?.filter as Record<string, unknown> | undefined;
+    const filterUsed = calls[0]?.[1]?.filter;
     // Should preserve user's filter and NOT add must_not
-    expect(filterUsed).toBeDefined();
-    expect(filterUsed!.must_not).toBeUndefined();
-    expect(filterUsed!.must).toEqual([{ key: 'stereotype', match: { value: 'test' } }]);
+    if (!filterUsed) throw new Error('expected a retrieval filter');
+    expect(filterUsed.must_not).toEqual([
+      { key: 'kind', match: { value: '__ia_contract__' } },
+    ]);
+    expect(filterUsed.must).toEqual([{ key: 'stereotype', match: { value: 'test' } }]);
   });
 });
 
@@ -1200,6 +2119,7 @@ describe('Phase 16 (US6): test file exclusion', () => {
 describe('Phase 16 (US6): interface implementation expansion', () => {
   test('T131: expandInterfaceResults() finds implementations for interface results via dependency edges', async () => {
     const mockSearch = vi.fn();
+    const mockScroll = vi.fn();
     const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
 
     // First call: base search returns an interface
@@ -1223,50 +2143,71 @@ describe('Phase 16 (US6): interface implementation expansion', () => {
         },
       },
     ]);
+    mockSearch.mockResolvedValueOnce([]);
 
-    // Second call: interface expansion finds implementation
-    mockSearch.mockResolvedValueOnce([
-      {
-        id: 'qdrant-2',
-        score: 0.0,
-        vectorName: 'semantic',
-        payload: {
-          chunkId: 'impl-chunk',
-          relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
-          language: 'java',
-          chunkType: 'class',
-          name: 'EntryServiceImpl',
-          content: 'public class EntryServiceImpl implements EntryService {}',
-          startLine: 1,
-          endLine: 50,
-          imports: ['com.example.EntryService'],
-          exports: ['EntryServiceImpl'],
-          indexedAt: '2026-06-01T00:00:00Z',
-          dependencyEdges: [
-            { targetPath: 'src/main/java/com/example/EntryService.java', relation: 'implements' },
-          ],
-        },
+    // Filter-only interface expansion finds the implementation.
+    const implementationPoint = {
+      id: 'qdrant-2',
+      score: 0.0,
+      vectorName: 'semantic',
+      payload: {
+        chunkId: 'impl-chunk',
+        relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
+        language: 'java',
+        chunkType: 'class',
+        name: 'EntryServiceImpl',
+        content: 'public class EntryServiceImpl implements EntryService {}',
+        startLine: 1,
+        endLine: 50,
+        imports: ['com.example.EntryService'],
+        exports: ['EntryServiceImpl'],
+        indexedAt: '2026-06-01T00:00:00Z',
+        dependencyEdges: [
+          { targetPath: 'src/main/java/com/example/EntryService.java', relation: 'implements' },
+        ],
       },
-    ]);
+    };
+    const outOfScopePoint = {
+      ...implementationPoint,
+      id: 'qdrant-out-of-scope',
+      payload: {
+        ...implementationPoint.payload,
+        chunkId: 'out-of-scope-impl',
+        name: 'OutOfScopeEntryServiceImpl',
+      },
+    };
+    mockScroll.mockImplementation((options: { filter?: Record<string, unknown> }) =>
+      Promise.resolve({
+        points: [
+          JSON.stringify(options.filter).includes('repo-a') ? implementationPoint : outOfScopePoint,
+        ],
+        nextOffset: undefined,
+      }),
+    );
 
     const config: SearchEngineConfig = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
-      vectorStore: { search: mockSearch },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
     };
     const engine = new SearchEngine(config);
 
-    const results = await engine.searchWithInterfaceExpansion({
-      text: 'EntryService createEntry',
-      scoreThreshold: 0,
-    });
+    const results = await engine.searchWithInterfaceExpansion(
+      {
+        text: 'EntryService createEntry',
+        scoreThreshold: 0,
+      },
+      createEffectiveFilter({ must: [{ key: 'language', match: { value: 'java' } }] }, 'repo-a'),
+    );
 
     // Should contain both the interface and its implementation
     expect(results.some((r) => r.name === 'EntryService')).toBe(true);
     expect(results.some((r) => r.name === 'EntryServiceImpl')).toBe(true);
+    expect(results.some((r) => r.name === 'OutOfScopeEntryServiceImpl')).toBe(false);
   });
 
   test('T132: expandInterfaceResults() does NOT duplicate when implementation already in results', async () => {
     const mockSearch = vi.fn();
+    const mockScroll = vi.fn();
     const mockEmbed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
 
     // Base search returns both interface AND implementation already
@@ -1309,41 +2250,124 @@ describe('Phase 16 (US6): interface implementation expansion', () => {
       },
     ]);
 
-    // Expansion search returns same implementation (already in base results)
-    mockSearch.mockResolvedValueOnce([
-      {
-        id: 'qdrant-2',
-        score: 0.0,
-        vectorName: 'semantic',
-        payload: {
-          chunkId: 'impl-chunk',
-          relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
-          language: 'java',
-          chunkType: 'class',
-          name: 'EntryServiceImpl',
-          content: 'public class EntryServiceImpl implements EntryService {}',
-          startLine: 1,
-          endLine: 50,
-          imports: ['com.example.EntryService'],
-          exports: ['EntryServiceImpl'],
-          indexedAt: '2026-06-01T00:00:00Z',
+    // Filter-only expansion returns the same implementation (already in base results).
+    mockScroll.mockResolvedValueOnce({
+      points: [
+        {
+          id: 'qdrant-2',
+          score: 0.0,
+          vectorName: 'semantic',
+          payload: {
+            chunkId: 'impl-chunk',
+            relativePath: 'src/main/java/com/example/EntryServiceImpl.java',
+            language: 'java',
+            chunkType: 'class',
+            name: 'EntryServiceImpl',
+            content: 'public class EntryServiceImpl implements EntryService {}',
+            startLine: 1,
+            endLine: 50,
+            imports: ['com.example.EntryService'],
+            exports: ['EntryServiceImpl'],
+            indexedAt: '2026-06-01T00:00:00Z',
+          },
         },
-      },
-    ]);
+      ],
+      nextOffset: undefined,
+    });
 
     const config: SearchEngineConfig = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 3 },
-      vectorStore: { search: mockSearch },
+      embeddingProvider: { embed: mockEmbed, dimensions: 3, contract: MOCK_CONTRACT },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
     };
     const engine = new SearchEngine(config);
 
-    const results = await engine.searchWithInterfaceExpansion({
-      text: 'EntryService',
-      scoreThreshold: 0,
-    });
+    const results = await engine.searchWithInterfaceExpansion(
+      {
+        text: 'EntryService',
+        scoreThreshold: 0,
+      },
+      createEffectiveFilter(),
+    );
 
     // Should NOT have duplicates
     const implResults = results.filter((r) => r.name === 'EntryServiceImpl');
     expect(implResults).toHaveLength(1);
+  });
+
+  test('T32: implementation expansion uses a nested dependency-edge filter', async () => {
+    const mockScroll = vi.fn().mockResolvedValue({ points: [], nextOffset: undefined });
+    const mockSearch = vi.fn().mockResolvedValue([
+      {
+        ...makeMockResult('iface', 0.9, 'semantic', { name: 'EntryService' }),
+        payload: {
+          ...makeMockResult('iface', 0.9, 'semantic', { name: 'EntryService' }).payload,
+          chunkType: 'interface',
+        },
+      },
+    ]);
+    const engine = new SearchEngine({
+      embeddingProvider: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+        dimensions: 3,
+        contract: MOCK_CONTRACT,
+      },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
+    });
+
+    await engine.searchWithInterfaceExpansion(
+      { text: 'EntryService', scoreThreshold: 0 },
+      createEffectiveFilter(),
+    );
+
+    expect(mockSearch).toHaveBeenCalledTimes(1);
+    expect(mockScroll.mock.calls[0]?.[0]).toMatchObject({
+      filter: {
+        must: arrayContaining([
+          {
+            nested: {
+              key: 'dependencyEdges',
+              filter: {
+                must: arrayContaining([
+                  { key: 'targetPath', match: { value: expect.any(String) as unknown } },
+                  { key: 'relation', match: { value: 'implements' } },
+                ]),
+              },
+            },
+          },
+        ]),
+      },
+    });
+  });
+
+  test('T32: implementation expansion does not use similarity search when scrolling is available', async () => {
+    const mockSearch = vi.fn().mockResolvedValue([
+      {
+        ...makeMockResult('iface', 0.9, 'semantic', { name: 'EntryService' }),
+        payload: {
+          ...makeMockResult('iface', 0.9, 'semantic', { name: 'EntryService' }).payload,
+          chunkType: 'interface',
+        },
+      },
+    ]);
+    const mockScroll = vi.fn().mockResolvedValue({
+      points: [],
+      nextOffset: undefined,
+    });
+    const engine = new SearchEngine({
+      embeddingProvider: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+        dimensions: 3,
+        contract: MOCK_CONTRACT,
+      },
+      vectorStore: { search: mockSearch, scroll: mockScroll },
+    });
+
+    await engine.searchWithInterfaceExpansion(
+      { text: 'EntryService', scoreThreshold: 0 },
+      createEffectiveFilter(),
+    );
+
+    expect(mockSearch).toHaveBeenCalledTimes(1);
+    expect(mockScroll).toHaveBeenCalledTimes(1);
   });
 });

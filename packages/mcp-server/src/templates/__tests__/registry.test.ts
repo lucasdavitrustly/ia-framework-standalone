@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getTemplate, TEMPLATES } from '../registry.js';
+import type { IntentType } from '../intent-detector.js';
 
 describe('Template Registry', () => {
   describe('getTemplate', () => {
@@ -22,8 +23,9 @@ describe('Template Registry', () => {
     });
 
     it('returns undefined for unknown intent', () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(getTemplate('unknown-intent' as any)).toBeUndefined();
+      // An out-of-taxonomy intent can only reach getTemplate at runtime, so the
+      // string is widened through `IntentType` rather than `any`.
+      expect(getTemplate('unknown-intent' as IntentType)).toBeUndefined();
     });
   });
 

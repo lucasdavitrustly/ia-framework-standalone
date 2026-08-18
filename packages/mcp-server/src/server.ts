@@ -12,6 +12,7 @@ import { withRequestLogging, type RequestLoggerDeps } from './request-logger.js'
 import type { SearchEngine, MultiCollectionSearchEngine } from '@ia-framework/retrieval';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
 import type { ServerCapabilities } from './capabilities.js';
+import { validateRelativePath } from './context/live-source-reader.js';
 
 export interface McpServerConfig {
   searchEngine: SearchEngine | MultiCollectionSearchEngine;
@@ -204,9 +205,10 @@ export function createMcpServer(config: McpServerConfig): McpServer {
           repoId?: string,
         ): Promise<string> => {
           assertAccessible(repoId);
-          const root = resolveRoot(repoId);
-          if (!root) throw new Error('No project root configured for filesystem read');
-          const raw = await readFile(join(root, relativePath), 'utf-8');
+           const root = resolveRoot(repoId);
+           if (!root) throw new Error('No project root configured for filesystem read');
+           const safePath = validateRelativePath(relativePath);
+           const raw = await readFile(join(root, safePath), 'utf-8');
           const lines = raw.split('\n');
           return lines.slice(startLine - 1, endLine).join('\n');
         }
@@ -222,9 +224,10 @@ export function createMcpServer(config: McpServerConfig): McpServer {
           endLine?: number,
         ): Promise<string> => {
           assertAccessible(repo);
-          const root = resolveRoot(repo);
-          if (!root) throw new Error('No project root configured for filesystem read');
-          const raw = await readFile(join(root, filePath), 'utf-8');
+           const root = resolveRoot(repo);
+           if (!root) throw new Error('No project root configured for filesystem read');
+           const safePath = validateRelativePath(filePath);
+           const raw = await readFile(join(root, safePath), 'utf-8');
           if (startLine !== undefined && endLine !== undefined) {
             const lines = raw.split('\n');
             return lines.slice(startLine - 1, endLine).join('\n');
@@ -251,7 +254,8 @@ export function createMcpServer(config: McpServerConfig): McpServer {
       ? async (filePath: string, repo?: string): Promise<{ mtimeMs: number }> => {
           const root = resolveRoot(repo);
           if (!root) throw new Error('No project root configured for stat');
-          const s = await stat(join(root, filePath));
+           const safePath = validateRelativePath(filePath);
+           const s = await stat(join(root, safePath));
           return { mtimeMs: s.mtimeMs };
         }
       : undefined;
@@ -268,6 +272,7 @@ export function createMcpServer(config: McpServerConfig): McpServer {
         }
       : {}),
     ...(getFileStatFn ? { statFn: getFileStatFn, sessionCache: true } : {}),
+    knownRepos: [...repoPathMap.keys()],
     ...(config.capabilities ? { capabilities: config.capabilities } : {}),
   });
   registerGetDependenciesTool(server, config.searchEngine);
@@ -319,5 +324,3 @@ function wrapToolsWithLogging(server: McpServer, deps: RequestLoggerDeps): void 
     }
   }
 }
-
-type ToolHandler = (...args: unknown[]) => unknown;

@@ -80,7 +80,7 @@ export function logsRouter(deps: LogsRouteDeps): Hono {
         const obj = JSON.parse(line) as Record<string, unknown>;
         if (typeof obj.level !== 'number' || typeof obj.msg !== 'string') continue;
 
-        const level = obj.level as number;
+        const level = obj.level;
         const timestamp =
           typeof obj.time === 'number'
             ? new Date(obj.time).toISOString()
@@ -91,15 +91,16 @@ export function logsRouter(deps: LogsRouteDeps): Hono {
         const component = typeof obj.name === 'string' ? obj.name : 'unknown';
 
         // Extract metadata (everything except known fields)
-        const { level: _l, time: _t, msg: _m, name: _n, ...metadata } = obj;
+        const metadata: Record<string, unknown> = { ...obj };
+        for (const known of ['level', 'time', 'msg', 'name']) delete metadata[known];
 
         allEntries.push({
           timestamp,
           level,
           levelLabel: LEVEL_LABELS[level] ?? `level-${level}`,
           component,
-          msg: obj.msg as string,
-          metadata: metadata as Record<string, unknown>,
+          msg: obj.msg,
+          metadata,
         });
       } catch {
         // Malformed line — skip

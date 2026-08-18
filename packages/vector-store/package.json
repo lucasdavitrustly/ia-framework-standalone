@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@ia-framework/core": "workspace:*",
-    "@qdrant/js-client-rest": "^1.13.0"
+    "@qdrant/js-client-rest": "^1.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

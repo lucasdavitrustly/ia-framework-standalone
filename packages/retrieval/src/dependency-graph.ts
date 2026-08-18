@@ -1,6 +1,7 @@
 import { createDatabase, type SqliteDatabase } from '@ia-framework/core';
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { assertEffectiveFilter, type EffectiveFilter } from './effective-filter.js';
 
 export interface DependencyGraphConfig {
   /** Path to SQLite file (e.g. .ia-framework/graph.sqlite) */
@@ -208,7 +209,16 @@ export class DependencyGraph {
    * Only traverses non-null target_file edges in the given collection.
    * Does NOT include the startFiles themselves in the result.
    */
-  getNeighborFiles(startFiles: string[], hops: 1 | 2, collection = ''): string[] {
+  getNeighborFiles(
+    startFiles: string[],
+    hops: 1 | 2,
+    filter: EffectiveFilter,
+    collection = '',
+  ): string[] {
+    assertEffectiveFilter(filter, 'DependencyGraph.getNeighborFiles');
+    // SQLite yields paths only; the effective filter is consumed by the
+    // vector-store lookup that fetches chunks for those paths.
+    void filter;
     const visited = new Set<string>(startFiles);
     let frontier = [...startFiles];
 

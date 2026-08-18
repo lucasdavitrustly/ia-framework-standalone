@@ -5,52 +5,26 @@ import type {
   FallbackSearchResult,
   FallbackSuggestion,
 } from './types.js';
-import { analyzeRetrievalQuery } from './query-intelligence.js';
+import type { ChunkPayload } from '@ia-framework/vector-store';
 import { mmrRerank, classifyQueryLambda, jaccardSimilarity } from './mmr.js';
 import { getRelatedTerms } from './search-synonyms.js';
 import { applyElbowTruncation } from './elbow-detection.js';
 import { DependencyGraph } from './dependency-graph.js';
-import { classifyQuery, getVectorsForQueryType, detectTestIntent } from './query-classifier.js';
+import { FilterOnlyRetrievalError } from '@ia-framework/core';
+import type { QueryPlan } from '@ia-framework/core';
+import {
+  DEFAULT_FILTER_ONLY_CEILING,
+  FilterOnlyRetriever,
+  type FilterPoint,
+} from '@ia-framework/vector-store';
+import { assertEffectiveFilter, toQdrantFilter, type EffectiveFilter } from './effective-filter.js';
+import { QueryPlanner } from './planning/query-planner.js';
 
 type VectorSearchResult = {
   id: string;
   score: number;
   vectorName: string;
-  payload: {
-    chunkId: string;
-    /** @deprecated not written by new indexer — reconstructed from projectRoot + relativePath */
-    filePath?: string | undefined;
-    relativePath: string;
-    language: string;
-    chunkType: string;
-    name?: string | undefined;
-    content?: string | undefined;
-    contentHash?: string | undefined;
-    startLine: number;
-    endLine: number;
-    imports: string[];
-    exports: string[];
-    modulePath?: string | undefined;
-    packageName?: string | undefined;
-    layerHints?: string[] | undefined;
-    indexedAt: string;
-    superclass?: string | undefined;
-    interfaces?: string[] | undefined;
-    isInnerClass?: boolean | undefined;
-    chunkIndex?: number | undefined;
-    totalChunks?: number | undefined;
-    defines?: string[] | undefined;
-    calls?: string[] | undefined;
-    calledBy?: string[] | undefined;
-    repoId?: string | undefined;
-    dependencyEdges?:
-      | Array<{
-          targetPath: string;
-          relation: string;
-          symbols?: string[] | undefined;
-        }>
-      | undefined;
-  };
+  payload: ChunkPayload;
 };
 
 function toRetrievalResult(
@@ -64,6 +38,15 @@ function toRetrievalResult(
   const filePath =
     raw.payload.filePath ||
     (projectRoot ? `${projectRoot}/${raw.payload.relativePath}` : raw.payload.relativePath);
+  const enrichmentFields = {
+    description: raw.payload.description,
+    businessContext: raw.payload.businessContext,
+    semanticTags: raw.payload.semanticTags,
+    relationships: raw.payload.relationships,
+    enrichedAt: raw.payload.enrichedAt,
+    enrichmentModel: raw.payload.enrichmentModel,
+  };
+  const hasEnrichment = Object.values(enrichmentFields).some((value) => value !== undefined);
   return {
     chunkId: raw.payload.chunkId,
     filePath,
@@ -89,6 +72,20 @@ function toRetrievalResult(
     calls: raw.payload.calls,
     calledBy: raw.payload.calledBy,
     repoId: raw.payload.repoId,
+    ...(hasEnrichment ? { enrichment: enrichmentFields } : {}),
+    signature: raw.payload.signature,
+    classSignature: raw.payload.classSignature,
+    parentName: raw.payload.parentName,
+    parentStartLine: raw.payload.parentStartLine,
+    parentEndLine: raw.payload.parentEndLine,
+    partIndex: raw.payload.partIndex,
+    totalParts: raw.payload.totalParts,
+    truncated: raw.payload.truncated,
+    stereotype: raw.payload.stereotype,
+    archLayer: raw.payload.archLayer,
+    docCommentStartLine: raw.payload.docCommentStartLine,
+    annotationStartLine: raw.payload.annotationStartLine,
+    signatureOnly: raw.payload.signatureOnly,
     score: raw.score,
     scoreType: 'cosine' as const,
     matchedVector,
@@ -102,14 +99,23 @@ function normalizePath(value: string | undefined): string {
   return (value ?? '').replace(/\\/g, '/').toLowerCase();
 }
 
-function rerankResults(results: RetrievalResult[], query: RetrievalQuery): RetrievalResult[] {
-  const intent = analyzeRetrievalQuery(query.text);
+function planSignals(plan: QueryPlan): Set<string> {
+  const renderedSignals = plan.representations.signature.match(/^query-signals:(.*)$/m)?.[1] ?? '';
+  return new Set(renderedSignals.split(',').filter(Boolean));
+}
+
+function rerankResults(
+  results: RetrievalResult[],
+  query: RetrievalQuery,
+  plan: QueryPlan,
+): RetrievalResult[] {
+  const signals = planSignals(plan);
   if (
-    !intent.symbolTerms.length &&
-    !intent.packageTerms.length &&
-    !intent.entryPointQuery &&
-    !intent.architectureQuery &&
-    !intent.dataFlowQuery &&
+    !plan.lexical.exactSymbols.length &&
+    !plan.lexical.packageTerms.length &&
+    !signals.has('entry-point') &&
+    !signals.has('architecture') &&
+    !signals.has('data-flow') &&
     !query.preferredModule
   ) {
     return [...results].sort((a, b) => b.score - a.score);
@@ -126,7 +132,7 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
       const symbolName = result.name ?? '';
       const layerHints = new Set((result.layerHints ?? []).map((hint) => hint.toLowerCase()));
 
-      for (const symbol of intent.symbolTerms) {
+      for (const symbol of plan.lexical.exactSymbols) {
         if (symbolName === symbol) {
           bonus += 0.3;
         } else if (relativePath.includes(symbol.toLowerCase())) {
@@ -134,7 +140,7 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
         }
       }
 
-      for (const packageTerm of intent.packageTerms) {
+      for (const packageTerm of plan.lexical.packageTerms) {
         if (packageName === packageTerm.toLowerCase()) {
           bonus += 0.24;
         } else if (packageName.startsWith(packageTerm.toLowerCase())) {
@@ -146,7 +152,7 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
         bonus += 0.14;
       }
 
-      if (intent.entryPointQuery) {
+      if (signals.has('entry-point')) {
         if (layerHints.has('config') || layerHints.has('route') || layerHints.has('handler')) {
           bonus += 0.12;
         }
@@ -155,14 +161,14 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
         }
       }
 
-      if (intent.architectureQuery || intent.dataFlowQuery) {
+      if (signals.has('architecture') || signals.has('data-flow')) {
         if (layerHints.has('controller')) bonus += 0.1;
         if (layerHints.has('service')) bonus += 0.09;
         if (layerHints.has('repository')) bonus += 0.08;
         if (layerHints.has('model')) bonus += 0.06;
       }
 
-      if (intent.dataFlowQuery && layerHints.has('data')) {
+      if (signals.has('data-flow') && layerHints.has('data')) {
         bonus += 0.05;
       }
 
@@ -173,70 +179,37 @@ function rerankResults(results: RetrievalResult[], query: RetrievalQuery): Retri
 }
 
 /**
- * T135: Apply test exclusion filter by default.
- *
- * Injects `must_not: [{ key: 'stereotype', match: { value: 'test' } }]` into
- * the query filter unless:
- * 1. The query has test intent (user is explicitly asking about tests)
- * 2. The user already provided a stereotype filter (explicit inclusion/exclusion)
- *
- * This prevents test classes, helpers, fakes, and fixtures from appearing in
- * production code searches — freeing result slots for relevant implementation code.
- */
-function applyTestExclusionFilter(query: RetrievalQuery): Record<string, unknown> | undefined {
-  const hasTestIntent = detectTestIntent(query.text);
-
-  // Check if user explicitly provided a stereotype filter
-  const userFilter = query.filter as Record<string, unknown> | undefined;
-  const hasStereotypeFilter = userFilter ? hasFilterKey(userFilter, 'stereotype') : false;
-
-  // Don't apply exclusion when test intent or explicit stereotype filter
-  if (hasTestIntent || hasStereotypeFilter) {
-    return userFilter;
-  }
-
-  // Inject must_not for test stereotype
-  const mustNot = [{ key: 'stereotype', match: { value: 'test' } }];
-
-  if (!userFilter) {
-    return { must_not: mustNot };
-  }
-
-  // Merge with existing filter (preserve existing must/should/must_not)
-  return {
-    ...userFilter,
-    must_not: [...((userFilter.must_not as Array<unknown>) ?? []), ...mustNot],
-  };
-}
-
-/**
- * Check if a Qdrant filter object references a specific key anywhere
- * (in must, should, or must_not clauses).
- */
-function hasFilterKey(filter: Record<string, unknown>, key: string): boolean {
-  const checkClauses = (clauses: unknown): boolean => {
-    if (!Array.isArray(clauses)) return false;
-    return clauses.some(
-      (clause: unknown) =>
-        typeof clause === 'object' &&
-        clause !== null &&
-        'key' in clause &&
-        (clause as { key: string }).key === key,
-    );
-  };
-
-  return checkClauses(filter.must) || checkClauses(filter.should) || checkClauses(filter.must_not);
-}
-
-/**
  * Semantic search engine that queries both 'text' and 'code' Qdrant vectors,
  * deduplicates results by chunkId (max-score merge), and returns ranked RetrievalResult[].
  */
 export class SearchEngine {
   private readonly config: SearchEngineConfig;
+  private readonly queryPlanner = new QueryPlanner();
 
   constructor(config: SearchEngineConfig) {
     this.config = config;
+  }
+
+  private resolvePlan(query: RetrievalQuery, plan?: QueryPlan): QueryPlan {
+    if (plan) return plan;
+
+    const capabilities = this.config.vectorStore.capabilities?.() ?? {
+      sparse: Boolean(
+        typeof this.config.vectorStore.searchSparse === 'function' ||
+          typeof this.config.vectorStore.searchKeyword === 'function' ||
+          typeof this.config.vectorStore.searchHybrid === 'function',
+      ),
+      filterOnly: typeof this.config.vectorStore.scroll === 'function',
+      payloadIndexes: [],
+    };
+    return this.queryPlanner.plan(
+      {
+        query: query.text,
+        ...(query.filter === undefined ? {} : { filter: query.filter }),
+        ...(query.limit === undefined ? {} : { limit: query.limit }),
+      },
+      capabilities,
+    );
   }
 
   /**
@@ -267,34 +240,35 @@ export class SearchEngine {
    * Search the indexed codebase using a natural language query.
    *
    * T061: Unified search pipeline.
-   * 1. Classify the query to determine which vectors to search.
-   * 2. Embed the query once (all dense searches use the same vector).
-   * 3. Search only the relevant vectors based on query type.
+   * 1. Consume the shared query plan to determine which vectors to search.
+   * 2. Embed each selected dense representation from the plan.
+   * 3. Search only the branches selected by the plan.
    * 4. Merge by max-score.
    * 5. Apply MMR diversity and domain-aware reranking.
    */
-  async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
+  async search(query: RetrievalQuery, suppliedPlan?: QueryPlan): Promise<RetrievalResult[]> {
     const { embeddingProvider, vectorStore } = this.config;
-    const limit = query.limit ?? this.config.defaultLimit ?? 10;
+    const plan = this.resolvePlan(query, suppliedPlan);
+    const plannedQuery = { ...query, text: plan.originalQuery };
+    const limit = query.limit ?? plan.candidateLimits.retrieval ?? this.config.defaultLimit ?? 10;
     const scoreThreshold = query.scoreThreshold ?? this.config.defaultScoreThreshold ?? 0.3;
     const searchLimit = limit * (this.config.mmrCandidateMultiplier ?? 3); // over-fetch for MMR (per D-06)
-
-    // Classify query to determine which vectors to search
-    const queryType = classifyQuery(query.text);
-    const vectorsToSearch = getVectorsForQueryType(queryType);
-
-    // T135: Apply test exclusion filter by default unless test intent detected
-    // or user explicitly provided a stereotype filter
-    const effectiveFilter = applyTestExclusionFilter(query);
-
-    // Embed the query once (same dense vector for semantic and signature searches)
-    const queryVector = await embeddingProvider.embed(query.text, 'query');
+    const effectiveFilter = toQdrantFilter(plan.filter);
 
     // Collect all search promises (dense + optionally sparse/keyword)
     const allSearchPromises: Promise<{ vectorName: string; results: VectorSearchResult[] }>[] = [];
 
     // Dense vector searches
-    for (const vectorName of vectorsToSearch.filter((v) => v !== 'sparse')) {
+    for (const vectorName of plan.branches.filter((branch) => branch !== 'sparse')) {
+      const queryVector = await embeddingProvider.embed(
+        vectorName === 'semantic'
+          ? plan.representations.semantic
+          : plan.representations.signature,
+        'query',
+      );
+      // SPR-04: reported at the point the call is issued, so provenance describes
+      // what executed rather than what was planned.
+      query.onBranchExecuted?.(vectorName);
       allSearchPromises.push(
         vectorStore
           .search(queryVector, {
@@ -307,18 +281,33 @@ export class SearchEngine {
       );
     }
 
-    // T091: fire searchKeyword for sparse vector when the query type calls for it
-    if (vectorsToSearch.includes('sparse') && vectorStore.searchKeyword) {
-      const sparseVector = computeTermFrequencySparseVector(query.text);
-      allSearchPromises.push(
-        vectorStore
-          .searchKeyword({
-            sparseVector,
+    // T091/T26: execute direct sparse retrieval only when the adapter declares support.
+    if (plan.branches.includes('sparse')) {
+      const sparseVector = plan.representations.sparse;
+      const capabilities = vectorStore.capabilities?.();
+      const sparseSupported = capabilities?.sparse ?? typeof vectorStore.searchSparse === 'function';
+      if (
+        sparseSupported &&
+        sparseVector.indices.length > 0 &&
+        typeof vectorStore.searchSparse === 'function'
+      ) {
+        query.onBranchExecuted?.('sparse');
+        allSearchPromises.push(
+          vectorStore.searchSparse(sparseVector, {
             limit: searchLimit,
             filter: effectiveFilter,
-          })
-          .then((results) => ({ vectorName: 'sparse', results })),
-      );
+          }).then((results) => ({ vectorName: 'sparse', results })),
+        );
+      } else if (!capabilities && vectorStore.searchKeyword) {
+        // Existing third-party adapters may still expose the pre-T22 method.
+        query.onBranchExecuted?.('sparse');
+        allSearchPromises.push(
+          vectorStore
+            .searchKeyword({ sparseVector, limit: searchLimit, filter: effectiveFilter })
+            .then((results) => ({ vectorName: 'sparse', results })),
+        );
+      }
+      // Otherwise the branch is SKIPPED: no call is issued and nothing is reported.
     }
 
     const vectorResults = await Promise.all(allSearchPromises);
@@ -366,7 +355,7 @@ export class SearchEngine {
       };
       const mmrResult = mmrRerank({ candidates: rawCandidates, lambda, limit, similarityFn });
       // Apply domain bonuses after MMR so diversity is not overridden by rerankResults
-      const reranked = rerankResults(mmrResult, query);
+      const reranked = rerankResults(mmrResult, plannedQuery, plan);
       // Elbow detection: truncate at significant score drops
       if (this.config.elbowDropThreshold !== undefined) {
         return applyElbowTruncation(reranked, {
@@ -377,7 +366,7 @@ export class SearchEngine {
       return reranked;
     }
 
-    const sliced = rerankResults(rawCandidates, query).slice(0, limit);
+    const sliced = rerankResults(rawCandidates, plannedQuery, plan).slice(0, limit);
     if (this.config.elbowDropThreshold !== undefined) {
       return applyElbowTruncation(sliced, {
         dropThreshold: this.config.elbowDropThreshold,
@@ -400,10 +389,20 @@ export class SearchEngine {
    */
   async searchWithExpansion(
     query: RetrievalQuery,
+    effectiveFilter: EffectiveFilter,
     options?: { hops?: 0 | 1 | 2 },
+    suppliedPlan?: QueryPlan,
   ): Promise<RetrievalResult[]> {
+    assertEffectiveFilter(effectiveFilter, 'SearchEngine.searchWithExpansion');
+    const plan = this.resolvePlan(
+      { ...query, filter: toQdrantFilter(effectiveFilter) },
+      suppliedPlan,
+    );
     const hops = options?.hops ?? 1;
-    const baseResults = await this.search(query);
+    const baseResults = await this.search(
+      { ...query, filter: toQdrantFilter(effectiveFilter) },
+      plan,
+    );
 
     // Skip expansion entirely when hops=0
     if (hops === 0) {
@@ -417,7 +416,6 @@ export class SearchEngine {
     if (this.config.dependencyGraph) {
       // T094: use relativePath for both graph lookup and Qdrant filter — filePath is deprecated
       const baseRelativePaths = [...new Set(baseResults.map((r) => r.relativePath))];
-      const intent = analyzeRetrievalQuery(query.text);
       const dominantModule =
         query.preferredModule ??
         baseResults.find((result) => result.modulePath)?.modulePath ??
@@ -426,9 +424,11 @@ export class SearchEngine {
       let neighborFiles = await this.config.dependencyGraph.getNeighborFiles(
         baseRelativePaths,
         hops,
+        effectiveFilter,
       );
 
-      if ((intent.architectureQuery || intent.dataFlowQuery) && dominantModule) {
+      const signals = planSignals(plan);
+      if ((signals.has('architecture') || signals.has('data-flow')) && dominantModule) {
         const normalizedModule = normalizePath(dominantModule);
         neighborFiles = [
           ...neighborFiles.filter((filePath) => normalizePath(filePath).includes(normalizedModule)),
@@ -443,7 +443,7 @@ export class SearchEngine {
 
       if (newFiles.length > 0) {
         // T094: use fetchChunksForRelativePaths (relativePath filter) instead of deprecated fetchChunksForFiles
-        const sqliteChunks = await this.fetchChunksForRelativePaths(newFiles);
+        const sqliteChunks = await this.fetchChunksForRelativePaths(newFiles, effectiveFilter);
         for (const chunk of sqliteChunks) {
           if (!baseChunkIds.has(chunk.chunkId)) {
             baseChunkIds.add(chunk.chunkId);
@@ -456,7 +456,10 @@ export class SearchEngine {
     // --- T040: Payload-edge expansion (works without SQLite graph) ---
     const payloadTargetPaths = DependencyGraph.expandFromPayloadEdges(baseResults, hops);
     if (payloadTargetPaths.length > 0) {
-      const payloadChunks = await this.fetchChunksForRelativePaths(payloadTargetPaths);
+      const payloadChunks = await this.fetchChunksForRelativePaths(
+        payloadTargetPaths,
+        effectiveFilter,
+      );
       for (const chunk of payloadChunks) {
         if (!baseChunkIds.has(chunk.chunkId)) {
           baseChunkIds.add(chunk.chunkId);
@@ -469,54 +472,47 @@ export class SearchEngine {
   }
 
   /**
-   * Fetch all chunks for the given file paths from the vector store.
-   * Uses a Qdrant filter matching filePath against the provided list.
-   */
-  private async fetchChunksForFiles(filePaths: string[]): Promise<RetrievalResult[]> {
-    const { embeddingProvider, vectorStore } = this.config;
-
-    const filter = {
-      should: filePaths.map((fp) => ({
-        key: 'filePath',
-        match: { value: fp },
-      })),
-    };
-
-    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
-
-    const results = await vectorStore.search(zeroVector, {
-      vectorName: 'semantic',
-      limit: filePaths.length * 50, // generous limit for multi-file fetch
-      filter,
-    });
-
-    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
-  }
-
-  /**
    * T040: Fetch all chunks for the given relative paths from the vector store.
-   * Uses a Qdrant filter matching relativePath against the provided list.
+   * Uses filter-only cursor pagination when the adapter exposes scroll().
    */
-  private async fetchChunksForRelativePaths(relativePaths: string[]): Promise<RetrievalResult[]> {
+  private async fetchChunksForRelativePaths(
+    relativePaths: string[],
+    effectiveFilter: EffectiveFilter,
+  ): Promise<RetrievalResult[]> {
     if (relativePaths.length === 0) return [];
-    const { embeddingProvider, vectorStore } = this.config;
-
-    const filter = {
-      should: relativePaths.map((rp) => ({
-        key: 'relativePath',
-        match: { value: rp },
-      })),
+    const { vectorStore } = this.config;
+    const pathClauses = relativePaths.map((relativePath) => ({
+      key: 'relativePath',
+      match: { value: relativePath },
+    }));
+    const userFilters = {
+      ...effectiveFilter.userFilters,
+      must: [
+        ...((effectiveFilter.userFilters.must as unknown[]) ?? []),
+        ...(pathClauses.length === 1 ? pathClauses : [{ should: pathClauses }]),
+      ],
     };
+    const filter = toQdrantFilter({ ...effectiveFilter, userFilters });
 
-    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
-
-    const results = await vectorStore.search(zeroVector, {
-      vectorName: 'semantic',
-      limit: relativePaths.length * 50,
-      filter,
-    });
-
-    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
+    if (vectorStore.scroll) {
+      const retriever = this.filterOnlyRetriever();
+      const result = await retriever.scrollAll(filter, {
+        ceiling: DEFAULT_FILTER_ONLY_CEILING,
+      });
+      if (result.truncated) {
+        throw new FilterOnlyRetrievalError(
+          'unknown',
+          'fetchChunksForRelativePaths',
+          `filter-only result set exceeded ceiling ${DEFAULT_FILTER_ONLY_CEILING}`,
+        );
+      }
+      return result.points.map((point) => this.filterPointToResult(point));
+    }
+    throw new FilterOnlyRetrievalError(
+      'unknown',
+      'fetchChunksForRelativePaths',
+      'vector store does not support filter-only scrolling',
+    );
   }
 
   /**
@@ -526,9 +522,11 @@ export class SearchEngine {
     relativePath: string,
     chunkIndex: number,
     totalChunks: number,
+    effectiveFilter: EffectiveFilter,
     radius: number = 1,
   ): Promise<RetrievalResult[]> {
-    const { embeddingProvider, vectorStore } = this.config;
+    assertEffectiveFilter(effectiveFilter, 'SearchEngine.getAdjacentChunks');
+    const { vectorStore } = this.config;
 
     // Compute adjacent indices within bounds
     const indices: number[] = [];
@@ -539,25 +537,76 @@ export class SearchEngine {
     }
     if (indices.length === 0) return [];
 
-    const filter = {
-      must: [
-        { key: 'relativePath', match: { value: relativePath } },
-        { key: 'chunkIndex', match: { any: indices } },
-      ],
-    };
-
-    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
-    const results = await vectorStore.search(zeroVector, {
-      vectorName: 'semantic',
-      limit: indices.length,
-      filter,
+    const filter = toQdrantFilter({
+      ...effectiveFilter,
+      userFilters: {
+        ...effectiveFilter.userFilters,
+        must: [
+          ...((effectiveFilter.userFilters.must as unknown[]) ?? []),
+          { key: 'relativePath', match: { value: relativePath } },
+          { key: 'chunkIndex', match: { any: indices } },
+        ],
+      },
     });
 
-    return results
-      .map((raw) => ({
-        ...toRetrievalResult(raw, 'semantic', this.config.projectRoot),
-      }))
-      .sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
+    let results: RetrievalResult[];
+    if (vectorStore.scroll) {
+      const result = await this.filterOnlyRetriever().scrollAll(filter, {
+        ceiling: DEFAULT_FILTER_ONLY_CEILING,
+      });
+      if (result.truncated) {
+        throw new FilterOnlyRetrievalError(
+          'unknown',
+          'getAdjacentChunks',
+          `filter-only result set exceeded ceiling ${DEFAULT_FILTER_ONLY_CEILING}`,
+        );
+      }
+      results = result.points.map((point) => ({
+        ...this.filterPointToResult(point),
+        expansionSource: 'adjacent' as const,
+      }));
+    } else {
+      throw new FilterOnlyRetrievalError(
+        'unknown',
+        'getAdjacentChunks',
+        'vector store does not support filter-only scrolling',
+      );
+    }
+
+    return results.sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
+  }
+
+  private filterOnlyRetriever(): FilterOnlyRetriever {
+    const { vectorStore } = this.config;
+    if (!vectorStore.scroll) {
+      throw new Error('Vector store does not support filter-only scrolling');
+    }
+    // Bind rather than detach: the concrete adapter's scroll() uses `this`.
+    const scroll = vectorStore.scroll.bind(vectorStore);
+    return new FilterOnlyRetriever({
+      scroll: async (filter, limit, offset) => {
+        const page = await scroll({
+          limit,
+          ...(offset === undefined ? {} : { offset }),
+          filter,
+        });
+        return { points: page.points as FilterPoint[], nextOffset: page.nextOffset };
+      },
+      retrieve: () => Promise.resolve([]),
+    });
+  }
+
+  private filterPointToResult(point: FilterPoint): RetrievalResult {
+    return toRetrievalResult(
+      {
+        id: point.id,
+        score: 0,
+        vectorName: 'semantic',
+        payload: point.payload,
+      },
+      'semantic',
+      this.config.projectRoot,
+    );
   }
 
   /**
@@ -567,10 +616,11 @@ export class SearchEngine {
    */
   async expandCallChain(
     results: RetrievalResult[],
+    effectiveFilter: EffectiveFilter,
     direction: 'calls' | 'calledBy' | 'both' = 'both',
   ): Promise<RetrievalResult[]> {
-    const { embeddingProvider, vectorStore } = this.config;
-    const seenIds = new Set(results.map((r) => r.chunkId));
+    assertEffectiveFilter(effectiveFilter, 'SearchEngine.expandCallChain');
+    const { vectorStore } = this.config;
 
     // Collect method names to look up
     const targetNames = new Set<string>();
@@ -587,20 +637,39 @@ export class SearchEngine {
     if (targetNames.size === 0) return [];
 
     // Search for chunks that define these methods
-    const filter = {
-      must: [{ key: 'defines', match: { any: [...targetNames] } }],
-    };
-
-    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
-    const hits = await vectorStore.search(zeroVector, {
-      vectorName: 'semantic',
-      limit: Math.min(targetNames.size * 2, 20),
-      filter,
+    const filter = toQdrantFilter({
+      ...effectiveFilter,
+      userFilters: {
+        ...effectiveFilter.userFilters,
+        must: [
+          ...((effectiveFilter.userFilters.must as unknown[]) ?? []),
+          { key: 'defines', match: { any: [...targetNames] } },
+        ],
+      },
     });
 
-    return hits
-      .map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot))
-      .map((r) => ({ ...r, expansionSource: 'call-chain' as const }));
+    let hits: RetrievalResult[];
+    if (vectorStore.scroll) {
+      const result = await this.filterOnlyRetriever().scrollAll(filter, {
+        ceiling: DEFAULT_FILTER_ONLY_CEILING,
+      });
+      if (result.truncated) {
+        throw new FilterOnlyRetrievalError(
+          'unknown',
+          'expandCallChain',
+          `filter-only result set exceeded ceiling ${DEFAULT_FILTER_ONLY_CEILING}`,
+        );
+      }
+      hits = result.points.map((point) => this.filterPointToResult(point));
+    } else {
+      throw new FilterOnlyRetrievalError(
+        'unknown',
+        'expandCallChain',
+        'vector store does not support filter-only scrolling',
+      );
+    }
+
+    return hits.map((r) => ({ ...r, expansionSource: 'call-chain' as const }));
   }
 
   /**
@@ -615,12 +684,14 @@ export class SearchEngine {
   async searchWithFallback(
     query: RetrievalQuery,
     options?: { enableFallback?: boolean; maxSuggestions?: number },
+    suppliedPlan?: QueryPlan,
   ): Promise<FallbackSearchResult> {
     const { vectorStore } = this.config;
+    const plan = this.resolvePlan(query, suppliedPlan);
     const maxSuggestions = options?.maxSuggestions ?? 3;
 
     // Step 1: primary semantic search
-    const primaryResults = await this.search(query);
+    const primaryResults = await this.search(query, plan);
     if (primaryResults.length > 0) {
       return {
         found: true,
@@ -644,7 +715,10 @@ export class SearchEngine {
 
     // Step 2: hybrid fallback (no scoreThreshold)
     if (vectorStore.searchHybrid) {
-      const hybridResults = await this.searchHybrid({ ...query, scoreThreshold: undefined });
+      const hybridResults = await this.searchHybrid(
+        { ...query, scoreThreshold: undefined },
+        plan,
+      );
       if (hybridResults.length > 0) {
         return {
           found: true,
@@ -657,13 +731,24 @@ export class SearchEngine {
     }
 
     // Step 3: BM25 keyword fallback
-    if (vectorStore.searchKeyword) {
-      const sparseVector = computeTermFrequencySparseVector(query.text);
-      const kwRaw = await vectorStore.searchKeyword({
-        sparseVector,
-        limit: maxSuggestions,
-        filter: query.filter,
-      });
+    const capabilities = vectorStore.capabilities?.();
+    const sparseSupported = capabilities?.sparse ?? typeof vectorStore.searchSparse === 'function';
+    const sparseVector = plan.representations.sparse;
+    const sparseSearch =
+      sparseSupported && vectorStore.searchSparse
+        ? await vectorStore.searchSparse(sparseVector, {
+            limit: maxSuggestions,
+            filter: toQdrantFilter(plan.filter),
+          })
+        : !capabilities && vectorStore.searchKeyword
+          ? await vectorStore.searchKeyword({
+              sparseVector,
+              limit: maxSuggestions,
+              filter: toQdrantFilter(plan.filter),
+            })
+          : undefined;
+    if (sparseSearch) {
+      const kwRaw = sparseSearch;
       const suggestions: FallbackSuggestion[] = kwRaw.slice(0, maxSuggestions).map((r) => ({
         file: r.payload.relativePath,
         name: r.payload.name ?? r.payload.chunkType,
@@ -705,7 +790,7 @@ export class SearchEngine {
     }
 
     // T068: Step 5 — glob/grep scroll fallback when keyword search not supported
-    const scrollResults = await this.scrollFallback(query.text, query.filter);
+    const scrollResults = await this.scrollFallback(query.text, toQdrantFilter(plan.filter));
     if (scrollResults.length > 0) {
       return {
         found: true,
@@ -739,15 +824,31 @@ export class SearchEngine {
     const { vectorStore } = this.config;
     if (!vectorStore.scroll) return [];
 
-    const isPathLike = query.includes('/') || /\.\w{1,5}$/.test(query);
+    const isQualifiedSymbol =
+      /^[A-Za-z_$][\w$]*(?:\.|::)[A-Za-z_$][\w$]*$/.test(query);
+    const isPathLike = !isQualifiedSymbol && (query.includes('/') || /\.\w{1,5}$/.test(query));
     const isIdentifierLike =
-      /^[A-Z][a-zA-Z0-9]*$/.test(query) || /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/.test(query);
+      isQualifiedSymbol ||
+      /^[A-Z][a-zA-Z0-9]*$/.test(query) ||
+      /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/.test(query);
 
     if (!isPathLike && !isIdentifierLike) return [];
 
-    // Scroll a sample of chunks (limit to avoid scanning huge collections)
-    const scrollResult = await vectorStore.scroll({ limit: 200, filter });
-    const { points } = scrollResult;
+    // Page through a bounded number of chunks. A single first page can miss an
+    // exact path/name match in a large collection, which defeats this fallback.
+    const points: Array<{ id: string; payload: ChunkPayload }> = [];
+    let offset: string | number | undefined;
+    let pages = 0;
+    do {
+      const scrollResult = await vectorStore.scroll({
+        limit: 200,
+        filter,
+        ...(offset === undefined ? {} : { offset }),
+      });
+      points.push(...scrollResult.points);
+      offset = scrollResult.nextOffset;
+      pages++;
+    } while (offset !== undefined && pages < 50);
 
     let matched: typeof points;
 
@@ -756,31 +857,30 @@ export class SearchEngine {
       const fragment = query.split('/').pop()!; // basename or last segment
       matched = points.filter((p) => p.payload.relativePath?.includes(fragment));
     } else {
-      // Grep: find chunks whose name exactly matches the identifier
-      matched = points.filter((p) => p.payload.name === query);
+      // Grep: support dotted identifiers by matching the final symbol as well
+      // as the complete name/defines value.
+      const identifier = query.split(/\.|::/).pop() ?? query;
+      matched = points.filter(
+        (p) =>
+          p.payload.name === query ||
+          p.payload.name === identifier ||
+          p.payload.defines?.includes(query) === true ||
+          p.payload.defines?.includes(identifier) === true,
+      );
     }
 
-    return matched.slice(0, 5).map((p) => ({
-      chunkId: p.payload.chunkId,
-      // T078: reconstruct filePath from projectRoot when not stored
-      filePath:
-        p.payload.filePath ||
-        (this.config.projectRoot
-          ? `${this.config.projectRoot}/${p.payload.relativePath}`
-          : p.payload.relativePath),
-      relativePath: p.payload.relativePath,
-      content: p.payload.content ?? '',
-      startLine: p.payload.startLine ?? 0,
-      endLine: p.payload.endLine ?? 0,
-      language: p.payload.language ?? '',
-      chunkType: p.payload.chunkType ?? 'unknown',
-      name: p.payload.name,
-      imports: p.payload.imports ?? [],
-      exports: p.payload.exports ?? [],
-      score: 0,
-      matchedVector: 'glob-grep',
-      repoId: p.payload.repoId,
-    }));
+    return matched.slice(0, 5).map((p) =>
+      toRetrievalResult(
+        {
+          id: String(p.id),
+          score: 0,
+          vectorName: 'glob-grep',
+          payload: p.payload,
+        },
+        'glob-grep',
+        this.config.projectRoot,
+      ),
+    );
   }
 
   /**
@@ -790,30 +890,43 @@ export class SearchEngine {
    * repos. Pass `repoId` to scope the lookup to a single repo, avoiding
    * cross-repo chunk bleed.
    */
-  async getFile(relativePath: string, repoId?: string): Promise<RetrievalResult[]> {
-    const { embeddingProvider, vectorStore } = this.config;
+  async getFile(
+    relativePath: string,
+    effectiveFilter: EffectiveFilter,
+  ): Promise<RetrievalResult[]> {
+    assertEffectiveFilter(effectiveFilter, 'SearchEngine.getFile');
+    const { vectorStore } = this.config;
 
     // Build a filter for the relativePath, optionally scoped to a repo.
-    const filter = {
-      must: [
-        {
-          key: 'relativePath',
-          match: { value: relativePath },
-        },
-        ...(repoId ? [{ key: 'repoId', match: { value: repoId } }] : []),
-      ],
-    };
-
-    // Use a zero-vector with a high limit to get all chunks for the file
-    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
-
-    const results = await vectorStore.search(zeroVector, {
-      vectorName: 'semantic',
-      limit: 1000, // get all chunks for the file
-      filter,
+    const filter = toQdrantFilter({
+      ...effectiveFilter,
+      userFilters: {
+        ...effectiveFilter.userFilters,
+        must: [
+          ...((effectiveFilter.userFilters.must as unknown[]) ?? []),
+          { key: 'relativePath', match: { value: relativePath } },
+        ],
+      },
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
+    if (vectorStore.scroll) {
+      const result = await this.filterOnlyRetriever().scrollAll(filter, {
+        ceiling: DEFAULT_FILTER_ONLY_CEILING,
+      });
+      if (result.truncated) {
+        throw new FilterOnlyRetrievalError(
+          'unknown',
+          'getFile',
+          `filter-only result set exceeded ceiling ${DEFAULT_FILTER_ONLY_CEILING}`,
+        );
+      }
+      return result.points.map((point) => this.filterPointToResult(point));
+    }
+    throw new FilterOnlyRetrievalError(
+      'unknown',
+      'getFile',
+      'vector store does not support filter-only scrolling',
+    );
   }
 
   /**
@@ -824,35 +937,41 @@ export class SearchEngine {
    *
    * @param query - RetrievalQuery (same type as search())
    */
-  async searchHybrid(query: RetrievalQuery): Promise<RetrievalResult[]> {
+  async searchHybrid(query: RetrievalQuery, suppliedPlan?: QueryPlan): Promise<RetrievalResult[]> {
     const { embeddingProvider, vectorStore } = this.config;
+    const plan = this.resolvePlan(query, suppliedPlan);
 
     // Fall back to plain search if hybrid is not supported by this store
     if (!vectorStore.searchHybrid) {
-      return this.search(query);
+      return this.search(query, plan);
     }
 
     const limit = query.limit ?? this.config.defaultLimit ?? 10;
 
-    // Embed the query text into a dense vector
-    const denseVector = await embeddingProvider.embed(query.text, 'query');
-
-    // Compute TF sparse vector from the query text (client-side BM25 input)
-    const sparseVector = computeTermFrequencySparseVector(query.text);
+    const semanticVector = await embeddingProvider.embed(plan.representations.semantic, 'query');
+    const signatureVector = await embeddingProvider.embed(plan.representations.signature, 'query');
 
     const results = await vectorStore.searchHybrid({
-      denseVector,
-      sparseVector,
+      semanticVector,
+      signatureVector,
+      ...(plan.branches.includes('sparse')
+        ? { sparseVector: plan.representations.sparse }
+        : {}),
       limit: limit * (this.config.mmrCandidateMultiplier ?? 3), // over-fetch for MMR (per D-06)
-      filter: query.filter,
+      filter: toQdrantFilter(plan.filter),
       keywordPrefetchMultiplier: this.config.keywordPrefetchMultiplier,
       semanticPrefetchMultiplier: this.config.semanticPrefetchMultiplier,
     });
 
-    const rawResults = results.map((raw) => ({
-      ...toRetrievalResult(raw, 'both', this.config.projectRoot),
-      scoreType: 'rrf' as const,
-    }));
+    const rawResults = results
+      .filter((raw) => {
+        const stereotype = raw.payload as { stereotype?: string };
+        return !(stereotype.stereotype === 'test' && plan.filter.excludeTests);
+      })
+      .map((raw) => ({
+        ...toRetrievalResult(raw, 'both', this.config.projectRoot),
+        scoreType: 'rrf' as const,
+      }));
 
     // Post-retrieval RRF threshold: filter out low-relevance results.
     // RRF scores are rank-based (~0.01–0.03), not cosine (~0–1).
@@ -863,11 +982,32 @@ export class SearchEngine {
     // Apply MMR for diversity first (uses raw .score), then domain-aware reranking — per D-04, D-08
     if (this.config.mmrEnabled !== false) {
       const lambda = this.config.mmrLambda ?? classifyQueryLambda(query.text);
-      const mmrResult = mmrRerank({ candidates: thresholded, lambda, limit });
-      return rerankResults(mmrResult, query);
+      const similarityFn = (a: RetrievalResult, b: RetrievalResult): number => {
+        const textA =
+          a.content || [a.relativePath, a.name, ...(a.defines ?? [])].filter(Boolean).join(' ');
+        const textB =
+          b.content || [b.relativePath, b.name, ...(b.defines ?? [])].filter(Boolean).join(' ');
+        return jaccardSimilarity(textA, textB);
+      };
+      const mmrResult = mmrRerank({ candidates: thresholded, lambda, limit, similarityFn });
+      const reranked = rerankResults(mmrResult, query, plan);
+      if (this.config.elbowDropThreshold !== undefined) {
+        return applyElbowTruncation(reranked, {
+          dropThreshold: this.config.elbowDropThreshold,
+          minResults: this.config.elbowMinResults ?? 1,
+        });
+      }
+      return reranked;
     }
 
-    return rerankResults(thresholded, query);
+    const reranked = rerankResults(thresholded, query, plan);
+    if (this.config.elbowDropThreshold !== undefined) {
+      return applyElbowTruncation(reranked, {
+        dropThreshold: this.config.elbowDropThreshold,
+        minResults: this.config.elbowMinResults ?? 1,
+      });
+    }
+    return reranked;
   }
 
   /**
@@ -883,8 +1023,12 @@ export class SearchEngine {
    * This eliminates the need for follow-up searches when an interface is found
    * but its implementation is not in the top results.
    */
-  async searchWithInterfaceExpansion(query: RetrievalQuery): Promise<RetrievalResult[]> {
-    const baseResults = await this.search(query);
+  async searchWithInterfaceExpansion(
+    query: RetrievalQuery,
+    effectiveFilter: EffectiveFilter,
+  ): Promise<RetrievalResult[]> {
+    assertEffectiveFilter(effectiveFilter, 'SearchEngine.searchWithInterfaceExpansion');
+    const baseResults = await this.search({ ...query, filter: toQdrantFilter(effectiveFilter) });
 
     // Identify interface results
     const interfaceResults = baseResults.filter((r) => r.chunkType === 'interface');
@@ -897,7 +1041,7 @@ export class SearchEngine {
     const expandedResults: RetrievalResult[] = [];
 
     for (const ifaceResult of interfaceResults) {
-      const implChunks = await this.findImplementations(ifaceResult.relativePath);
+      const implChunks = await this.findImplementations(ifaceResult.relativePath, effectiveFilter);
       for (const chunk of implChunks) {
         if (!baseChunkIds.has(chunk.chunkId)) {
           baseChunkIds.add(chunk.chunkId);
@@ -913,91 +1057,52 @@ export class SearchEngine {
    * Find chunks that implement a given interface by searching for dependency edges
    * with `relation: 'implements'` targeting the interface's relativePath.
    */
-  private async findImplementations(interfaceRelativePath: string): Promise<RetrievalResult[]> {
-    const { embeddingProvider, vectorStore } = this.config;
+  private async findImplementations(
+    interfaceRelativePath: string,
+    effectiveFilter: EffectiveFilter,
+  ): Promise<RetrievalResult[]> {
+    assertEffectiveFilter(effectiveFilter, 'SearchEngine.findImplementations');
+    const { vectorStore } = this.config;
 
     // Use Qdrant nested filter to find chunks with implements edge targeting this interface
-    const filter = {
-      must: [
-        {
-          key: 'dependencyEdges[].targetPath',
-          match: { value: interfaceRelativePath },
-        },
-        {
-          key: 'dependencyEdges[].relation',
-          match: { value: 'implements' },
-        },
-      ],
-    };
-
-    const zeroVector = new Array<number>(embeddingProvider.dimensions).fill(0);
-
-    const results = await vectorStore.search(zeroVector, {
-      vectorName: 'semantic',
-      limit: 10, // reasonable limit for implementations
-      filter,
+    const filter = toQdrantFilter({
+      ...effectiveFilter,
+      userFilters: {
+        ...effectiveFilter.userFilters,
+        must: [
+          ...((effectiveFilter.userFilters.must as unknown[]) ?? []),
+          {
+            nested: {
+              key: 'dependencyEdges',
+              filter: {
+                must: [
+                  { key: 'targetPath', match: { value: interfaceRelativePath } },
+                  { key: 'relation', match: { value: 'implements' } },
+                ],
+              },
+            },
+          },
+        ],
+      },
     });
 
-    return results.map((raw) => toRetrievalResult(raw, 'semantic', this.config.projectRoot));
+    if (vectorStore.scroll) {
+      const result = await this.filterOnlyRetriever().scrollAll(filter, {
+        ceiling: DEFAULT_FILTER_ONLY_CEILING,
+      });
+      if (result.truncated) {
+        throw new FilterOnlyRetrievalError(
+          'unknown',
+          'findImplementations',
+          `filter-only result set exceeded ceiling ${DEFAULT_FILTER_ONLY_CEILING}`,
+        );
+      }
+      return result.points.map((point) => this.filterPointToResult(point));
+    }
+    throw new FilterOnlyRetrievalError(
+      'unknown',
+      'findImplementations',
+      'vector store does not support filter-only scrolling',
+    );
   }
-}
-
-/**
- * Compute a term-frequency sparse vector from a text string.
- *
- * Tokenizes the text into lowercase alphanumeric tokens, counts occurrences,
- * and maps each unique token to a stable integer index using a simple hash.
- *
- * Qdrant applies IDF weighting server-side (modifier="idf") — we only need TF here.
- *
- * The hash function maps token strings to 32-bit integers in [0, 2^31-1].
- * Hash collisions (two different tokens mapping to the same index) are handled
- * by summing their TF values so the output always has unique, sorted indices,
- * satisfying Qdrant's sparse vector validation ("indices must be unique").
- */
-export function computeTermFrequencySparseVector(text: string): {
-  indices: number[];
-  values: number[];
-} {
-  // Tokenize: lowercase, split on non-alphanumeric, filter short tokens
-  const tokens = text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length >= 2);
-
-  // Count term frequencies
-  const tf = new Map<string, number>();
-  for (const token of tokens) {
-    tf.set(token, (tf.get(token) ?? 0) + 1);
-  }
-
-  // Map each token to a stable integer index using djb2 hash.
-  // Merge collisions by summing their TF values (two different tokens
-  // that hash to the same index must produce a single entry, otherwise
-  // Qdrant rejects the sparse vector with "indices must be unique").
-  const indexMap = new Map<number, number>();
-  for (const [token, count] of tf) {
-    const idx = djb2Hash(token);
-    indexMap.set(idx, (indexMap.get(idx) ?? 0) + count);
-  }
-
-  // Sort by index for Qdrant (indices must be sorted ascending)
-  const entries = Array.from(indexMap.entries()).sort((a, b) => a[0] - b[0]);
-
-  return {
-    indices: entries.map((e) => e[0]),
-    values: entries.map((e) => e[1]),
-  };
-}
-
-/**
- * djb2 hash — fast, simple, good distribution for short strings.
- * Returns a non-negative 31-bit integer.
- */
-function djb2Hash(str: string): number {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
-  }
-  return hash & 0x7fffffff; // clamp to 31 bits (Qdrant max sparse index)
 }

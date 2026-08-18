@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { EmbedBatchOutcome } from '@ia-framework/embedding';
+import { buildSparseVector } from '@ia-framework/core';
 
 /**
  * T018: 3-vector embedder — given enriched chunk, produces:
@@ -44,18 +46,23 @@ interface EnrichedChunk {
 
 interface MockEmbeddingProvider {
   embed(text: string, type?: string): Promise<number[]>;
-  embedBatch(texts: string[], type?: string): Promise<number[][]>;
+  embedBatch(texts: string[], type?: string): Promise<EmbedBatchOutcome>;
 }
 
 // ── Import under test (WILL FAIL — module does not exist yet) ─────────────────
 const embedderSpecifier = './embedder.js';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const embedderModule = (await import(embedderSpecifier).catch(() => null)) as any;
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+const embedderModule = (await import(embedderSpecifier).catch(() => null)) as Record<
+  string,
+  unknown
+> | null;
 const ThreeVectorEmbedder = embedderModule?.ThreeVectorEmbedder as
   | (new (provider: MockEmbeddingProvider) => {
       embed(chunk: EnrichedChunk): Promise<EmbedderResult>;
       embedBatch(chunks: EnrichedChunk[]): Promise<EmbedderResult[]>;
+      embedBatchWithFailures(chunks: EnrichedChunk[]): Promise<{
+        results: (EmbedderResult | null)[];
+        failures: Array<{ index: number; reason: string; retryable: boolean }>;
+      }>;
     })
   | undefined;
 
@@ -65,13 +72,16 @@ const ThreeVectorEmbedder = embedderModule?.ThreeVectorEmbedder as
 function makeProvider(): MockEmbeddingProvider {
   let callCount = 0;
   return {
-    embed: vi.fn().mockImplementation(async () => {
+    embed: vi.fn().mockImplementation(() => {
       callCount++;
-      return [callCount * 0.1, callCount * 0.2, callCount * 0.3];
+      return Promise.resolve([callCount * 0.1, callCount * 0.2, callCount * 0.3]);
     }),
-    embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
-      return texts.map((_, i) => [(i + 1) * 0.1, (i + 1) * 0.2, (i + 1) * 0.3]);
-    }),
+    embedBatch: vi.fn((texts: string[]) =>
+      Promise.resolve({
+        vectors: texts.map((_, i) => [(i + 1) * 0.1, (i + 1) * 0.2, (i + 1) * 0.3]),
+        failures: [],
+      }),
+    ),
   };
 }
 
@@ -124,13 +134,16 @@ describe('ThreeVectorEmbedder — 3-vector embedding (T018)', () => {
 
     const capturedTexts: string[] = [];
     const provider: MockEmbeddingProvider = {
-      embed: vi.fn().mockImplementation(async (text: string) => {
+      embed: vi.fn().mockImplementation((text: string) => {
         capturedTexts.push(text);
-        return [0.1, 0.2, 0.3];
+        return Promise.resolve([0.1, 0.2, 0.3]);
       }),
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+      embedBatch: vi.fn((texts: string[]) => {
         capturedTexts.push(...texts);
-        return texts.map(() => [0.1, 0.2, 0.3]);
+        return Promise.resolve({
+          vectors: texts.map(() => [0.1, 0.2, 0.3]),
+          failures: [],
+        });
       }),
     };
 
@@ -155,13 +168,16 @@ describe('ThreeVectorEmbedder — 3-vector embedding (T018)', () => {
 
     const capturedTexts: string[] = [];
     const provider: MockEmbeddingProvider = {
-      embed: vi.fn().mockImplementation(async (text: string) => {
+      embed: vi.fn().mockImplementation((text: string) => {
         capturedTexts.push(text);
-        return [0.1, 0.2, 0.3];
+        return Promise.resolve([0.1, 0.2, 0.3]);
       }),
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+      embedBatch: vi.fn((texts: string[]) => {
         capturedTexts.push(...texts);
-        return texts.map(() => [0.1, 0.2, 0.3]);
+        return Promise.resolve({
+          vectors: texts.map(() => [0.1, 0.2, 0.3]),
+          failures: [],
+        });
       }),
     };
 
@@ -229,13 +245,16 @@ describe('ThreeVectorEmbedder — 3-vector embedding (T018)', () => {
 
     const capturedTexts: string[] = [];
     const provider: MockEmbeddingProvider = {
-      embed: vi.fn().mockImplementation(async (text: string) => {
+      embed: vi.fn().mockImplementation((text: string) => {
         capturedTexts.push(text);
-        return [0.1, 0.2, 0.3];
+        return Promise.resolve([0.1, 0.2, 0.3]);
       }),
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+      embedBatch: vi.fn((texts: string[]) => {
         capturedTexts.push(...texts);
-        return texts.map(() => [0.1, 0.2, 0.3]);
+        return Promise.resolve({
+          vectors: texts.map(() => [0.1, 0.2, 0.3]),
+          failures: [],
+        });
       }),
     };
 
@@ -277,6 +296,79 @@ describe('ThreeVectorEmbedder — 3-vector embedding (T018)', () => {
       expect(r).toHaveProperty('sparse');
     }
   });
+
+  it('uses the canonical core sparse builder for the same identifier terms', async () => {
+    expect(ThreeVectorEmbedder).toBeDefined();
+
+    const provider = makeProvider();
+    const embedder = new ThreeVectorEmbedder!(provider);
+    const chunk = makeEnrichedChunk({
+      name: 'getUserById',
+      defines: ['getUserById'],
+      imports: ['com.example.UserRepository'],
+      annotations: ['@Transactional'],
+    });
+
+    const result = await embedder.embed(chunk);
+
+    expect(result.sparse).toEqual(
+      buildSparseVector([
+        chunk.name,
+        chunk.defines,
+        chunk.imports,
+        chunk.annotations,
+      ]),
+    );
+  });
+
+  it('rejects a short provider response instead of returning empty vectors', async () => {
+    expect(ThreeVectorEmbedder).toBeDefined();
+
+    const provider: MockEmbeddingProvider = {
+      embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      embedBatch: vi.fn((texts: string[]) => {
+        return Promise.resolve({
+          vectors: texts.length > 0 ? [[0.1, 0.2, 0.3]] : [],
+          failures: [],
+        });
+      }),
+    };
+    const embedder = new ThreeVectorEmbedder!(provider);
+
+    await expect(
+      embedder.embedBatch([
+        makeEnrichedChunk({ id: 'c1' }),
+        makeEnrichedChunk({ id: 'c2' }),
+      ]),
+    ).rejects.toThrow(/missing embedding vector|short provider response/i);
+  });
+
+  it('retains successful siblings in the detailed batch outcome', async () => {
+    expect(ThreeVectorEmbedder).toBeDefined();
+
+    const provider: MockEmbeddingProvider = {
+      embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      embedBatch: vi.fn((texts: string[]) =>
+        Promise.resolve({
+          vectors: texts.map((_text, index) => (index === 1 ? null : [0.1, 0.2, 0.3])),
+          failures: texts.length > 1
+            ? [{ index: 1, reason: 'one input failed', retryable: false }]
+            : [],
+        }),
+      ),
+    };
+    const embedder = new ThreeVectorEmbedder!(provider);
+    const outcome = await embedder.embedBatchWithFailures([
+      makeEnrichedChunk({ id: 'c1' }),
+      makeEnrichedChunk({ id: 'c2' }),
+    ]);
+
+    expect(outcome.results[0]?.semantic).toEqual([0.1, 0.2, 0.3]);
+    expect(outcome.results[1]).toBeNull();
+    expect(outcome.failures).toEqual([
+      { index: 1, reason: 'one input failed', retryable: false },
+    ]);
+  });
 });
 
 // ── T113: Heuristic fallback uses annotationMeta when no LLM enrichment ───────
@@ -290,13 +382,16 @@ describe('ThreeVectorEmbedder — heuristic fallback with annotationMeta (T113)'
 
     const capturedTexts: string[] = [];
     const provider: MockEmbeddingProvider = {
-      embed: vi.fn().mockImplementation(async (text: string) => {
+      embed: vi.fn().mockImplementation((text: string) => {
         capturedTexts.push(text);
-        return [0.1, 0.2, 0.3];
+        return Promise.resolve([0.1, 0.2, 0.3]);
       }),
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+      embedBatch: vi.fn((texts: string[]) => {
         capturedTexts.push(...texts);
-        return texts.map(() => [0.1, 0.2, 0.3]);
+        return Promise.resolve({
+          vectors: texts.map(() => [0.1, 0.2, 0.3]),
+          failures: [],
+        });
       }),
     };
 
@@ -350,13 +445,16 @@ describe('ThreeVectorEmbedder — supplementary annotationMeta with partial LLM 
 
     const capturedTexts: string[] = [];
     const provider: MockEmbeddingProvider = {
-      embed: vi.fn().mockImplementation(async (text: string) => {
+      embed: vi.fn().mockImplementation((text: string) => {
         capturedTexts.push(text);
-        return [0.1, 0.2, 0.3];
+        return Promise.resolve([0.1, 0.2, 0.3]);
       }),
-      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => {
+      embedBatch: vi.fn((texts: string[]) => {
         capturedTexts.push(...texts);
-        return texts.map(() => [0.1, 0.2, 0.3]);
+        return Promise.resolve({
+          vectors: texts.map(() => [0.1, 0.2, 0.3]),
+          failures: [],
+        });
       }),
     };
 

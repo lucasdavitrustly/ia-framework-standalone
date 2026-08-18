@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SearchEngine } from '../search-engine.js';
 import type { SearchEngineConfig } from '../types.js';
+import type { EmbeddingContract } from '@ia-framework/core';
+import { createEffectiveFilter } from '../effective-filter.js';
+
+const MOCK_CONTRACT: EmbeddingContract = {
+  provider: 'openai',
+  model: 'mock-model',
+  dimension: 384,
+  tokenizerVersion: 1,
+  sparseHashVersion: 1,
+};
 
 /**
  * Helper to create a minimal VectorSearchResult-shaped mock return value.
@@ -27,6 +37,22 @@ function makeRaw(chunkId: string, content = 'code content') {
   };
 }
 
+function makeEnrichedRaw(chunkId: string, enrichment: Record<string, unknown>) {
+  return {
+    ...makeRaw(chunkId),
+    payload: {
+      ...makeRaw(chunkId).payload,
+      ...enrichment,
+      signature: 'load(): void',
+      stereotype: 'service',
+      archLayer: 'service',
+      docCommentStartLine: 1,
+      annotationStartLine: 1,
+      signatureOnly: false,
+    },
+  };
+}
+
 describe('SearchEngine.searchWithFallback()', () => {
   let mockSearch: ReturnType<typeof vi.fn>;
   let mockSearchHybrid: ReturnType<typeof vi.fn>;
@@ -41,7 +67,7 @@ describe('SearchEngine.searchWithFallback()', () => {
     mockEmbed = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
 
     config = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 384 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 384, contract: MOCK_CONTRACT },
       vectorStore: {
         search: mockSearch,
         searchHybrid: mockSearchHybrid,
@@ -135,7 +161,7 @@ describe('SearchEngine.searchWithFallback()', () => {
 
     // hybrid call should NOT receive scoreThreshold
     expect(mockSearchHybrid).toHaveBeenCalledWith(
-      expect.not.objectContaining({ scoreThreshold: expect.anything() }),
+      expect.not.objectContaining({ scoreThreshold: expect.anything() as unknown }),
     );
   });
 
@@ -196,6 +222,124 @@ describe('SearchEngine.searchWithFallback()', () => {
     expect(result.fallback_mode).toBe('hybrid');
   });
 
+  it('preserves the same metadata completeness on the hybrid fallback as the primary path', async () => {
+    const primaryRaw = makeEnrichedRaw('same-chunk', {
+      description: 'Primary description',
+      semanticTags: ['primary'],
+    });
+    const fallbackRaw = makeEnrichedRaw('same-chunk', {
+      description: 'Fallback description',
+      semanticTags: ['fallback'],
+    });
+    mockSearch.mockResolvedValue([primaryRaw]);
+    mockSearchHybrid.mockResolvedValue([fallbackRaw]);
+
+    const engine = new SearchEngine(config);
+    const primary = await engine.search({ text: 'primary path' });
+    mockSearch.mockResolvedValue([]);
+    const fallback = await engine.searchWithFallback({ text: 'fallback path' });
+
+    const populatedFields = (result: (typeof primary)[number]) =>
+      Object.keys(result).filter((key) => result[key as keyof typeof result] !== undefined);
+    expect(populatedFields(fallback.results[0]!)).toEqual(populatedFields(primary[0]!));
+    expect(fallback.results[0]!.enrichment).toEqual({
+      description: 'Fallback description',
+      semanticTags: ['fallback'],
+    });
+    expect(fallback.results[0]!.signature).toBe('load(): void');
+    expect(fallback.results[0]!.stereotype).toBe('service');
+  });
+
+  it('preserves enrichment on call-chain expansion results', async () => {
+    const expandedRaw = makeEnrichedRaw('called-method', {
+      description: 'Loads payment data.',
+      semanticTags: ['payments'],
+    });
+    const engine = new SearchEngine({
+      ...config,
+      vectorStore: {
+        search: mockSearch as SearchEngineConfig['vectorStore']['search'],
+        scroll: vi.fn().mockResolvedValue({
+          points: [{ id: expandedRaw.id, payload: expandedRaw.payload }],
+          nextOffset: undefined,
+        }),
+      },
+    });
+
+    const results = await engine.expandCallChain(
+      [{ ...makeRaw('caller').payload, calls: ['loadPayment'] } as never],
+      createEffectiveFilter(),
+      'calls',
+    );
+
+    expect(results[0]?.enrichment).toEqual({
+      description: 'Loads payment data.',
+      semanticTags: ['payments'],
+    });
+    expect(results[0]?.signature).toBe('load(): void');
+  });
+
+  it('preserves enrichment on adjacent expansion results', async () => {
+    const expandedRaw = makeEnrichedRaw('adjacent', {
+      description: 'Defines the adjacent helper.',
+      semanticTags: ['helper'],
+    });
+    const engine = new SearchEngine({
+      ...config,
+      vectorStore: {
+        search: mockSearch as SearchEngineConfig['vectorStore']['search'],
+        scroll: vi.fn().mockResolvedValue({
+          points: [{ id: expandedRaw.id, payload: { ...expandedRaw.payload, chunkIndex: 0 } }],
+          nextOffset: undefined,
+        }),
+      },
+    });
+
+    const [result] = await engine.getAdjacentChunks(
+      'src/adjacent.ts',
+      1,
+      3,
+      createEffectiveFilter(),
+    );
+
+    expect(result?.enrichment).toEqual({
+      description: 'Defines the adjacent helper.',
+      semanticTags: ['helper'],
+    });
+    expect(result?.signature).toBe('load(): void');
+  });
+
+  it('does not invoke a query-time enrichment client during dependency expansion', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const expandedRaw = makeEnrichedRaw('dependency', { description: 'Indexed dependency summary' });
+    mockSearch.mockResolvedValue([makeRaw('base')]);
+    const engine = new SearchEngine({
+      ...config,
+      dependencyGraph: {
+        getNeighborFiles: vi.fn().mockResolvedValue(['src/dependency.ts']),
+      },
+      vectorStore: {
+        search: mockSearch as SearchEngineConfig['vectorStore']['search'],
+        scroll: vi.fn().mockResolvedValue({
+          points: [{ id: expandedRaw.id, payload: expandedRaw.payload }],
+          nextOffset: undefined,
+        }),
+      },
+    });
+
+    try {
+      const results = await engine.searchWithExpansion(
+        { text: 'load dependency' },
+        createEffectiveFilter(),
+      );
+
+      expect(results[1]?.enrichment).toEqual({ description: 'Indexed dependency summary' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   // Test 10: found:false, fallback_mode:'keyword', suggestions populated when only keyword returns
   it('returns found:false, fallback_mode:keyword with suggestions when only keyword returns results', async () => {
     mockSearch.mockResolvedValue([]);
@@ -218,7 +362,7 @@ describe('SearchEngine.searchWithFallback()', () => {
     mockSearchHybrid.mockResolvedValue([]);
 
     const configWithoutKeyword: SearchEngineConfig = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 384 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 384, contract: MOCK_CONTRACT },
       vectorStore: {
         search: mockSearch,
         searchHybrid: mockSearchHybrid,
@@ -242,7 +386,7 @@ describe('SearchEngine.searchWithFallback()', () => {
     mockSearchKeyword.mockResolvedValue([kwRaw]);
 
     const configWithoutHybrid: SearchEngineConfig = {
-      embeddingProvider: { embed: mockEmbed, dimensions: 384 },
+      embeddingProvider: { embed: mockEmbed, dimensions: 384, contract: MOCK_CONTRACT },
       vectorStore: {
         search: mockSearch,
         // no searchHybrid

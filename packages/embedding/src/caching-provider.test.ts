@@ -1,30 +1,56 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
+import type { EmbeddingContract } from '@ia-framework/core';
 import { CachingEmbeddingProvider } from './caching-provider.js';
-import type { EmbeddingProvider, EmbeddingTaskType } from './interface.js';
+import type {
+  EmbedBatchOutcome,
+  EmbeddingProvider,
+  EmbeddingTaskType,
+} from './interface.js';
 
-function createMockProvider(): EmbeddingProvider {
-  let callCount = 0;
+const MOCK_CONTRACT: EmbeddingContract = {
+  provider: 'openai',
+  model: 'mock-model',
+  dimension: 768,
+  tokenizerVersion: 1,
+  sparseHashVersion: 1,
+};
+
+/**
+ * The double's mocked members must stay visible so call-count assertions are
+ * type-safe rather than unbound-method reads off the interface type.
+ */
+type MockedProvider = EmbeddingProvider & {
+  embed: Mock;
+  embedBatch: Mock;
+  estimateTokens: Mock;
+};
+
+function createMockProvider(): MockedProvider {
   return {
     name: 'mock',
     model: 'mock-model',
     dimensions: 768,
-    embed: vi.fn(async (text: string, _taskType?: EmbeddingTaskType) => {
-      callCount++;
-      // Return a deterministic vector based on text content
-      return Array.from({ length: 768 }, (_, i) => text.charCodeAt(i % text.length) / 255);
-    }),
-    embedBatch: vi.fn(async (texts: string[], _taskType?: EmbeddingTaskType) => {
-      callCount += texts.length;
-      return texts.map((text) =>
-        Array.from({ length: 768 }, (_, i) => text.charCodeAt(i % text.length) / 255),
-      );
-    }),
+    contract: MOCK_CONTRACT,
+    // Deterministic vector derived from the text content.
+    embed: vi.fn((text: string, _taskType?: EmbeddingTaskType) =>
+      Promise.resolve(Array.from({ length: 768 }, (_, i) => text.charCodeAt(i % text.length) / 255)),
+    ),
+    embedBatch: vi.fn(
+      (texts: string[], _taskType?: EmbeddingTaskType): Promise<EmbedBatchOutcome> =>
+        Promise.resolve({
+          vectors: texts.map((text) =>
+            Array.from({ length: 768 }, (_, i) => text.charCodeAt(i % text.length) / 255),
+          ),
+          failures: [],
+        }),
+    ),
     estimateTokens: vi.fn((text: string) => Math.ceil(text.length / 4)),
   };
 }
 
 describe('CachingEmbeddingProvider', () => {
-  let underlying: EmbeddingProvider;
+  let underlying: MockedProvider;
   let caching: CachingEmbeddingProvider;
 
   beforeEach(() => {
@@ -68,12 +94,58 @@ describe('CachingEmbeddingProvider', () => {
       expect(caching.dimensions).toBe(768);
     });
 
+    it('forwards the complete embedding contract from the underlying provider', () => {
+      expect(caching.contract).toEqual(MOCK_CONTRACT);
+    });
+
     it('delegates embedBatch to the underlying provider (no batch caching)', async () => {
       const texts = ['hello', 'world'];
       const result = await caching.embedBatch(texts, 'document');
 
-      expect(result).toHaveLength(2);
-      expect(underlying.embedBatch).toHaveBeenCalledWith(texts, 'document');
+      expect(result.vectors).toHaveLength(2);
+      expect(result.failures).toEqual([]);
+      expect(underlying.embedBatch).toHaveBeenCalledWith(texts, 'document', undefined);
+    });
+
+    it('returns an empty per-input outcome for an empty batch', async () => {
+      const result = await caching.embedBatch([], 'document');
+
+      expect(result).toEqual({ vectors: [], failures: [] });
+      expect(underlying.embedBatch).toHaveBeenCalledWith([], 'document', undefined);
+    });
+
+    it('preserves a cached vector while remapping a failing sibling to its original index', async () => {
+      const cachedVector = await caching.embed('cached', 'document');
+      underlying.embedBatch = vi.fn(
+        (): Promise<EmbedBatchOutcome> =>
+          Promise.resolve({
+            vectors: [null],
+            failures: [{ index: 0, reason: 'provider unavailable', retryable: true }],
+          }),
+      );
+
+      const result = await caching.embedBatch(['cached', 'uncached'], 'document');
+
+      expect(result.vectors).toEqual([cachedVector, null]);
+      expect(result.failures).toEqual([
+        { index: 1, reason: 'provider unavailable', retryable: true },
+      ]);
+      expect(underlying.embedBatch).toHaveBeenCalledWith(['uncached'], 'document', undefined);
+    });
+
+    it('preserves successful and failed positions for a partially failing cache miss batch', async () => {
+      underlying.embedBatch = vi.fn(
+        (): Promise<EmbedBatchOutcome> =>
+          Promise.resolve({
+            vectors: [[1, 2], null, [3, 4]],
+            failures: [{ index: 1, reason: 'invalid input', retryable: false }],
+          }),
+      );
+
+      const result = await caching.embedBatch(['first', 'second', 'third'], 'query');
+
+      expect(result.vectors).toEqual([[1, 2], null, [3, 4]]);
+      expect(result.failures).toEqual([{ index: 1, reason: 'invalid input', retryable: false }]);
     });
 
     it('delegates estimateTokens to the underlying provider', () => {

@@ -2,16 +2,29 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { bm25Rerank, multiHopExpand } from '@ia-framework/retrieval';
-import type { RetrievalResult, FallbackSearchResult } from '@ia-framework/retrieval';
+import { estimateTokens } from '@ia-framework/core';
+import type { ContextItem, VectorBranch } from '@ia-framework/core';
+import { bm25Rerank, multiHopExpand, QueryPlanner } from '@ia-framework/retrieval';
+import type {
+  RetrievalResult,
+  FallbackSearchResult,
+  EffectiveFilter,
+  PlannedQuery,
+} from '@ia-framework/retrieval';
+import type { StoreCapabilities } from '@ia-framework/vector-store';
 import type { MetricsStore, TokenCounter } from '@ia-framework/observability';
-import { analyzeRetrievalQuery, formatRetrievalContext } from './result-formatting.js';
+import { buildCodeAnchor, formatRetrievalContext, isValidLineRange } from './result-formatting.js';
 import { detectIntent, getTemplate } from '../templates/index.js';
-import { applyTokenCap } from './token-cap.js';
+import type { IntentType } from '../templates/index.js';
+import { ContextAssembler, deduplicateResults, selectRange } from '../context/assembler.js';
+import { BudgetGovernor } from '../context/budget.js';
+import {
+  buildDiagnostics,
+  cacheFingerprint,
+  diagnosticsAnomalyLines,
+  type Diagnostics,
+} from '../context/diagnostics.js';
 import { coercedNumber, coercedBoolean } from './coerce.js';
-import { classifyBudget } from './adaptive-budget.js';
-import { classifyQuery } from '../classification/index.js';
-import type { QueryClassification } from '../classification/index.js';
 import { withDegradation, type ServerCapabilities } from '../capabilities.js';
 
 type Engine = {
@@ -19,33 +32,55 @@ type Engine = {
     text: string;
     limit?: number;
     scoreThreshold?: number | undefined;
-  }): Promise<RetrievalResult[]>;
+    onBranchExecuted?: ((branch: VectorBranch) => void) | undefined;
+  }, plan?: PlannedQuery): Promise<RetrievalResult[]>;
   searchWithExpansion(
-    query: { text: string; limit?: number; scoreThreshold?: number | undefined },
+    query: {
+      text: string;
+      limit?: number;
+      scoreThreshold?: number | undefined;
+      onBranchExecuted?: ((branch: VectorBranch) => void) | undefined;
+    },
+    filter: EffectiveFilter,
     options?: { hops?: 0 | 1 | 2 },
+    plan?: PlannedQuery,
   ): Promise<RetrievalResult[]>;
   searchWithFallback?(
-    query: { text: string; limit?: number; scoreThreshold?: number | undefined },
+    query: {
+      text: string;
+      limit?: number;
+      scoreThreshold?: number | undefined;
+      onBranchExecuted?: ((branch: VectorBranch) => void) | undefined;
+    },
     options?: { enableFallback?: boolean; maxSuggestions?: number },
+    plan?: PlannedQuery,
   ): Promise<FallbackSearchResult>;
+  /** Optional store capability declaration used by the shared query planner. */
+  capabilities?(): StoreCapabilities;
   /** Scroll for chunks that match a class/interface name for hierarchy traversal */
-  scrollForHierarchy?(name: string, chunkType: string): Promise<RetrievalResult[]>;
+  scrollForHierarchy?(
+    name: string,
+    chunkType: string,
+    filter: EffectiveFilter,
+  ): Promise<RetrievalResult[]>;
   /** Scroll for chunks that implement/extend a given class or interface (walk DOWN) */
-  scrollForImplementations?(name: string): Promise<RetrievalResult[]>;
+  scrollForImplementations?(name: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   /** Scroll for chunks by their name field (for multi-hop class lookups) */
-  scrollByName?(name: string): Promise<RetrievalResult[]>;
+  scrollByName?(name: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   /** Scroll for chunks that define a given method (for multi-hop method lookups) */
-  scrollByDefines?(methodName: string): Promise<RetrievalResult[]>;
+  scrollByDefines?(methodName: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   /** Fetch adjacent chunks by file path and chunk index */
   getAdjacentChunks?(
     relativePath: string,
     chunkIndex: number,
     totalChunks: number,
+    filter: EffectiveFilter,
     radius?: number,
   ): Promise<RetrievalResult[]>;
   /** Expand call chain: find chunks that define called methods or callers */
   expandCallChain?(
     results: RetrievalResult[],
+    filter: EffectiveFilter,
     direction?: 'calls' | 'calledBy' | 'both',
   ): Promise<RetrievalResult[]>;
   /** Resolve cross-repo edges for a given source file */
@@ -60,14 +95,21 @@ type Engine = {
     }>
   >;
   /** Scroll by name in a specific repo (for cross-repo symbol lookup) */
-  scrollByNameInRepo?(name: string, repoId: string): Promise<RetrievalResult[]>;
+  scrollByNameInRepo?(
+    name: string,
+    repoId: string,
+    filter: EffectiveFilter,
+  ): Promise<RetrievalResult[]>;
   /** T137: Search with interface implementation expansion */
-  searchWithInterfaceExpansion?(query: {
-    text: string;
-    limit?: number;
-    scoreThreshold?: number | undefined;
-    filter?: Record<string, unknown> | undefined;
-  }): Promise<RetrievalResult[]>;
+  searchWithInterfaceExpansion?(
+    query: {
+      text: string;
+      limit?: number;
+      scoreThreshold?: number | undefined;
+      filter?: Record<string, unknown> | undefined;
+    },
+    filter: EffectiveFilter,
+  ): Promise<RetrievalResult[]>;
 };
 
 export interface SearchCodebaseInput {
@@ -111,7 +153,7 @@ export interface ObservabilityConfig {
   /**
    * T058: Read live file content at retrieval time.
    * Receives (relativePath, startLine, endLine) and returns the code snippet.
-   * Used for top-5 results to guard against indexed content drift.
+    * Used for selected results to guard against indexed content drift.
    * Falls back to stored Qdrant payload content on error or when not provided.
    */
   readFileFn?: (
@@ -124,6 +166,22 @@ export interface ObservabilityConfig {
   sessionCache?: { enabled: boolean } | undefined;
   /** Runtime capabilities — degradation surfaced in response structuredContent. */
   capabilities?: ServerCapabilities | undefined;
+  /**
+   * Test/instrumentation hook for the response assembly pipeline.
+   *
+   * F5.4 decision — KEPT, deliberately. Removal was conditional on stage ordering
+   * becoming observable on the response, and it did not: no diagnostics field
+   * carries the stage sequence, and `DIAGNOSTIC_KEYS` is pinned to exactly 13
+   * entries, so adding one is out of scope here. CTX-02 ("final context assembly
+   * runs strictly after retrieval, expansion, live reads and enrichment") is
+   * therefore only verifiable through this hook. Removing it would delete the only
+   * evidence for an ordering requirement — a coverage loss, not a cleanup.
+   */
+  stageHook?: ((stage: string) => void) | undefined;
+  /** Collection generation used to invalidate cached retrieval responses. */
+  indexGeneration?: string | undefined;
+  /** Structured logger for QCC-04 classification events. Optional. */
+  logger?: { info: (entry: Record<string, unknown>, message: string) => void } | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +189,7 @@ export interface ObservabilityConfig {
 // ---------------------------------------------------------------------------
 
 interface SearchCacheEntry {
-  responseText: string;
+  response: ToolOutput;
   resultCount: number;
   lastAccess: number;
 }
@@ -140,10 +198,20 @@ const SEARCH_CACHE_MAX = 100;
 const searchCache = new Map<string, SearchCacheEntry>();
 let searchCacheAccessCounter = 0;
 
-function buildSearchCacheKey(input: SearchCodebaseInput): string {
-  // JSON-stable hash of the full input (sorted keys for determinism)
-  const normalized = JSON.stringify(input, Object.keys(input).sort());
-  return createHash('sha256').update(normalized).digest('hex').slice(0, 32);
+function buildSearchCacheKey(
+  input: SearchCodebaseInput,
+  plan: PlannedQuery,
+  observability?: ObservabilityConfig,
+): string {
+  return cacheFingerprint({
+    query: input.query,
+    planFingerprint: plan.fingerprint,
+    filter: plan.filter,
+    expansion: plan.expansion,
+    budget: plan.budget,
+    options: input,
+    indexGeneration: observability?.indexGeneration ?? 'unknown',
+  });
 }
 
 function evictSearchLRU(): void {
@@ -158,10 +226,265 @@ function evictSearchLRU(): void {
   if (oldestKey) searchCache.delete(oldestKey);
 }
 
+function resolvePlanCapabilities(engine: Engine): StoreCapabilities {
+  return (
+    engine.capabilities?.() ?? {
+      // SearchEngine-backed MCP engines use the sparse-capable Qdrant contract. The
+      // optional boundary hook lets tests and alternate adapters declare otherwise.
+      sparse: true,
+      filterOnly: true,
+      payloadIndexes: [],
+    }
+  );
+}
+
+/**
+ * Placeholder used while measuring a response that will carry its own token count.
+ * Wide enough that substituting the real figure cannot make the response larger
+ * than what was measured, so the estimate never under-reports (BUD-13).
+ */
+const ESTIMATE_SENTINEL = 999_999_999;
+
+function planConfidence(plan: PlannedQuery): number {
+  return plan.route === 'keyword' ? 1 : 0.5;
+}
+
+// ---------------------------------------------------------------------------
+// Executed-branch provenance (SPR-04, SPR-06)
+//
+// `plan.branches` is what the planner SELECTED. The engine reports each branch
+// at the moment it issues the retrieval call, so a branch the plan selected but
+// the engine skipped (empty sparse vector, adapter without capability) is never
+// observed — which is what makes "skipped" distinguishable from "executed with
+// zero results" on the response.
+//
+// Keyed by the plan instance rather than threaded through every formatter
+// signature: the planner produces a fresh plan per request, so the record is
+// request-scoped, and a WeakMap retains nothing after the response is built.
+// ---------------------------------------------------------------------------
+
+const observedBranches = new WeakMap<PlannedQuery, VectorBranch[]>();
+
+function branchRecorder(plan: PlannedQuery): (branch: VectorBranch) => void {
+  return (branch) => {
+    const observed = observedBranches.get(plan) ?? [];
+    if (!observed.includes(branch)) observed.push(branch);
+    observedBranches.set(plan, observed);
+  };
+}
+
+function executedBranchesFor(plan: PlannedQuery): VectorBranch[] {
+  return observedBranches.get(plan) ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Deduplication accounting (BUD-15, CTX-13)
+//
+// The counter observes the collapse that actually happened on this request:
+// candidates in minus survivors out at each dedup point. Request-scoped for the
+// same reason as the branch record above.
+// ---------------------------------------------------------------------------
+
+const deduplicatedCounts = new WeakMap<PlannedQuery, number>();
+
+/** Record a collapse of `before` candidates into `after` survivors. */
+function recordDeduplicated(plan: PlannedQuery, before: number, after: number): void {
+  deduplicatedCounts.set(plan, (deduplicatedCounts.get(plan) ?? 0) + Math.max(0, before - after));
+}
+
+function deduplicatedFor(plan: PlannedQuery): number {
+  return deduplicatedCounts.get(plan) ?? 0;
+}
+
+/**
+ * BUD-15 + `context.md` decision 4: the full 13-field diagnostics set appears on
+ * **every** response, on every route — including failures. A failure carries the
+ * honest values for what happened: nothing was retrieved, so every count is 0 and
+ * no branch executed. When the plan survived (retrieval failed after planning)
+ * its route and configured budget are real and reported as such.
+ */
+function failureDiagnostics(plan: PlannedQuery | undefined): Record<string, unknown> {
+  if (plan) return diagnosticsContent(plan, [], null, { candidateCount: 0, estimated: 0 });
+  return buildDiagnostics({
+    route: 'unplanned',
+    executedBranches: [],
+    fallbackMode: null,
+    candidateCount: 0,
+    selectedCount: 0,
+    deduplicatedCount: 0,
+    omittedCount: 0,
+    expansionCount: 0,
+    staleCount: 0,
+    estimatedTokens: 0,
+    configuredBudget: 0,
+    compactionCount: 0,
+    exactNodeOverflow: false,
+  }) as unknown as Record<string, unknown>;
+}
+
+/**
+ * FAIL-07: a failure response costs real tokens, so it reports a conservative
+ * measurement of its own serialized envelope rather than 0. The self-referential
+ * count is measured with a wide sentinel in its place, so the figure can never
+ * under-report the string actually returned (BUD-13).
+ */
+function withMeasuredFailureCost(
+  text: string,
+  structuredContent: Record<string, unknown>,
+): ToolOutput {
+  const measured = estimateTokens(
+    JSON.stringify(
+      toTextResult(text, { ...structuredContent, estimated_tokens: ESTIMATE_SENTINEL }),
+    ),
+  );
+  return toTextResult(text, { ...structuredContent, estimated_tokens: measured });
+}
+
+function planDiagnostic(error: unknown): ToolOutput {
+  const message = error instanceof Error ? error.message : String(error);
+  return withMeasuredFailureCost(
+    `Conclusion: the search request was refused.\n\nQuery plan could not be produced: ${message}\n\n` +
+      'Suggestion: provide a non-empty query and valid expansion, budget, and filter values.',
+    {
+      ...failureDiagnostics(undefined),
+      status: 'refused',
+      plan_error: true,
+      answered: false,
+    },
+  );
+}
+
+function retrievalFailure(error: unknown, plan?: PlannedQuery): ToolOutput {
+  const message = error instanceof Error ? error.message : String(error);
+  const contractFailure = /contract|dimension|schema|unknown/i.test(message);
+  const status = contractFailure ? 'refused' : 'unavailable';
+  const remediation = contractFailure
+    ? 'run ia index --force after verifying the active and persisted embedding contracts'
+    : 'verify Qdrant availability and retry the request';
+  return withMeasuredFailureCost(
+    `Conclusion: retrieval ${status === 'refused' ? 'was refused' : 'is unavailable'}.\n\n${message}\nSuggestion: ${remediation}.`,
+    { ...failureDiagnostics(plan), status, answered: false, results: [] },
+  );
+}
+
+function hasGroundedFallback(results: RetrievalResult[], plan: PlannedQuery): boolean {
+  if (plan.lexical.exactSymbols.length === 0) return true;
+  return results.some((result) =>
+    plan.lexical.exactSymbols.some((symbol) => {
+      const symbols = [symbol, symbol.split(/\.|::/).pop() ?? symbol];
+      return symbols.some((candidate) =>
+        [
+          result.name,
+          result.parentName,
+          result.relativePath,
+          result.signature,
+          result.classSignature,
+          ...(result.defines ?? []),
+        ]
+          .filter((value): value is string => value !== undefined)
+          .some((value) => value.toLowerCase().includes(candidate.toLowerCase())),
+      );
+    }),
+  );
+}
+
+function addRepoConstraint(filter: EffectiveFilter): EffectiveFilter {
+  if (!filter.repoId) return filter;
+  const existingMust: unknown[] = Array.isArray(filter.userFilters.must)
+    ? [...(filter.userFilters.must as unknown[])]
+    : [];
+  const hasRepoConstraint = existingMust.some(
+    (condition) =>
+      typeof condition === 'object' &&
+      condition !== null &&
+      (condition as { key?: unknown }).key === 'repoId',
+  );
+  if (!hasRepoConstraint) {
+    existingMust.push({ key: 'repoId', match: { value: filter.repoId } });
+  }
+  return {
+    ...filter,
+    userFilters: {
+      ...filter.userFilters,
+      must: existingMust,
+    },
+  };
+}
+
 /** Exported for testing: reset the session cache. */
 export function resetSearchSessionCache(): void {
   searchCache.clear();
   searchCacheAccessCounter = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Embedding-contract gate (EMB-09, A-27, D-2, D-6)
+//
+// The contract is a per-collection invariant, so each collection registers one
+// assert and its verdict is cached for the process lifetime: only
+// `ia index --force` can change that state, so re-asserting per request would
+// add latency without adding information. A failure in ANY collection refuses
+// the search — a mismatched collection can only return degraded results, which
+// EMB-09 forbids.
+// ---------------------------------------------------------------------------
+
+type ContractGate = { assert: () => Promise<void>; verdict?: Error | null };
+
+const contractGates = new Map<string, ContractGate>();
+
+/**
+ * Register the contract assert for a collection. Called once per discovered
+ * collection at server startup.
+ */
+export function registerContractGate(collectionName: string, assert: () => Promise<void>): void {
+  contractGates.set(collectionName, { assert });
+}
+
+/** Exported for testing: clear registered gates and their cached verdicts. */
+export function resetContractVerdictCache(): void {
+  contractGates.clear();
+}
+
+/**
+ * Assert every registered collection contract at most once. Returns the refusal
+ * error to report, or `null` when all collections are searchable (or unguarded).
+ */
+export async function assertContractGates(): Promise<Error | null> {
+  for (const gate of contractGates.values()) {
+    if (gate.verdict === undefined) {
+      try {
+        await gate.assert();
+        gate.verdict = null;
+      } catch (error) {
+        gate.verdict = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    if (gate.verdict) return gate.verdict;
+  }
+  return null;
+}
+
+/**
+ * Warm the gates at server startup so an operator sees the problem in the logs
+ * immediately. Reports each unsearchable collection through `onRefusal` and
+ * **never throws**: per D-2, a throw in `bin.ts` becomes `process.exit(1)`,
+ * which hands the agent an opaque dead server instead of the actionable
+ * per-request refusal the contract gate already produces.
+ */
+export async function warmContractGates(
+  onRefusal: (collectionName: string, error: Error) => void,
+): Promise<void> {
+  for (const [collectionName, gate] of contractGates) {
+    if (gate.verdict === undefined) {
+      try {
+        await gate.assert();
+        gate.verdict = null;
+      } catch (error) {
+        gate.verdict = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    if (gate.verdict) onRefusal(collectionName, gate.verdict);
+  }
 }
 
 function toTextResult(text: string, structuredContent?: Record<string, unknown>): ToolOutput {
@@ -175,8 +498,171 @@ function toTextResult(text: string, structuredContent?: Record<string, unknown>)
       };
 }
 
+function diagnosticsFor(
+  plan: PlannedQuery,
+  results: RetrievalResult[],
+  fallbackMode: string | null = null,
+  budget?: {
+    candidateCount?: number;
+    omitted?: number;
+    compacted?: number;
+    overflow?: boolean;
+    estimated?: number;
+    overflowAmounts?: { configured: number; estimated: number; amount: number } | undefined;
+  },
+): Diagnostics {
+  return buildDiagnostics({
+    route: plan.route,
+    executedBranches: executedBranchesFor(plan),
+    fallbackMode,
+    candidateCount: budget?.candidateCount ?? results.length,
+    selectedCount: results.length,
+    deduplicatedCount: deduplicatedFor(plan),
+    omittedCount: budget?.omitted ?? 0,
+    expansionCount: results.filter((result) => result.expansionSource !== undefined).length,
+    staleCount: results.filter((result) => result.stale === true).length,
+    estimatedTokens: budget?.estimated ?? estimateTokens(results.map((result) => result.content).join('\n')),
+    configuredBudget: plan.budget.limit,
+    compactionCount: budget?.compacted ?? 0,
+    exactNodeOverflow: budget?.overflow ?? false,
+    ...(budget?.overflowAmounts ? { overflowAmounts: budget.overflowAmounts } : {}),
+  });
+}
+
+function diagnosticsContent(
+  plan: PlannedQuery,
+  results: RetrievalResult[],
+  fallbackMode?: string | null,
+  budget?: {
+    candidateCount?: number;
+    omitted?: number;
+    compacted?: number;
+    overflow?: boolean;
+    estimated?: number;
+    overflowAmounts?: { configured: number; estimated: number; amount: number } | undefined;
+  },
+): Record<string, unknown> {
+  return diagnosticsFor(plan, results, fallbackMode, budget) as unknown as Record<string, unknown>;
+}
+
+function withDiagnostics(
+  response: ToolOutput,
+  plan: PlannedQuery,
+  results: RetrievalResult[],
+  fallbackMode: string | null = null,
+  status: 'ok' | 'empty' | 'low_confidence' | 'unavailable' | 'refused' = results.length > 0 ? 'ok' : 'empty',
+): ToolOutput {
+  return {
+    ...response,
+    structuredContent: {
+      ...(response.structuredContent as Record<string, unknown> | undefined),
+      ...diagnosticsContent(plan, results, fallbackMode),
+      status,
+    },
+  };
+}
+
+/**
+ * BUD-01/BUD-16: the single budget contract for the routes that build their own
+ * prose body (keyword, existence, aggregation, zero-result fallback).
+ *
+ * Each of these routes formats a bounded number of already-selected results
+ * rather than assembling ContextItems, so enforcement is applied to the rendered
+ * response: `render` is called with a candidate count, the result is measured,
+ * and when it exceeds the budget the count is reduced from the bottom of the
+ * ranking and re-rendered once (D-1, max 2 passes). `estimated_tokens` always
+ * reports the measurement of the response actually returned.
+ */
+function enforceRouteBudget(
+  plan: PlannedQuery,
+  results: RetrievalResult[],
+  render: (shown: RetrievalResult[]) => ToolOutput,
+  fallbackMode: string | null = null,
+  status?: 'ok' | 'empty' | 'low_confidence' | 'unavailable' | 'refused',
+): ToolOutput {
+  const candidateCount = results.length;
+  const overflowFor = (estimated: number) =>
+    estimated > plan.budget.limit && plan.budget.limit > 0
+      ? {
+          configured: plan.budget.limit,
+          estimated,
+          amount: estimated - plan.budget.limit,
+        }
+      : undefined;
+
+  /**
+   * BUD-03/BUD-12: measure the complete envelope — prose body plus the diagnostics
+   * block that will accompany it — not just the rendered body. The self-referential
+   * token count is measured via a wide sentinel so the figure never under-reports.
+   */
+  const measure = (response: ToolOutput, shown: RetrievalResult[], estimated: number): number =>
+    estimateTokens(
+      JSON.stringify({
+        ...response,
+        structuredContent: {
+          ...(response.structuredContent as Record<string, unknown> | undefined),
+          ...diagnosticsContent(plan, shown, fallbackMode, {
+            candidateCount,
+            omitted: candidateCount - shown.length,
+            estimated: ESTIMATE_SENTINEL,
+            overflow: overflowFor(estimated) !== undefined,
+            ...(overflowFor(estimated) ? { overflowAmounts: overflowFor(estimated) } : {}),
+          }),
+          status: shown.length > 0 ? 'ok' : 'empty',
+        },
+      }),
+    );
+
+  const measureFor = (shown: RetrievalResult[]): { response: ToolOutput; estimated: number } => {
+    const response = render(shown);
+    // Two-step: the first measurement sizes the body, the second accounts for the
+    // overflow fields that measurement may itself trigger.
+    const provisional = measure(response, shown, 0);
+    return { response, estimated: measure(response, shown, provisional) };
+  };
+
+  let { response, estimated } = measureFor(results);
+  let shown = results;
+
+  if (plan.budget.limit > 0 && estimated > plan.budget.limit) {
+    // Drop from the bottom of the ranking until the measured response fits, always
+    // keeping the single highest-ranked item so a response is never empty (BUD-08).
+    let low = 1;
+    let high = shown.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (measureFor(shown.slice(0, middle)).estimated <= plan.budget.limit) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    shown = shown.slice(0, Math.max(1, low - 1));
+    ({ response, estimated } = measureFor(shown));
+  }
+
+  const omitted = candidateCount - shown.length;
+  const resolvedStatus = status ?? (shown.length > 0 ? 'ok' : 'empty');
+  const overflow = overflowFor(estimated);
+  return {
+    ...response,
+    structuredContent: {
+      ...(response.structuredContent as Record<string, unknown> | undefined),
+      ...diagnosticsContent(plan, shown, fallbackMode, {
+        candidateCount,
+        omitted,
+        estimated,
+        overflow: overflow !== undefined,
+        ...(overflow ? { overflowAmounts: overflow } : {}),
+      }),
+      status: resolvedStatus,
+    },
+  };
+}
+
 function buildSearchResponse(
   input: SearchCodebaseInput,
+  plan: PlannedQuery,
   results: RetrievalResult[],
   note?: string,
   fallbackResult?: FallbackSearchResult,
@@ -184,11 +670,13 @@ function buildSearchResponse(
   capMeta?: { token_cap_applied: true; results_trimmed: number },
   thresholdFiltered?: boolean,
 ): ToolOutput {
-  const intent = analyzeRetrievalQuery(input.query);
+  const hasArchitectureOrFlowSignal =
+    plan.representations.signature.includes('architecture') ||
+    plan.representations.signature.includes('data-flow');
   const guardrailLead =
     results.length > 0
       ? `Conclusion: found ${results.length} evidence-backed ${results.length === 1 ? 'match' : 'matches'}${
-          intent.architectureQuery || intent.dataFlowQuery
+          hasArchitectureOrFlowSignal
             ? ' relevant to the requested architecture or flow.'
             : '.'
         }`
@@ -209,7 +697,9 @@ function buildSearchResponse(
         .join('\n');
       const text = `${guardrailLead}\n\nNo results for '${input.query}'. Related communication mechanisms found:\n\n${relatedLines}`;
 
-      return toTextResult(text, {
+      return withDiagnostics(toTextResult(text, {
+        route: plan.route,
+        branches: plan.branches,
         found: false,
         fallback_used: true,
         fallback_mode: fallbackResult.fallback_mode,
@@ -220,7 +710,7 @@ function buildSearchResponse(
           snippet: r.content.slice(0, 200),
         })),
         answered: false,
-      });
+      }), plan, results, fallbackResult.fallback_mode);
     }
 
     // Fallback envelope with suggestions
@@ -230,7 +720,9 @@ function buildSearchResponse(
         .join('\n');
       const text = `${guardrailLead}\n\nNo exact match found. Closest related code:\n${suggestionLines}`;
 
-      return toTextResult(text, {
+      return withDiagnostics(toTextResult(text, {
+        route: plan.route,
+        branches: plan.branches,
         found: false,
         fallback_used: fallbackResult.fallback_used,
         fallback_mode: fallbackResult.fallback_mode,
@@ -240,7 +732,7 @@ function buildSearchResponse(
           snippet: s.snippet,
         })),
         answered: false,
-      });
+      }), plan, results, fallbackResult.fallback_mode);
     }
 
     const noResultText = thresholdFiltered
@@ -249,7 +741,9 @@ function buildSearchResponse(
         ? `${guardrailLead}\n\n${note}\n\nNo results found for query: "${input.query}"`
         : `${guardrailLead}\n\nNo results found for query: "${input.query}"`;
 
-    return toTextResult(noResultText, {
+    return withDiagnostics(toTextResult(noResultText, {
+      route: plan.route,
+      branches: plan.branches,
       ...(note ? { fallbackUsed: true } : {}),
       ...(thresholdFiltered ? { threshold_filtered: true } : {}),
       ...(fallbackResult
@@ -261,7 +755,7 @@ function buildSearchResponse(
           }
         : {}),
       answered: false,
-    });
+    }), plan, results, fallbackResult?.fallback_mode ?? null);
   }
 
   const prefix = note ? `${note}\n\n` : '';
@@ -269,12 +763,11 @@ function buildSearchResponse(
   // Template injection: detect intent and prepend scaffolding if applicable
   let templatePrefix = '';
   let intentDetected: string | undefined;
-  if (useTemplate !== false) {
-    const detectedIntent = detectIntent(input.query);
-    const template = getTemplate(detectedIntent);
+  if (useTemplate !== false && plan.templateId) {
+    const template = getTemplate(plan.templateId as IntentType);
     if (template) {
       templatePrefix = `${template}\n\n`;
-      intentDetected = detectedIntent!;
+      intentDetected = plan.templateId;
     }
   }
 
@@ -299,22 +792,68 @@ function buildSearchResponse(
 
   const text = `${guardrailLead}\n\n${templatePrefix}${prefix}## Code results for: "${input.query}"\n\n${formattedBody}`;
 
-  // Build structured results array with repo field
+  // Build structured results array with repo field.
+  // ENR-01 + context.md decision 5: enrichment reaches the caller in
+  // structuredContent ONLY. The prose body stays pure evidence, because a
+  // model-generated summary of source that is already present pays twice for the
+  // same information. A chunk with no enrichment omits the key entirely rather
+  // than emitting an empty or misleading field (ENR-08).
   const structuredResults = results.map((r) => ({
     file: r.relativePath,
     name: r.name,
     score: r.score,
     ...(r.repoId ? { repo: r.repoId } : {}),
     ...(r.stale ? { stale: true } : {}),
+    ...(r.signatureOnly ? { signature_only: true } : {}),
+    ...((r as FormedResult).readFailed ? { read_failed: true } : {}),
+    ...(r.parentName !== undefined ? { parent_name: r.parentName } : {}),
+    ...(isValidLineRange(r.parentStartLine, r.parentEndLine)
+      ? { parent_start_line: r.parentStartLine, parent_end_line: r.parentEndLine }
+      : {}),
+    ...(r.partIndex !== undefined && Number.isInteger(r.partIndex) && r.partIndex >= 1
+      ? { part_index: r.partIndex }
+      : {}),
+    ...(r.totalParts !== undefined && Number.isInteger(r.totalParts) && r.totalParts >= 1
+      ? { total_parts: r.totalParts }
+      : {}),
+    ...(r.truncated !== undefined ? { truncated: r.truncated } : {}),
+    ...(structuredEnrichment(r.enrichment) ?? {}),
   }));
 
-  return toTextResult(text, {
+  return withDiagnostics(toTextResult(text, {
+    route: plan.route,
+    branches: plan.branches,
     ...(note ? { fallbackUsed: true } : {}),
     ...(intentDetected ? { intent_detected: intentDetected } : {}),
     ...(capMeta ? capMeta : {}),
     results: structuredResults,
     answered: true,
-  });
+  }), plan, results);
+}
+
+/**
+ * ENR-01 / ENR-08: project a chunk's enrichment into structuredContent, keeping
+ * only the fields that are actually populated. Returns `undefined` when the
+ * chunk carries no enrichment at all, so the `enrichment` key is omitted rather
+ * than emitted empty.
+ */
+function structuredEnrichment(
+  enrichment: RetrievalResult['enrichment'],
+): { enrichment: Record<string, unknown> } | undefined {
+  if (!enrichment) return undefined;
+  const projected: Record<string, unknown> = {
+    ...(enrichment.description === undefined ? {} : { description: enrichment.description }),
+    ...(enrichment.businessContext === undefined
+      ? {}
+      : { businessContext: enrichment.businessContext }),
+    ...(enrichment.semanticTags === undefined ? {} : { semanticTags: enrichment.semanticTags }),
+    ...(enrichment.relationships === undefined ? {} : { relationships: enrichment.relationships }),
+    ...(enrichment.enrichmentModel === undefined
+      ? {}
+      : { enrichmentModel: enrichment.enrichmentModel }),
+    ...(enrichment.enrichedAt === undefined ? {} : { enrichedAt: enrichment.enrichedAt }),
+  };
+  return Object.keys(projected).length > 0 ? { enrichment: projected } : undefined;
 }
 
 /**
@@ -337,21 +876,72 @@ export function formatResult(result: RetrievalResult, index: number): string {
   const sourceTag = result.source ? ` [${result.source}]` : '';
   const hierarchyTag = result.expansionSource === 'hierarchy' ? ' [hierarchy]' : '';
   const staleTag = result.stale ? ' [stale]' : '';
+  // A-29: the chunk exceeded the provider per-input limit at index time, so only
+  // its signature and doc comment were embedded. Its full line range and live
+  // body are intact, but the match was semantically reduced — mark it, so the
+  // degradation is reported rather than inferred (FAIL-08).
+  const signatureOnlyTag = result.signatureOnly ? ' [signature-only]' : '';
+  // ENR-07: exact source was unavailable, so this item is a signature. Marked
+  // rather than silently served as if it were the code the caller asked for.
+  const formTag =
+    (result as FormedResult).contextForm === 'signature' && result.content ? ' [signature]' : '';
+  // FAIL-01/FAIL-04: the live read for this file failed. A THIRD, distinct marker:
+  // `[signature]` means exact source was unavailable at retrieval, `[signature-only]`
+  // means the embedding was reduced at index time, `[read-failed]` means the
+  // filesystem read itself failed.
+  const readFailedTag = (result as FormedResult).readFailed ? ' [read-failed]' : '';
+  const partTag =
+    result.partIndex !== undefined && result.totalParts !== undefined
+      ? ` [part ${result.partIndex}/${result.totalParts}]`
+      : '';
+  const truncatedTag = result.truncated === true ? ' [truncated]' : '';
+  const tags = `${sourceTag}${hierarchyTag}${staleTag}${signatureOnlyTag}${formTag}${readFailedTag}${partTag}${truncatedTag}`;
   const lineRange = `:${result.startLine}-${result.endLine}`;
   const scoreLabel = formatScore(result);
   const header = result.name
-    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — ${scoreLabel} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`
-    : `### ${index}. ${result.relativePath}${lineRange} — ${scoreLabel} [${result.matchedVector}]${sourceTag}${hierarchyTag}${staleTag}`;
+    ? `### ${index}. ${result.relativePath}${lineRange} (${result.name}) — ${scoreLabel} [${result.matchedVector}]${tags}`
+    : `### ${index}. ${result.relativePath}${lineRange} — ${scoreLabel} [${result.matchedVector}]${tags}`;
   const contextLine = formatRetrievalContext(result);
 
-  // T059: metadata-only when content is empty (results 6-10 per token budget contract)
+  // Empty content means the result is represented by its anchor and metadata.
   if (!result.content) {
-    return `${header}\n${contextLine}`;
+    const failure = (result as FormedResult).readFailed;
+    // FAIL-04: state what failed, then the best grounded evidence that remains.
+    return failure
+      ? `${header}\n${contextLine}\nLive source could not be read: ${failure}`
+      : `${header}\n${contextLine}`;
   }
 
   const codeBlock = `\`\`\`${result.language}\n${result.content}\n\`\`\``;
+  const failure = (result as FormedResult).readFailed;
 
-  return `${header}\n${contextLine}\n${codeBlock}`;
+  // FAIL-01/FAIL-04: name the failure, then serve the best grounded evidence that
+  // remains — the indexed body for this exact range, explicitly marked as not
+  // live-verified rather than passed off as a successful read.
+  return failure
+    ? `${header}\n${contextLine}\nLive source could not be read: ${failure}. Showing indexed content for this range.\n${codeBlock}`
+    : `${header}\n${contextLine}\n${codeBlock}`;
+}
+
+/**
+ * BUD-16: render a result as anchor + metadata with no source body, for the
+ * existence and aggregation routes which must remain source-free.
+ * @internal
+ */
+function formatSourceFree(result: RetrievalResult, index: number): string {
+  const sourceTag = result.source ? ` [${result.source}]` : '';
+  const staleTag = result.stale ? ' [stale]' : '';
+  // A-29 applies on every route — a semantically reduced match is marked here too.
+  const signatureOnlyTag = result.signatureOnly ? ' [signature-only]' : '';
+  const partTag =
+    Number.isInteger(result.partIndex) &&
+    Number.isInteger(result.totalParts) &&
+    result.partIndex! >= 1 &&
+    result.totalParts! >= result.partIndex!
+      ? ` [part ${result.partIndex}/${result.totalParts}]`
+      : '';
+  const truncatedTag = result.truncated === true ? ' [truncated]' : '';
+  return `### ${index}. ${buildCodeAnchor(result)} — ${formatScore(result)} [${result.matchedVector}]${sourceTag}${staleTag}${signatureOnlyTag}${partTag}${truncatedTag}`;
 }
 
 /**
@@ -362,6 +952,7 @@ async function expandHierarchy(
   engine: Engine,
   results: RetrievalResult[],
   maxHops: number,
+  filter: EffectiveFilter,
 ): Promise<RetrievalResult[]> {
   if ((!engine.scrollForHierarchy && !engine.scrollForImplementations) || maxHops === 0) return [];
 
@@ -371,7 +962,7 @@ async function expandHierarchy(
   // Walk UP: collect seeds from superclass references
   let upFrontier: Array<{ name: string; chunkType: string }> = [];
   // Walk DOWN: collect seeds from class/interface names to find implementors
-  let downFrontier: string[] = [];
+  const downFrontier: string[] = [];
 
   for (const r of results) {
     if (r.superclass && engine.scrollForHierarchy) {
@@ -395,7 +986,7 @@ async function expandHierarchy(
     for (let hop = 0; hop < maxHops && upFrontier.length > 0; hop++) {
       const nextFrontier: Array<{ name: string; chunkType: string }> = [];
       for (const { name, chunkType } of upFrontier) {
-        const hits = await engine.scrollForHierarchy(name, chunkType);
+        const hits = await engine.scrollForHierarchy(name, chunkType, filter);
         for (const hit of hits) {
           if (!seenIds.has(hit.chunkId)) {
             seenIds.add(hit.chunkId);
@@ -417,7 +1008,7 @@ async function expandHierarchy(
     const uniqueNames = [...new Set(downFrontier)];
     // Limit to first 5 names to avoid excessive scrolling
     for (const name of uniqueNames.slice(0, 5)) {
-      const hits = await engine.scrollForImplementations(name);
+      const hits = await engine.scrollForImplementations(name, filter);
       for (const hit of hits) {
         if (!seenIds.has(hit.chunkId)) {
           seenIds.add(hit.chunkId);
@@ -434,7 +1025,7 @@ async function expandHierarchy(
       const edges = await engine.getCrossRepoEdges(r.repoId, r.relativePath);
       for (const edge of edges) {
         if (!edge.targetSymbol) continue;
-        const hits = await engine.scrollByNameInRepo(edge.targetSymbol, edge.targetRepo);
+        const hits = await engine.scrollByNameInRepo(edge.targetSymbol, edge.targetRepo, filter);
         for (const hit of hits) {
           if (!seenIds.has(hit.chunkId)) {
             seenIds.add(hit.chunkId);
@@ -455,8 +1046,8 @@ function logClassification(
   observability: ObservabilityConfig,
   data: {
     query: string;
-    classification: QueryClassification;
-    classificationLatencyMs: number;
+    plan: PlannedQuery;
+    planningLatencyMs: number;
     route: 'keyword' | 'semantic' | 'keyword-fallback-semantic' | 'existence' | 'aggregation';
     totalLatencyMs: number;
     resultCount: number;
@@ -467,18 +1058,18 @@ function logClassification(
   const logEntry = {
     event: 'query_classification',
     query: data.query,
-    type: data.classification.type,
-    reason: data.classification.reason,
-    confidence: data.classification.confidence,
+    type: data.plan.route,
+    reason: data.plan.intent,
+    confidence: planConfidence(data.plan),
     route: data.route,
-    classificationMs: data.classificationLatencyMs,
+    classificationMs: data.planningLatencyMs,
     totalMs: data.totalLatencyMs,
     results: data.resultCount,
     ...(data.earlyExit !== undefined ? { earlyExit: data.earlyExit } : {}),
     ...(data.earlyExitReason ? { earlyExitReason: data.earlyExitReason } : {}),
   };
-  if ('logger' in observability && typeof (observability as any).logger?.info === 'function') {
-    (observability as any).logger.info(logEntry, 'query_classification');
+  if (typeof observability.logger?.info === 'function') {
+    observability.logger.info(logEntry, 'query_classification');
   }
 }
 
@@ -502,6 +1093,64 @@ function groupByRepo(results: RetrievalResult[]): Map<string, RetrievalResult[]>
 }
 
 /**
+ * The context form the assembler chose for a result, carried alongside the
+ * retrieval result so the formatter can mark a degraded item. A 'signature'
+ * form on a non-class/non-dependency intent means exact source was unavailable,
+ * which ENR-07 requires to be visible rather than silently summarized.
+ */
+type FormedResult = RetrievalResult & {
+  contextForm?: ContextItem['form'];
+  /**
+   * FAIL-01/FAIL-04: the live read for this item's file failed. Distinct from
+   * `[signature]` (exact source unavailable at retrieval) and `[signature-only]`
+   * (embedding reduced at index time): here the filesystem itself refused, so the
+   * item degrades to anchor + metadata and says why.
+   */
+  readFailed?: string | undefined;
+};
+
+/** Live reads are issued per file, so failures are keyed by repo + relative path. */
+function liveSourceKey(result: Pick<RetrievalResult, 'repoId' | 'relativePath'>): string {
+  return `${result.repoId ?? ''}\0${result.relativePath}`;
+}
+
+function anchorReadKey(anchor: ContextItem['anchor']): string {
+  return `${anchor.repoId ?? ''}\0${anchor.relativePath}`;
+}
+
+function resultsForContextItems(
+  items: ReturnType<ContextAssembler['assemble']>,
+  results: RetrievalResult[],
+  intent: PlannedQuery['intent'],
+): FormedResult[] {
+  return items.map((item) => {
+    const source =
+      results.find((result) => {
+        const range = selectRange(result, intent);
+        return (
+          result.relativePath === item.anchor.relativePath &&
+          result.repoId === item.anchor.repoId &&
+          range.startLine === item.anchor.startLine &&
+          range.endLine === item.anchor.endLine
+        );
+        }) ??
+        results.find(
+          (result) =>
+            result.repoId === item.anchor.repoId &&
+            result.relativePath === item.anchor.relativePath,
+        ) ??
+        results[0]!;
+    return {
+      ...source,
+      startLine: item.anchor.startLine,
+      endLine: item.anchor.endLine,
+      content: item.text ?? '',
+      contextForm: item.form,
+    };
+  });
+}
+
+/**
  * Handle the search_codebase tool call.
  * Exported separately for testability.
  */
@@ -510,22 +1159,48 @@ export async function searchCodebaseHandler(
   input: SearchCodebaseInput,
   observability?: ObservabilityConfig,
 ): Promise<ToolOutput> {
+  const startTime = Date.now();
+
+  // ── Embedding-contract gate (EMB-09, A-27, D-2) ─────────────────────────────
+  // Asserted before any retrieval so a refused collection never serves evidence
+  // (FAIL-02). Returned as a normal successful tool result, never an MCP
+  // protocol error (AD-004).
+  const refusal = await assertContractGates();
+  if (refusal) return retrievalFailure(refusal);
+
+  const templateId = detectIntent(input.query) ?? undefined;
+  let plan: PlannedQuery;
+  try {
+    plan = new QueryPlanner().plan(
+      {
+        query: input.query,
+        ...(input.repo === undefined ? {} : { repo: input.repo }),
+        ...(input.stereotype === undefined ? {} : { stereotype: input.stereotype }),
+        ...(input.archLayer === undefined ? {} : { archLayer: input.archLayer }),
+        ...(input.module === undefined ? {} : { module: input.module }),
+        ...(input.language === undefined ? {} : { language: input.language }),
+        expansionHops: input.expand_hops ?? observability?.defaultExpansionHops ?? 2,
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        ...(observability?.maxTokensPerCall === undefined
+          ? {}
+          : { maxTokens: observability.maxTokensPerCall }),
+        ...(templateId === undefined ? {} : { templateId }),
+      },
+      resolvePlanCapabilities(engine),
+    );
+  } catch (error) {
+    return planDiagnostic(error);
+  }
+
   // ── Session dedup check (T156) ──────────────────────────────────────────────
   if (observability?.sessionCache?.enabled) {
-    const cacheKey = buildSearchCacheKey(input);
+    const cacheKey = buildSearchCacheKey(input, plan, observability);
     const cached = searchCache.get(cacheKey);
     if (cached) {
       cached.lastAccess = ++searchCacheAccessCounter;
-      const shortMsg = `Same results as previous identical query (${cached.resultCount} results). Refine your query or use filters to get different results.`;
-      return toTextResult(shortMsg, {
-        answered: true,
-        cached: true,
-        resultCount: cached.resultCount,
-      });
+      return cached.response;
     }
   }
-
-  const startTime = Date.now();
 
   // Build combined Qdrant filter from all filter params (repo, stereotype, archLayer, module, language)
   const filterConditions: Array<{ key: string; match: { value: string } }> = [];
@@ -541,12 +1216,13 @@ export async function searchCodebaseHandler(
 
   // Keep repoFilter alias for backward-compatible usage in keyword/existence/aggregation paths
   const repoFilter = combinedFilter;
+  const effectiveFilter = addRepoConstraint(plan.filter);
+  const planningLatencyMs = Date.now() - startTime;
+  // SPR-04: passed to every retrieval call so diagnostics report branches that
+  // actually executed rather than the ones the plan selected.
+  const onBranchExecuted = branchRecorder(plan);
 
-  // Query classification gate (Phase 37 — QCC-01, QCC-02)
-  const classification = classifyQuery(input.query);
-  const classificationLatencyMs = Date.now() - startTime;
-
-  if (classification.type === 'keyword') {
+  if (plan.route === 'keyword') {
     // Keyword route: use BM25/direct lookup, skip vector search
     // Per D-10: skip score threshold filtering and token cap
     let keywordResults: RetrievalResult[];
@@ -556,35 +1232,39 @@ export async function searchCodebaseHandler(
         {
           text: input.query,
           limit: input.limit ?? 10,
+          onBranchExecuted,
           ...(repoFilter ? { filter: repoFilter } : {}),
         },
         { enableFallback: false },
+        plan,
       );
       keywordResults = fallbackResult.results;
     } else {
       keywordResults = await engine.search({
         text: input.query,
         limit: input.limit ?? 10,
+        onBranchExecuted,
         ...(repoFilter ? { filter: repoFilter } : {}),
-      });
+      }, plan);
     }
 
     // D-06: fallback to semantic if keyword returns 0 results
     if (keywordResults.length === 0) {
       // Log fallback, then fall through to normal semantic path
       const earlyExitThreshold = observability?.earlyExitConfidence ?? 0.8;
-      observability?.metricsStore &&
+      if (observability?.metricsStore) {
         logClassification(observability, {
           query: input.query,
-          classification,
-          classificationLatencyMs,
+          plan,
+          planningLatencyMs,
           route: 'keyword-fallback-semantic',
           totalLatencyMs: Date.now() - startTime,
           resultCount: 0,
           earlyExit: false,
           earlyExitReason:
-            classification.confidence >= earlyExitThreshold ? 'fallback-no-results' : undefined,
+            planConfidence(plan) >= earlyExitThreshold ? 'fallback-no-results' : undefined,
         });
+      }
     } else {
       // Keyword route succeeded — format and return directly
       // BM25 re-rank keyword results for better relevance ordering
@@ -594,105 +1274,121 @@ export async function searchCodebaseHandler(
           vectorScoreWeight: 0.3, // keyword route: lean more on BM25
         });
       }
-      // Apply token cap (budget enforcement applies to all routes — adaptive)
-      const keywordBudget = classifyBudget(input.query);
-      const keywordMaxTokens = observability?.maxTokensPerCall ?? keywordBudget.tokenBudget;
-      let cappedKeywordResults = keywordResults;
-      let keywordCapMeta: { token_cap_applied: true; results_trimmed: number } | undefined;
-      if (keywordMaxTokens > 0) {
-        const cap = applyTokenCap(keywordResults, keywordMaxTokens);
-        cappedKeywordResults = cap.results;
-        if (cap.tokenCapApplied) {
-          keywordCapMeta = { token_cap_applied: true, results_trimmed: cap.resultsTrimmed };
-        }
-      }
-
       const latencyMs = Date.now() - startTime;
       const earlyExitThreshold = observability?.earlyExitConfidence ?? 0.8;
-      const isEarlyExit = classification.confidence >= earlyExitThreshold;
+      const isEarlyExit = planConfidence(plan) >= earlyExitThreshold;
 
       // Structured logging per D-11
-      observability?.metricsStore &&
+      if (observability?.metricsStore) {
         logClassification(observability, {
           query: input.query,
-          classification,
-          classificationLatencyMs,
+          plan,
+          planningLatencyMs,
           route: 'keyword',
           totalLatencyMs: latencyMs,
           resultCount: keywordResults.length,
           earlyExit: isEarlyExit,
           earlyExitReason: isEarlyExit ? 'confidence-above-threshold' : undefined,
         });
-
-      // D-07: same response format as semantic results
-      const sections = cappedKeywordResults.map((r, i) => formatResult(r, i + 1));
-
-      // Template injection still applies if enabled
-      let templatePrefix = '';
-      if (input.use_template !== false) {
-        const detectedIntent = detectIntent(input.query);
-        const template = getTemplate(detectedIntent);
-        if (template) templatePrefix = `${template}\n\n`;
       }
 
-      const guardrailLead = `Conclusion: found ${cappedKeywordResults.length} evidence-backed ${cappedKeywordResults.length === 1 ? 'match' : 'matches'}.`;
-      const text = `${guardrailLead}\n\n${templatePrefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${cappedKeywordResults.length} results | ${latencyMs}ms`;
+      // D-07: same response format as semantic results
+      const renderKeyword = (shown: RetrievalResult[]): ToolOutput => {
+        const sections = shown.map((r, i) => formatResult(r, i + 1));
 
-      return toTextResult(text, { answered: true, route: 'keyword', ...keywordCapMeta });
+        // Template injection still applies if enabled
+        let templatePrefix = '';
+        if (input.use_template !== false) {
+          const template = plan.templateId
+            ? getTemplate(plan.templateId as IntentType)
+            : undefined;
+          if (template) templatePrefix = `${template}\n\n`;
+        }
+
+        const guardrailLead = `Conclusion: found ${shown.length} evidence-backed ${shown.length === 1 ? 'match' : 'matches'}.`;
+        const text = `${guardrailLead}\n\n${templatePrefix}## Code results for: "${input.query}"\n\n${sections.join('\n\n')}\n\n---\nSearch: keyword-routed | ${shown.length} results | ${latencyMs}ms`;
+
+        return toTextResult(text, {
+          answered: true,
+          route: plan.route,
+          intent: plan.intent,
+          branches: plan.branches,
+        });
+      };
+
+      return enforceRouteBudget(plan, keywordResults, renderKeyword);
     }
   }
 
   // Existence query route: "does X exist?", "is there a Y?" — return structured found/not-found
-  if (classification.type === 'existence') {
+  if (plan.route === 'existence') {
     let existenceResults: RetrievalResult[];
 
     // Use hybrid search if available for better exact-match detection, else semantic
     if (engine.searchWithFallback) {
       const fallbackResult = await engine.searchWithFallback(
-        { text: input.query, limit: 5, ...(repoFilter ? { filter: repoFilter } : {}) },
+        { text: input.query, limit: 5, onBranchExecuted, ...(repoFilter ? { filter: repoFilter } : {}) },
         { enableFallback: false },
+        plan,
       );
       existenceResults = fallbackResult.results;
     } else {
       existenceResults = await engine.search({
         text: input.query,
         limit: 5,
+        onBranchExecuted,
         ...(repoFilter ? { filter: repoFilter } : {}),
-      });
+      }, plan);
     }
 
     const latencyMs = Date.now() - startTime;
     const highConfidence = existenceResults.filter((r) => r.score > 0.6);
 
-    observability?.metricsStore &&
+    if (observability?.metricsStore) {
       logClassification(observability, {
         query: input.query,
-        classification,
-        classificationLatencyMs,
+        plan,
+        planningLatencyMs,
         route: 'existence',
         totalLatencyMs: latencyMs,
         resultCount: existenceResults.length,
       });
+    }
 
     if (highConfidence.length > 0) {
-      const sections = highConfidence.map((r, i) => formatResult(r, i + 1));
-      const text = `## Existence check: "${input.query}"\n\n**Found.** ${highConfidence.length} relevant ${highConfidence.length === 1 ? 'match' : 'matches'} in the codebase (best ${formatScore(highConfidence[0]!)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${highConfidence.length} results | ${latencyMs}ms`;
-      return toTextResult(text, { answered: true, route: 'existence' });
+      // BUD-16: existence answers stay source-free — anchors and metadata only.
+      const renderExistence = (shown: RetrievalResult[]): ToolOutput => {
+        const sections = shown.map((r, i) => formatSourceFree(r, i + 1));
+        const text = `## Existence check: "${input.query}"\n\n**Found.** ${shown.length} relevant ${shown.length === 1 ? 'match' : 'matches'} in the codebase (best ${formatScore(shown[0] ?? highConfidence[0]!)}).\n\n${sections.join('\n\n')}\n\n---\nSearch: existence-routed | ${shown.length} results | ${latencyMs}ms`;
+        return toTextResult(text, {
+          answered: true,
+          route: plan.route,
+          intent: plan.intent,
+          branches: plan.branches,
+        });
+      };
+      return enforceRouteBudget(plan, highConfidence, renderExistence);
     } else {
       // Not found — show what the codebase has instead (top results regardless of score)
       const topResults = existenceResults.slice(0, 3);
-      const sections = topResults.map((r, i) => formatResult(r, i + 1));
-      const alternativesText =
-        topResults.length > 0
-          ? `\n\nThe closest matches found were:\n\n${sections.join('\n\n')}`
-          : '';
-      const text = `## Existence check: "${input.query}"\n\n**Not found.** No high-confidence matches in the indexed codebase.${alternativesText}\n\n---\nSearch: existence-routed | 0 confident results (${existenceResults.length} total checked) | ${latencyMs}ms`;
-      return toTextResult(text, { answered: true, route: 'existence' });
+      const renderNotFound = (shown: RetrievalResult[]): ToolOutput => {
+        const sections = shown.map((r, i) => formatSourceFree(r, i + 1));
+        const alternativesText =
+          shown.length > 0 ? `\n\nThe closest matches found were:\n\n${sections.join('\n\n')}` : '';
+        const text = `## Existence check: "${input.query}"\n\n**Not found.** No high-confidence matches in the indexed codebase.${alternativesText}\n\n---\nSearch: existence-routed | 0 confident results (${existenceResults.length} total checked) | ${latencyMs}ms`;
+        return toTextResult(text, {
+          answered: true,
+          route: plan.route,
+          intent: plan.intent,
+          branches: plan.branches,
+        });
+      };
+      return enforceRouteBudget(plan, topResults, renderNotFound);
     }
   }
 
   // Aggregation route: breadth-first retrieval for "find all X" queries
-  if (classification.type === 'aggregation') {
+  if (plan.route === 'aggregation') {
     const aggregationLimit = Math.max((input.limit ?? 10) * 3, 30); // Fetch 3x more results
     const aggregationThreshold = 0.35; // Lower threshold for breadth
 
@@ -703,181 +1399,232 @@ export async function searchCodebaseHandler(
           text: input.query,
           limit: aggregationLimit,
           scoreThreshold: aggregationThreshold,
+          onBranchExecuted,
           ...(repoFilter ? { filter: repoFilter } : {}),
         },
+        effectiveFilter,
         { hops: 0 }, // No expansion — breadth over depth
+        plan,
       );
     } catch {
       aggResults = await engine.search({
         text: input.query,
         limit: aggregationLimit,
         scoreThreshold: aggregationThreshold,
+        onBranchExecuted,
         ...(repoFilter ? { filter: repoFilter } : {}),
-      });
+      }, plan);
     }
 
     // Deduplicate by file — keep best chunk per file
     const byFile = new Map<string, RetrievalResult>();
     for (const r of aggResults) {
-      const existing = byFile.get(r.relativePath);
+      const fileKey = `${r.repoId ?? ''}:${r.relativePath}`;
+      const existing = byFile.get(fileKey);
       if (!existing || r.score > existing.score) {
-        byFile.set(r.relativePath, r);
+        byFile.set(fileKey, r);
       }
     }
-    let deduped = Array.from(byFile.values()).sort((a, b) => b.score - a.score);
-
-    // Apply token cap
-    const aggBudget = classifyBudget(input.query);
-    const aggMaxTokens = observability?.maxTokensPerCall ?? aggBudget.tokenBudget;
-    if (aggMaxTokens > 0) {
-      const cap = applyTokenCap(deduped, aggMaxTokens);
-      deduped = cap.results;
-    }
-
-    // Group by directory for structured output
-    const byDir = new Map<string, RetrievalResult[]>();
-    for (const r of deduped) {
-      const dir = r.relativePath.split('/').slice(0, -1).join('/') || '.';
-      if (!byDir.has(dir)) byDir.set(dir, []);
-      byDir.get(dir)!.push(r);
-    }
+    const deduped = Array.from(byFile.values()).sort((a, b) => b.score - a.score);
+    // BUD-15/CTX-13: the aggregation route collapses repeated files — accounted too.
+    recordDeduplicated(plan, aggResults.length, deduped.length);
 
     const latencyMs = Date.now() - startTime;
 
-    // Format grouped output
-    const groupSections: string[] = [];
-    for (const [dir, items] of Array.from(byDir.entries()).sort(
-      (a, b) => b[1].length - a[1].length,
-    )) {
-      const itemLines = items.map((r) => {
-        const name = r.name || r.relativePath.split('/').pop() || 'unknown';
-        return `  - **${name}** \`${r.relativePath}\` (${formatScore(r)})`;
-      });
-      groupSections.push(`### ${dir}/\n${itemLines.join('\n')}`);
-    }
-
-    observability?.metricsStore &&
+    if (observability?.metricsStore) {
       logClassification(observability, {
         query: input.query,
-        classification,
-        classificationLatencyMs,
+        plan,
+        planningLatencyMs,
         route: 'aggregation',
         totalLatencyMs: latencyMs,
         resultCount: deduped.length,
       });
-
-    let templatePrefix = '';
-    if (input.use_template !== false) {
-      const detectedIntent = detectIntent(input.query);
-      const template = getTemplate(detectedIntent);
-      if (template) templatePrefix = `${template}\n\n`;
     }
 
-    const guardrailLead = `Conclusion: found ${deduped.length} unique files matching this pattern across ${byDir.size} ${byDir.size === 1 ? 'directory' : 'directories'}.`;
-    const text = `${guardrailLead}\n\n${templatePrefix}## Aggregated results for: "${input.query}"\n\n${groupSections.join('\n\n')}\n\n---\nSearch: aggregation-routed | ${deduped.length} unique files (${aggResults.length} total chunks scanned) | ${latencyMs}ms`;
+    // BUD-16: aggregation stays source-free — grouped anchors, never bodies.
+    const renderAggregation = (shown: RetrievalResult[]): ToolOutput => {
+      const byDir = new Map<string, RetrievalResult[]>();
+      for (const r of shown) {
+        const dir = r.relativePath.split('/').slice(0, -1).join('/') || '.';
+        const key = `${r.repoId ?? ''}\0${dir}`;
+        if (!byDir.has(key)) byDir.set(key, []);
+        byDir.get(key)!.push(r);
+      }
 
-    return toTextResult(text, { answered: true, route: 'aggregation' });
+      const groupSections: string[] = [];
+      for (const [key, items] of Array.from(byDir.entries()).sort(
+        (a, b) => b[1].length - a[1].length,
+      )) {
+        const [repo, dir] = key.split('\0');
+        const itemLines = items.map((r) => {
+          return `  - ${buildCodeAnchor(r)} (${formatScore(r)})`;
+        });
+        groupSections.push(`### ${repo ? `[${repo}] ` : ''}${dir}/\n${itemLines.join('\n')}`);
+      }
+
+      let templatePrefix = '';
+      if (input.use_template !== false) {
+        const template = plan.templateId
+          ? getTemplate(plan.templateId as IntentType)
+          : undefined;
+        if (template) templatePrefix = `${template}\n\n`;
+      }
+
+      const guardrailLead = `Conclusion: found ${shown.length} unique files matching this pattern across ${byDir.size} ${byDir.size === 1 ? 'directory' : 'directories'}.`;
+      const text = `${guardrailLead}\n\n${templatePrefix}## Aggregated results for: "${input.query}"\n\n${groupSections.join('\n\n')}\n\n---\nSearch: aggregation-routed | ${shown.length} unique files (${aggResults.length} total chunks scanned) | ${latencyMs}ms`;
+
+      return toTextResult(text, {
+        answered: true,
+        route: plan.route,
+        intent: plan.intent,
+        branches: plan.branches,
+      });
+    };
+
+    return enforceRouteBudget(plan, deduped, renderAggregation);
   }
 
   // Semantic path continues below (existing code unchanged)
 
   // Determine expansion hops: input overrides config default
-  const hops = input.expand_hops ?? observability?.defaultExpansionHops ?? 2;
-  const clampedHops = Math.min(Math.max(Math.round(hops), 0), 2) as 0 | 1 | 2;
+  const clampedHops = plan.expansion.hops;
 
   let results: RetrievalResult[];
-  let fallbackNote: string | undefined;
+  const degradationNotes: string[] = [];
 
+  observability?.stageHook?.('retrieve');
   try {
     results = await engine.searchWithExpansion(
       {
         text: input.query,
         limit: input.limit ?? 10,
         scoreThreshold: input.score_threshold,
+        onBranchExecuted,
         ...(repoFilter ? { filter: repoFilter } : {}),
       },
+      effectiveFilter,
       { hops: clampedHops },
+      plan,
     );
-    // Hierarchy expansion: walk superclass chains up to clampedHops levels
-    if (clampedHops > 0) {
-      const hierarchyResults = await expandHierarchy(engine, results, clampedHops);
-      results = [...results, ...hierarchyResults];
+  } catch (error) {
+    try {
+      results = await engine.search({
+        text: input.query,
+        limit: input.limit ?? 10,
+        scoreThreshold: input.score_threshold,
+        onBranchExecuted,
+        ...(repoFilter ? { filter: repoFilter } : {}),
+      }, plan);
+    } catch (fallbackError) {
+      return retrievalFailure(fallbackError, plan);
     }
-    // T137: Interface implementation expansion: find implementations for interface results
-    if (clampedHops > 0 && engine.searchWithInterfaceExpansion) {
-      const seenIds = new Set(results.map((r) => r.chunkId));
-      const interfaceResults = results.filter((r) => r.chunkType === 'interface');
-      if (interfaceResults.length > 0) {
-        const expandedWithImpls = await engine.searchWithInterfaceExpansion({
-          text: input.query,
-          limit: input.limit ?? 10,
-          scoreThreshold: input.score_threshold,
-          ...(repoFilter ? { filter: repoFilter } : {}),
-        });
+    if (!hasGroundedFallback(results, plan)) {
+      return retrievalFailure(error, plan);
+    }
+    degradationNotes.push(
+      `dependency expansion was unavailable (${error instanceof Error ? error.message : String(error)}).`,
+    );
+  }
+
+  // Each expansion is isolated so one unavailable capability does not discard the others.
+  if (clampedHops > 0) {
+    if (engine.scrollForHierarchy || engine.scrollForImplementations) {
+      try {
+        const hierarchyResults = await expandHierarchy(engine, results, clampedHops, effectiveFilter);
+        results = [...results, ...hierarchyResults];
+      } catch (error) {
+        degradationNotes.push(`hierarchy expansion was unavailable: ${String(error)}.`);
+      }
+    }
+
+    if (engine.searchWithInterfaceExpansion && results.some((r) => r.chunkType === 'interface')) {
+      try {
+        const seenIds = new Set(results.map((r) => r.chunkId));
+        const expandedWithImpls = await engine.searchWithInterfaceExpansion(
+          {
+            text: input.query,
+            limit: input.limit ?? 10,
+            scoreThreshold: input.score_threshold,
+            ...(repoFilter ? { filter: repoFilter } : {}),
+          },
+          effectiveFilter,
+        );
         for (const impl of expandedWithImpls) {
           if (!seenIds.has(impl.chunkId)) {
             seenIds.add(impl.chunkId);
             results.push(impl);
           }
         }
+      } catch (error) {
+        degradationNotes.push(`interface implementation expansion was unavailable: ${String(error)}.`);
       }
     }
-    // Adjacent chunk expansion: auto-expand context for top results that have chunk ordering metadata
-    if (engine.getAdjacentChunks && clampedHops > 0) {
-      const seenIds = new Set(results.map((r) => r.chunkId));
-      const adjacentResults: RetrievalResult[] = [];
-      // Only expand top 3 results to limit cost
-      const expandCandidates = results
-        .filter(
-          (r) => r.chunkIndex !== undefined && r.totalChunks !== undefined && r.totalChunks > 1,
-        )
-        .slice(0, 3);
-      for (const candidate of expandCandidates) {
-        const adjacent = await engine.getAdjacentChunks(
-          candidate.relativePath,
-          candidate.chunkIndex!,
-          candidate.totalChunks!,
-        );
-        for (const adj of adjacent) {
-          if (!seenIds.has(adj.chunkId)) {
-            seenIds.add(adj.chunkId);
-            adjacentResults.push(adj);
+
+    if (engine.getAdjacentChunks) {
+      try {
+        const seenIds = new Set(results.map((r) => r.chunkId));
+        const adjacentResults: RetrievalResult[] = [];
+        const expandCandidates = results
+          .filter(
+            (r) => r.chunkIndex !== undefined && r.totalChunks !== undefined && r.totalChunks > 1,
+          )
+          .slice(0, 3);
+        for (const candidate of expandCandidates) {
+          const adjacent = await engine.getAdjacentChunks(
+            candidate.relativePath,
+            candidate.chunkIndex!,
+            candidate.totalChunks!,
+            effectiveFilter,
+            undefined,
+          );
+          for (const adj of adjacent) {
+            if (!seenIds.has(adj.chunkId)) {
+              seenIds.add(adj.chunkId);
+              adjacentResults.push(adj);
+            }
           }
         }
-      }
-      if (adjacentResults.length > 0) {
         results = [...results, ...adjacentResults];
+      } catch (error) {
+        degradationNotes.push(`adjacent expansion was unavailable: ${String(error)}.`);
       }
     }
-    // Call-chain expansion: find chunks that define methods called by top results (or callers)
-    if (engine.expandCallChain && clampedHops > 0) {
-      const callChainResults = await engine.expandCallChain(results, 'both');
-      if (callChainResults.length > 0) {
+
+    if (engine.expandCallChain) {
+      try {
+        const callChainResults = await engine.expandCallChain(results, effectiveFilter, 'both');
         results = [...results, ...callChainResults];
+      } catch (error) {
+        degradationNotes.push(`call-chain expansion was unavailable: ${String(error)}.`);
       }
     }
-    // Multi-hop expansion: extract symbols from results and fetch their definitions
-    if (clampedHops > 0 && (engine.scrollByName || engine.scrollByDefines)) {
-      const multiHopResults = await multiHopExpand(results, engine, {
-        maxSymbols: 15,
-        expandMethodCalls: !!engine.scrollByDefines,
-        expandHierarchy: !!engine.scrollByName,
-      });
-      if (multiHopResults.length > 0) {
+
+    if (engine.scrollByName || engine.scrollByDefines) {
+      try {
+        const multiHopResults = await multiHopExpand(results, engine, effectiveFilter, {
+          maxSymbols: 15,
+          expandMethodCalls: !!engine.scrollByDefines,
+          expandHierarchy: !!engine.scrollByName,
+        });
         results = [...results, ...multiHopResults];
+      } catch (error) {
+        degradationNotes.push(`multi-hop expansion was unavailable: ${String(error)}.`);
       }
     }
-  } catch (error) {
-    results = await engine.search({
-      text: input.query,
-      limit: input.limit ?? 10,
-      scoreThreshold: input.score_threshold,
-      ...(repoFilter ? { filter: repoFilter } : {}),
-    });
-    fallbackNote =
-      `Note: dependency expansion was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
-      'Returning indexed semantic search results without expansion.';
   }
+
+  const fallbackNote =
+    degradationNotes.length > 0
+      ? `Note: ${degradationNotes.join(' ')} Returning grounded results from the capabilities that remained available.`
+      : undefined;
+
+  observability?.stageHook?.('expand');
+  const beforeDedup = results.length;
+  results = deduplicateResults(results);
+  // BUD-15/CTX-13: report the collapse that actually happened, not a constant.
+  recordDeduplicated(plan, beforeDedup, results.length);
+  observability?.stageHook?.('dedup+merge');
 
   const latencyMs = Date.now() - startTime;
 
@@ -923,13 +1670,13 @@ export async function searchCodebaseHandler(
       const gateText =
         `Conclusion: the indexed search did not return strong evidence for this query.\n\n` +
         `No relevant code found for "${input.query}". Do not guess or hallucinate — inform the user that the codebase doesn't appear to contain relevant information.${nearbySection}`;
-      return toTextResult(gateText, {
+      return withDiagnostics(toTextResult(gateText, {
         confidence_gated: true,
         best_score: bestScore,
         threshold: observability.confidenceThreshold,
         nearby_count: nearbyResults.length,
         answered: false,
-      });
+      }), plan, nearbyResults, null, 'low_confidence');
     }
   }
 
@@ -953,6 +1700,7 @@ export async function searchCodebaseHandler(
     // thresholdFiltered = true only when direct results were present but all got filtered
     thresholdFiltered = directBefore > 0 && directAfter === 0;
   }
+  observability?.stageHook?.('rank');
 
   // Log RAG event if observability is wired up
   if (observability?.metricsStore && observability.tokenCounter) {
@@ -977,55 +1725,12 @@ export async function searchCodebaseHandler(
     }
   }
 
-  // Token budget cap — adaptive based on query complexity (per D-02, D-05, D-06)
-  const budgetClassification = classifyBudget(input.query);
-  const maxTokens = observability?.maxTokensPerCall ?? budgetClassification.tokenBudget;
-
-  // D-06: 70/30 budget split when hierarchy expansion produced results
-  const hierarchyCount = results.filter((r) => r.expansionSource === 'hierarchy').length;
-  let cappedResults: RetrievalResult[];
-  let tokenCapApplied = false;
-  let resultsTrimmed = 0;
-
-  if (hierarchyCount > 0 && clampedHops > 0) {
-    const directResults = results.filter((r) => r.expansionSource !== 'hierarchy');
-    const hierarchyResults = results.filter((r) => r.expansionSource === 'hierarchy');
-    const directBudget = Math.floor(maxTokens * 0.7);
-    const hierarchyBudget = maxTokens - directBudget;
-
-    const directCap = applyTokenCap(directResults, directBudget);
-    const hierarchyCap = applyTokenCap(hierarchyResults, hierarchyBudget);
-
-    cappedResults = [...directCap.results, ...hierarchyCap.results];
-    tokenCapApplied = directCap.tokenCapApplied || hierarchyCap.tokenCapApplied;
-    resultsTrimmed = directCap.resultsTrimmed + hierarchyCap.resultsTrimmed;
-  } else {
-    const cap = applyTokenCap(results, maxTokens);
-    cappedResults = cap.results;
-    tokenCapApplied = cap.tokenCapApplied;
-    resultsTrimmed = cap.resultsTrimmed;
-  }
-
-  results = cappedResults;
-
-  if (tokenCapApplied) {
-    console.info(
-      `token cap: ${results.length + resultsTrimmed} results → ${results.length} results`,
-    );
-  }
-
-  const capMeta = tokenCapApplied
-    ? { token_cap_applied: true as const, results_trimmed: resultsTrimmed }
-    : undefined;
-
-  // T058: Filesystem read for top-5 results (guards against indexed content drift).
-  // T059: Results 6-10 are metadata-only (content stripped to reduce token usage).
-  // T069: contentHash drift detection — compare stored hash vs live file hash.
+  // Read every candidate before assembly so the serialized response measures live evidence.
+  // Keyed per file (repo + relative path), matching how the read is issued.
+  const readFailures = new Map<string, string>();
   if (results.length > 0) {
-    const topN = 5;
-    // Step 1: Read live content for top-5 results; detect hash drift
     if (observability?.readFileFn) {
-      for (let i = 0; i < Math.min(topN, results.length); i++) {
+      for (let i = 0; i < results.length; i++) {
         try {
           const liveContent = await observability.readFileFn(
             results[i]!.relativePath,
@@ -1042,16 +1747,80 @@ export async function searchCodebaseHandler(
             }
           }
           results[i] = { ...results[i]!, content: liveContent, ...(stale ? { stale } : {}) };
-        } catch {
-          // Silent degradation: fallback to stored payload content
+        } catch (error) {
+          // FAIL-01/FAIL-04: a bare `catch {}` here left `status: 'ok'` with no
+          // marking. The failure is recorded so the item degrades to a marked
+          // anchor + metadata and the response states what failed.
+          const message = error instanceof Error ? error.message : String(error);
+          readFailures.set(liveSourceKey(results[i]!), message);
         }
       }
     }
-    // Step 2: Strip content for results 6-10 (metadata-only per contract)
-    for (let i = topN; i < results.length; i++) {
-      results[i] = { ...results[i]!, content: '' };
-    }
   }
+  const assembler = new ContextAssembler();
+  // An item whose file could not be read is marked `read-failed`, which the budget
+  // governor excludes from budgeted evidence — so the A-09 one-node overflow rule
+  // is never invoked for a node that does not exist on disk (spec Edge Cases).
+  const contextItems = assembler
+    .assemble(results, plan.intent, input.query)
+    .map((item) =>
+      readFailures.has(anchorReadKey(item.anchor))
+        ? ({ ...item, degraded: 'read-failed' } as ContextItem)
+        : item,
+    );
+  observability?.stageHook?.('assemble');
+
+  const assembledResults = resultsForContextItems(contextItems, results, plan.intent).map(
+    (result) => {
+      const failure = readFailures.get(liveSourceKey(result));
+      return failure === undefined ? result : { ...result, readFailed: failure };
+    },
+  );
+
+  /**
+   * BUD-05/BUD-12: build the response the caller would actually receive for a
+   * given set of included items. The governor measures this string, so headers,
+   * code fences, the guardrail lead and templates are all accounted for.
+   */
+  const serializeForBudget = (included: ContextItem[]): ToolOutput =>
+    buildSearchResponse(
+      input,
+      plan,
+      resultsForContextItems(included, assembledResults, plan.intent),
+      undefined,
+      undefined,
+      input.use_template,
+      undefined,
+      thresholdFiltered,
+    );
+
+  observability?.stageHook?.('serialize');
+  observability?.stageHook?.('measure');
+
+  const budgetResult = new BudgetGovernor().enforceSerialized(
+    contextItems,
+    plan.budget,
+    serializeForBudget,
+  );
+  observability?.stageHook?.('enforce');
+  // FAIL-04: the governor excludes read-failed items from budgeted evidence, but
+  // the caller still gets their grounded anchor and metadata — appended after the
+  // budgeted evidence, and measured with it, so nothing is silently omitted.
+  results = resultsForContextItems(
+    [
+      ...budgetResult.included,
+      ...contextItems.filter((item) => item.degraded === 'read-failed'),
+    ],
+    assembledResults,
+    plan.intent,
+  );
+  const capMeta =
+    budgetResult.omitted > 0 || budgetResult.compacted > 0
+      ? {
+          token_cap_applied: true as const,
+          results_trimmed: budgetResult.omitted + budgetResult.compacted,
+        }
+      : undefined;
 
   // Zero-result fallback: if primary search returned nothing and fallback not disabled,
   // call searchWithFallback for keyword-based suggestions
@@ -1061,35 +1830,61 @@ export async function searchCodebaseHandler(
         text: input.query,
         limit: input.limit ?? 10,
         scoreThreshold: input.score_threshold,
+        onBranchExecuted,
+        ...(repoFilter ? { filter: repoFilter } : {}),
       },
       { enableFallback: true, maxSuggestions: 3 },
+      plan,
     );
-    return buildSearchResponse(
-      input,
+    // BUD-01/BUD-16: the fallback response is governed by the same contract. Its
+    // body is built from suggestions rather than ContextItems, so enforcement is
+    // applied to the rendered response and the measurement is reported.
+    const renderFallback = (shown: RetrievalResult[]): ToolOutput =>
+      buildSearchResponse(
+        input,
+        plan,
+        shown,
+        fallbackNote,
+        fallbackResult,
+        input.use_template,
+        undefined,
+        // Pass thresholdFiltered only when fallback itself returns no results
+        fallbackResult.results.length === 0 &&
+          (!fallbackResult.suggestions || fallbackResult.suggestions.length === 0) &&
+          (!fallbackResult.relatedResults || fallbackResult.relatedResults.length === 0)
+          ? thresholdFiltered
+          : false,
+      );
+
+    const governedFallback = enforceRouteBudget(
+      plan,
       fallbackResult.results,
-      fallbackNote,
-      fallbackResult,
-      input.use_template,
-      undefined,
-      // Pass thresholdFiltered only when fallback itself returns no results
-      fallbackResult.results.length === 0 &&
-        (!fallbackResult.suggestions || fallbackResult.suggestions.length === 0) &&
-        (!fallbackResult.relatedResults || fallbackResult.relatedResults.length === 0)
-        ? thresholdFiltered
-        : false,
+      renderFallback,
+      fallbackResult.fallback_mode,
     );
+    if (observability?.sessionCache?.enabled) {
+      const cacheKey = buildSearchCacheKey(input, plan, observability);
+      searchCache.set(cacheKey, {
+        response: governedFallback,
+        resultCount: fallbackResult.results.length,
+        lastAccess: ++searchCacheAccessCounter,
+      });
+    }
+    return governedFallback;
   }
 
   // Log classification for semantic path
-  observability?.metricsStore &&
+  if (observability?.metricsStore) {
     logClassification(observability, {
       query: input.query,
-      classification,
-      classificationLatencyMs,
-      route: classification.type === 'keyword' ? 'keyword-fallback-semantic' : 'semantic',
+      plan,
+      planningLatencyMs,
+      route: plan.route === 'keyword' ? 'keyword-fallback-semantic' : 'semantic',
       totalLatencyMs: Date.now() - startTime,
       resultCount: results.length,
+      earlyExit: false,
     });
+  }
 
   // RAG-sufficient signaling: when results are high-confidence, hint the LLM
   // to use this context before exploring files further
@@ -1100,6 +1895,7 @@ export async function searchCodebaseHandler(
 
   const response = buildSearchResponse(
     input,
+    plan,
     results,
     ragSufficientNote ?? fallbackNote,
     undefined,
@@ -1108,19 +1904,89 @@ export async function searchCodebaseHandler(
     thresholdFiltered,
   );
 
+  const diagnostics = diagnosticsContent(plan, results, null, {
+    candidateCount: contextItems.length,
+    omitted: budgetResult.omitted,
+    compacted: budgetResult.compacted,
+    overflow: budgetResult.overflow?.exact_node_overflow ?? false,
+    estimated: budgetResult.estimatedTokens,
+    ...(budgetResult.overflow
+      ? {
+          overflowAmounts: {
+            configured: budgetResult.overflow.configured,
+            estimated: budgetResult.overflow.estimated,
+            amount: budgetResult.overflow.amount,
+          },
+        }
+      : {}),
+  });
+  // FAIL-06/FAIL-08: a read failure is a degraded response, not an ok one. Carried
+  // by the closed status enum so the caller can branch on it rather than infer it.
+  const responseStatus: 'ok' | 'empty' | 'low_confidence' =
+    results.length === 0 ? 'empty' : readFailures.size > 0 ? 'low_confidence' : 'ok';
+  const anomalyLines = diagnosticsAnomalyLines({
+    status: responseStatus,
+    exactNodeOverflow: Boolean(budgetResult.overflow),
+  });
+  const finalContent =
+    anomalyLines.length > 0
+      ? [
+          {
+            type: 'text' as const,
+            text: `${(response.content[0] as { text: string }).text}\n\n${anomalyLines.join('\n')}`,
+          },
+        ]
+      : response.content;
+
+  // BUD-03/BUD-12: the reported estimate must describe the response actually
+  // returned — notes, anomaly lines and the diagnostics block included. Measure the
+  // assembled envelope with a sentinel in place of the self-referential token count,
+  // so the figure never under-reports the final serialized string (BUD-13).
+  const measuredFinal = estimateTokens(
+    JSON.stringify({
+      ...response,
+      content: finalContent,
+      structuredContent: {
+        ...(response.structuredContent as Record<string, unknown> | undefined),
+        ...diagnostics,
+        estimated_tokens: ESTIMATE_SENTINEL,
+      },
+    }),
+  );
+
+  const responseWithDiagnostics: ToolOutput = {
+    ...response,
+    content: finalContent,
+    structuredContent: {
+      ...(response.structuredContent as Record<string, unknown> | undefined),
+      ...diagnostics,
+      status: responseStatus,
+      estimated_tokens: measuredFinal,
+      // BUD-08/BUD-12: the overflow amounts describe the same final measurement the
+      // token count reports, so the two can never disagree.
+      ...(budgetResult.overflow
+        ? {
+            exact_node_overflow: true,
+            exact_node_overflow_configured: plan.budget.limit,
+            exact_node_overflow_estimated: measuredFinal,
+            exact_node_overflow_amount: measuredFinal - plan.budget.limit,
+          }
+        : {}),
+    },
+  };
+
   // ── Store in session cache (T156) ──
   if (observability?.sessionCache?.enabled && results.length > 0) {
-    const cacheKey = buildSearchCacheKey(input);
+    const cacheKey = buildSearchCacheKey(input, plan, observability);
     if (searchCache.size >= SEARCH_CACHE_MAX) evictSearchLRU();
-    const responseText = (response.content[0] as { text?: string })?.text ?? '';
     searchCache.set(cacheKey, {
-      responseText,
+      response: responseWithDiagnostics,
       resultCount: results.length,
       lastAccess: ++searchCacheAccessCounter,
     });
   }
 
-  return response;
+  return responseWithDiagnostics;
 }
 
 /**
@@ -1137,7 +2003,7 @@ export function registerSearchCodebaseTool(
       description:
         'Search the indexed codebase using a natural language query. Returns relevant code chunks ranked by similarity. ' +
         'Query is auto-classified (semantic / keyword / existence / aggregation) and routed accordingly. ' +
-        'Top-5 results include live file content; results 6-10 are metadata-only to reduce token usage. ' +
+        'Results include targeted live source ranges selected by relevance and the configured context budget. ' +
         'Results can be expanded along the dependency graph to include related files (imports/dependencies). ' +
         'Use expand_hops=0 to disable expansion, 1 for direct imports, or 2 for transitive dependencies (default). ' +
         'Supports optional metadata filters: stereotype, archLayer, module, language for precise retrieval.',

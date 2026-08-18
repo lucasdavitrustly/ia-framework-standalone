@@ -55,8 +55,13 @@ export async function indexDatabaseSchemaHandler(
     });
 
     const pipeline = new IndexingPipeline();
+    // DB-only indexing does not scan files (excludePatterns: ['**/*']), so the
+    // target path is just a base. Fall back to the first repo path or the
+    // framework dir when the legacy targetProjectPath is absent.
+    const targetProjectPath =
+      config.targetProjectPath ?? config.repos?.[0]?.path ?? dirname(configPath);
     const result = await pipeline.run({
-      targetProjectPath: config.targetProjectPath,
+      targetProjectPath,
       frameworkDir: dirname(configPath),
       collectionName: config.vectorStore.collectionName,
       embeddingProvider,

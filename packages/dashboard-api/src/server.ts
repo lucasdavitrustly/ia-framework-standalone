@@ -10,6 +10,7 @@ import {
   MultiCollectionSearchEngine,
 } from '@ia-framework/retrieval';
 import type { CollectionEngine } from '@ia-framework/retrieval';
+import type { EffectiveFilter } from '@ia-framework/retrieval';
 import { createEmbeddingProvider } from '@ia-framework/embedding';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { QdrantClient } from '@qdrant/js-client-rest';
@@ -42,18 +43,24 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const indexingState = new IndexingStateManager();
 
   // Set up dependency graph for building import adjacency during indexing.
-  // SearchEngine expects an async interface { getNeighborFiles(...): Promise<string[]> }
+  // SearchEngine expects an async interface with a required EffectiveFilter.
   // but DependencyGraph.getNeighborFiles is synchronous — wrap it in an adapter.
   const graphDbPath = join(frameworkDir, 'graph.sqlite');
   let dependencyGraph:
-    | { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> }
+    | {
+        getNeighborFiles(
+          filePaths: string[],
+          hops: 1 | 2,
+          filter: EffectiveFilter,
+        ): Promise<string[]>;
+      }
     | undefined;
   try {
     const rawGraph = new DependencyGraph({ dbPath: graphDbPath });
     rawGraph.initialize();
     dependencyGraph = {
-      getNeighborFiles: (filePaths: string[], hops: 1 | 2) =>
-        Promise.resolve(rawGraph.getNeighborFiles(filePaths, hops)),
+      getNeighborFiles: (filePaths, hops, filter) =>
+        Promise.resolve(rawGraph.getNeighborFiles(filePaths, hops, filter)),
     };
   } catch {
     dependencyGraph = undefined;

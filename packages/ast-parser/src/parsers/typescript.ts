@@ -44,6 +44,35 @@ const DECLARATION_TYPES = new Set([
 // Node types inside a class body that become their own chunks
 const CLASS_MEMBER_TYPES = new Set(['method_definition', 'public_field_definition']);
 
+function getLeadingMemberLineOffsets(
+  siblings: Parser.SyntaxNode[],
+  siblingIndex: number,
+): { docCommentStartLine?: number; annotationStartLine?: number } {
+  let docCommentStartLine: number | undefined;
+  let annotationStartLine: number | undefined;
+
+  for (let i = siblingIndex - 1; i >= 0; i--) {
+    const previous = siblings[i]!;
+    if (previous.type === 'decorator') {
+      annotationStartLine = Math.min(
+        annotationStartLine ?? Infinity,
+        previous.startPosition.row + 1,
+      );
+    } else if (previous.type === 'comment') {
+      if (previous.text.startsWith('/**')) {
+        docCommentStartLine = previous.startPosition.row + 1;
+      }
+    } else if (previous.type !== '{') {
+      break;
+    }
+  }
+
+  return {
+    ...(docCommentStartLine !== undefined ? { docCommentStartLine } : {}),
+    ...(annotationStartLine !== undefined ? { annotationStartLine } : {}),
+  };
+}
+
 // ── T118: TypeScript decorator value extraction for annotationMeta ───────────
 
 /** HTTP method decorator mapping: decorator name → HTTP method */
@@ -401,6 +430,7 @@ function extractClassMembers(
     const memberName = getNodeName(member);
     const chunkType: CodeChunk['chunkType'] =
       member.type === 'method_definition' ? 'function' : 'other';
+    const lineOffsets = getLeadingMemberLineOffsets(classBody.children, i);
 
     members.push({
       id: makeChunkId(filePath, effectiveStart, endLine),
@@ -415,6 +445,7 @@ function extractClassMembers(
       imports: allImports,
       exports: [],
       parentName: className,
+      ...lineOffsets,
       ...(importEdges.length > 0 ? { dependencyEdges: importEdges } : {}),
     });
   }

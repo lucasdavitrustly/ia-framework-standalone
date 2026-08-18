@@ -4,6 +4,7 @@ import type { CodeChunk } from '@ia-framework/ast-parser';
 import PQueue from 'p-queue';
 import {
   buildEnrichmentPrompt,
+  buildEnrichmentSchema,
   parseEnrichmentResponse,
   type ChunkForPrompt,
   type EnrichedChunkResponse,
@@ -38,6 +39,26 @@ export const MAX_BATCH_CHUNKS = 20;
 export const DEFAULT_CHARS_PER_TOKEN = 3;
 export const DEFAULT_OUTPUT_TOKENS_PER_CHUNK = 300;
 export const OUTPUT_TOKENS_OVERHEAD = 100;
+
+/** Per-request Ollama HTTP timeout (ms). Prevents a wedged request from
+ * stalling the run indefinitely, especially with retryAttempts > 0. */
+export const OLLAMA_REQUEST_TIMEOUT_MS = 120_000;
+
+/** How long Ollama keeps the enrichment model resident between calls. */
+export const OLLAMA_KEEP_ALIVE = '30m';
+
+/**
+ * Thrown when Ollama cuts generation off at num_predict (done_reason 'length').
+ * Carries the raw (truncated) body for diagnostics. Distinct from a generic
+ * parse failure because the fix is deterministic: split the batch so each half
+ * has more output budget, rather than retrying the identical prompt.
+ */
+export class EnrichmentTruncationError extends Error {
+  constructor(public readonly rawBody: string) {
+    super('Ollama enrichment output truncated at num_predict (done_reason: length)');
+    this.name = 'EnrichmentTruncationError';
+  }
+}
 
 // Legacy aliases (kept for existing test imports)
 export const TOKEN_BUDGET_RATIO = DEFAULT_TOKEN_BUDGET_RATIO;
@@ -211,14 +232,20 @@ export class LlmEnricher {
       const filePath = batch[0]?.filePath ?? '(unknown)';
       let batchWarning: string | undefined;
       try {
-        const enrichments = await this.enrichBatchWithRetry(batch, filePath);
-        // Positional mapping: enrichments[i] corresponds to batch[i]
+        // enrichWithSplit recovers from truncation by halving the batch, so a
+        // few oversized chunks no longer discard their whole batch's worth of
+        // enrichment. Returns per-chunk enrichments aligned to `batch`.
+        const enrichments = await this.enrichWithSplit(batch, (w) => {
+          // Surface the first split/skip warning so the CLI shows it.
+          if (!batchWarning) batchWarning = w;
+        });
         const enrichedAt = new Date().toISOString();
         const enrichmentModel = this.config.model;
         for (let i = 0; i < batch.length && i < enrichments.length; i++) {
+          const enrichment = enrichments[i];
+          if (!enrichment) continue; // chunk skipped (e.g. size-1 truncation)
           const globalIdx = indexMap.get(batch[i]!.id);
           if (globalIdx !== undefined) {
-            const enrichment = enrichments[i]!;
             const chunk = batch[i]!;
             const enriched: EnrichedCodeChunk = { ...chunk, enrichedAt, enrichmentModel };
             if (enrichment.description) enriched.description = enrichment.description;
@@ -229,11 +256,6 @@ export class LlmEnricher {
               enriched.relationships = enrichment.relationships;
             result[globalIdx] = enriched;
           }
-        }
-        // Warn on partial response
-        if (enrichments.length < batch.length) {
-          batchWarning = `Partial enrichment: got ${enrichments.length}/${batch.length} results for ${filePath}`;
-          logger.warn(batchWarning);
         }
       } catch (err) {
         if (this.config.skipOnFailure) {
@@ -261,6 +283,57 @@ export class LlmEnricher {
     await Promise.all(batchGroups.map((batch) => queue.add(() => applyBatch(batch))));
 
     return result;
+  }
+
+  /**
+   * Enrich a batch, recovering from output truncation by splitting.
+   *
+   * Normal case: one call returns all N enrichments.
+   * On truncation (done_reason 'length'): the batch is halved and each half
+   * enriched independently — smaller batches get proportionally more output
+   * budget, so nothing is discarded. Recurses down to size 1.
+   * At size 1, if the single chunk still truncates, it is skipped (returned as
+   * `undefined`) so the rest of the run proceeds; this is bounded to exactly
+   * one chunk and, with the bounded output schema, effectively unreachable.
+   *
+   * @returns array aligned to `batch`; entry is `undefined` for a skipped chunk.
+   */
+  private async enrichWithSplit(
+    batch: CodeChunk[],
+    onWarning?: (warning: string) => void,
+  ): Promise<Array<EnrichedChunkResponse | undefined>> {
+    const filePath = batch[0]?.relativePath ?? batch[0]?.filePath ?? '(unknown)';
+    try {
+      const enrichments = await this.enrichBatchWithRetry(batch, filePath);
+      // enrichBatch guarantees a full-length array on success.
+      return enrichments;
+    } catch (err) {
+      if (!(err instanceof EnrichmentTruncationError)) {
+        throw err; // connection/parse/etc. — handled by caller's skipOnFailure
+      }
+
+      // Truncation. If we can still split, do so; retrying the identical
+      // prompt is pointless because the failure is deterministic.
+      if (batch.length > 1) {
+        const mid = Math.ceil(batch.length / 2);
+        const left = batch.slice(0, mid);
+        const right = batch.slice(mid);
+        const warning = `Enrichment output truncated for ${batch.length} chunks at ${filePath} — splitting into ${left.length}+${right.length}`;
+        logger.warn(warning);
+        onWarning?.(warning);
+        const [l, r] = await Promise.all([
+          this.enrichWithSplit(left, onWarning),
+          this.enrichWithSplit(right, onWarning),
+        ]);
+        return [...l, ...r];
+      }
+
+      // Size-1 floor: cannot split further. Skip this one chunk.
+      const skipWarning = `Enrichment output truncated for a single chunk at ${filePath} — skipping enrichment for it (raise outputTokensPerChunk if frequent)`;
+      logger.warn(skipWarning);
+      onWarning?.(skipWarning);
+      return [undefined];
+    }
   }
 
   /**
@@ -304,6 +377,11 @@ export class LlmEnricher {
       try {
         return await this.enrichBatch(chunks, filePath);
       } catch (err) {
+        // Truncation is deterministic — retrying the identical prompt always
+        // fails. Propagate immediately so enrichWithSplit can split the batch.
+        if (err instanceof EnrichmentTruncationError) {
+          throw err;
+        }
         lastError = err;
         if (attempt < attempts - 1) {
           // Wait briefly before retry
@@ -329,11 +407,27 @@ export class LlmEnricher {
       annotations: c.annotations,
     }));
 
-    const prompt = buildEnrichmentPrompt(chunkInputs, filePath);
+    // Use the relative path (not the absolute filesystem path) in the prompt
+    // header: it is shorter and stops the model from copying a long absolute
+    // path into every relationship target, which blows the output budget.
+    const headerPath = chunks[0]?.relativePath ?? filePath;
+    const prompt = buildEnrichmentPrompt(chunkInputs, headerPath);
     const outputTokensPerChunk =
       this.config.outputTokensPerChunk ?? DEFAULT_OUTPUT_TOKENS_PER_CHUNK;
     const numPredict = chunks.length * outputTokensPerChunk + OUTPUT_TOKENS_OVERHEAD;
-    const rawResponse = await this.callOllama(prompt, numPredict);
+    const { response: rawResponse, doneReason } = await this.callOllama(
+      prompt,
+      chunks.length,
+      numPredict,
+    );
+
+    // Generation was cut off at num_predict: the JSON is truncated and
+    // unparseable. Signal truncation specifically so the caller can split the
+    // batch (deterministic fix) instead of retrying the identical prompt.
+    if (doneReason === 'length') {
+      throw new EnrichmentTruncationError(rawResponse);
+    }
+
     const parsed = parseEnrichmentResponse(rawResponse);
 
     if (!parsed) {
@@ -348,17 +442,39 @@ export class LlmEnricher {
       );
     }
 
+    // Reject partial responses so enrichBatchWithRetry retries instead of
+    // silently dropping the unenriched chunks. The bounded array schema in
+    // callOllama makes a full-length response the expected outcome.
+    if (parsed.length !== chunks.length) {
+      throw new Error(
+        formatOllamaError({
+          body: `Expected ${chunks.length} enrichment objects, got ${parsed.length}. Raw: ${rawResponse}`,
+          model: this.config.model,
+          baseUrl: this.config.baseUrl ?? 'http://localhost:11434',
+          phase: 'enrichment',
+          parseFailure: true,
+        }),
+      );
+    }
+
     // Return the flat array — caller maps positionally
     return parsed;
   }
 
-  private async callOllama(prompt: string, numPredict?: number): Promise<string> {
+  private async callOllama(
+    prompt: string,
+    chunkCount: number,
+    numPredict?: number,
+  ): Promise<{ response: string; doneReason?: string | undefined }> {
     const url = `${this.config.baseUrl}/api/generate`;
     const requestBody = JSON.stringify({
       model: this.config.model,
       prompt,
       stream: false,
-      format: 'json',
+      // Bounded array schema forces one object per chunk. Generic format:'json'
+      // let small models collapse a batch into a single object (see D-011).
+      format: buildEnrichmentSchema(chunkCount),
+      keep_alive: OLLAMA_KEEP_ALIVE,
       options: {
         num_ctx: this.config.numCtx,
         num_predict: numPredict ?? 4096,
@@ -372,6 +488,7 @@ export class LlmEnricher {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: requestBody,
+        signal: AbortSignal.timeout(OLLAMA_REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       // Network error (connection refused, timeout, etc.)
@@ -399,9 +516,9 @@ export class LlmEnricher {
       );
     }
 
-    let data: { response: string };
+    let data: { response: string; done_reason?: string };
     try {
-      data = (await response.json()) as { response: string };
+      data = (await response.json()) as { response: string; done_reason?: string };
     } catch {
       const rawText = await response.text().catch(() => '(unable to read response body)');
       throw new Error(
@@ -415,7 +532,25 @@ export class LlmEnricher {
         }),
       );
     }
-    return data.response;
+    return { response: data.response, doneReason: data.done_reason };
+  }
+
+  /**
+   * Ask Ollama to unload the enrichment model (keep_alive: 0). Called at the end
+   * of the enrich phase so the generation model does not hold a 30-minute lease
+   * while the embedding phase needs memory. Best-effort: never throws.
+   */
+  async releaseModel(): Promise<void> {
+    try {
+      await fetch(`${this.config.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: this.config.model, keep_alive: 0 }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // Model eviction is an optimization; ignore failures.
+    }
   }
 
   /** Build a CachedEnrichment entry from a fully enriched chunk. */

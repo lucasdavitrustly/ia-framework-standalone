@@ -33,7 +33,7 @@
     "@ia-framework/project-detector": "workspace:*",
     "@ia-framework/retrieval": "workspace:*",
     "@ia-framework/vector-store": "workspace:*",
-    "@qdrant/js-client-rest": "^1.13.0",
+    "@qdrant/js-client-rest": "^1.19.0",
     "commander": "^13.0.0",
     "tinyglobby": "^0.2.10"
   },

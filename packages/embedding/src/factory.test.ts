@@ -85,7 +85,7 @@ describe('createEmbeddingProvider', () => {
         provider: 'openai',
         model: 'text-embedding-3-small',
         apiKey: 'test-key',
-        dimensions: 1536,
+        dimensions: 3,
       });
 
       const result = await provider.embed('test text');
@@ -120,14 +120,15 @@ describe('createEmbeddingProvider', () => {
         provider: 'openai',
         model: 'text-embedding-3-small',
         apiKey: 'test-key',
-        dimensions: 1536,
+        dimensions: 2,
       });
 
       const results = await provider.embedBatch(['a', 'b', 'c']);
-      expect(results).toHaveLength(3);
-      expect(results[0]).toEqual([0.1, 0.2]);
-      expect(results[1]).toEqual([0.3, 0.4]);
-      expect(results[2]).toEqual([0.5, 0.6]);
+      expect(results.vectors).toHaveLength(3);
+      expect(results.vectors[0]).toEqual([0.1, 0.2]);
+      expect(results.vectors[1]).toEqual([0.3, 0.4]);
+      expect(results.vectors[2]).toEqual([0.5, 0.6]);
+      expect(results.failures).toEqual([]);
     });
   });
 
@@ -153,7 +154,7 @@ describe('createEmbeddingProvider', () => {
       const provider = createEmbeddingProvider({
         provider: 'ollama',
         model: 'nomic-embed-text',
-        dimensions: 768,
+        dimensions: 3,
       });
 
       const result = await provider.embed('test text');

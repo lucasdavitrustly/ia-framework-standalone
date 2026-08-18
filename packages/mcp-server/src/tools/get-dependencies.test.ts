@@ -8,6 +8,24 @@ import { describe, test, expect, vi } from 'vitest';
 import { getDependenciesHandler } from './get-dependencies.js';
 import type { RetrievalResult } from '@ia-framework/retrieval';
 
+/** Typed view of the get_dependencies tool's structuredContent payload. */
+interface DependenciesStructured {
+  answered?: boolean;
+  fallbackUsed?: boolean;
+  target?: string;
+  imports?: Array<{ path: string; symbols: string[]; relation: string }>;
+  dependencyEdges?: Array<{ targetPath: string; relation: string; symbols?: string[] }>;
+  deps?: Array<{
+    repo?: string;
+    imports: Array<{ specifier: string; crossRepo?: string }>;
+    exports: string[];
+  }>;
+}
+
+function structuredOf(result: { structuredContent?: object | undefined }): DependenciesStructured {
+  return (result.structuredContent ?? {}) as DependenciesStructured;
+}
+
 function makeChunk(overrides: Partial<RetrievalResult> = {}): RetrievalResult {
   return {
     chunkId: 'chunk-1',
@@ -42,14 +60,14 @@ describe('T064: getDependenciesHandler – path query with dependencyEdges', () 
     const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
 
     const result = await getDependenciesHandler(engine, { path: 'src/auth.ts' });
-    const structured = (result as any).structuredContent;
+    const structured = structuredOf(result);
 
     expect(structured.target).toBe('src/auth.ts');
     expect(structured.imports).toBeDefined();
-    expect(structured.imports.some((i: any) => i.path === 'src/user-service.ts')).toBe(true);
-    expect(
-      structured.imports.find((i: any) => i.path === 'src/user-service.ts')?.symbols,
-    ).toContain('UserService');
+    expect(structured.imports!.some((i) => i.path === 'src/user-service.ts')).toBe(true);
+    expect(structured.imports!.find((i) => i.path === 'src/user-service.ts')?.symbols).toContain(
+      'UserService',
+    );
   });
 
   test('dependencyEdges field on structuredContent contains raw edges', async () => {
@@ -58,10 +76,10 @@ describe('T064: getDependenciesHandler – path query with dependencyEdges', () 
     const engine = { getFile: vi.fn().mockResolvedValue([chunk]) };
 
     const result = await getDependenciesHandler(engine, { path: 'src/auth.ts' });
-    const structured = (result as any).structuredContent;
+    const structured = structuredOf(result);
 
     expect(structured.dependencyEdges).toBeDefined();
-    expect(structured.dependencyEdges[0].targetPath).toBe('src/logger.ts');
+    expect(structured.dependencyEdges![0]!.targetPath).toBe('src/logger.ts');
   });
 
   test('returns error when both path and module are provided', async () => {
@@ -70,7 +88,7 @@ describe('T064: getDependenciesHandler – path query with dependencyEdges', () 
     const result = await getDependenciesHandler(engine, {
       path: 'src/auth.ts',
       module: 'com.example:service',
-    } as any);
+    });
     const text = (result.content[0] as { text: string }).text;
 
     expect(text.toLowerCase()).toContain('cannot specify both');
@@ -94,11 +112,11 @@ describe('T064: getDependenciesHandler – module query with BFS', () => {
 
     const result = await getDependenciesHandler(engine, {
       module: 'com.example:auth-service',
-    } as any);
+    });
     const text = (result.content[0] as { text: string }).text;
 
     expect(engine.search).toHaveBeenCalled();
-    const searchCall = engine.search.mock.calls[0]![0];
+    const searchCall: unknown = engine.search.mock.calls[0]![0];
     expect(JSON.stringify(searchCall)).toContain('auth-service');
     expect(text).toContain('com.example:auth-service');
   });
@@ -117,10 +135,13 @@ describe('T064: getDependenciesHandler – module query with BFS', () => {
       search: vi.fn().mockResolvedValue([hop1Chunk]),
     };
 
-    await getDependenciesHandler(engine, { module: 'com.example:auth', depth: 2 } as any);
+    await getDependenciesHandler(engine, { module: 'com.example:auth', depth: 2 });
 
     // getFile should be called for the first-hop edge target to follow to hop 2
-    expect(engine.getFile).toHaveBeenCalledWith('src/util/crypto.ts');
+    expect(engine.getFile).toHaveBeenCalledWith(
+      'src/util/crypto.ts',
+      expect.objectContaining({ excludeTests: true, reservedExclusion: true }),
+    );
   });
 
   test('module query structuredContent includes target and edges from BFS', async () => {
@@ -133,11 +154,11 @@ describe('T064: getDependenciesHandler – module query with BFS', () => {
       search: vi.fn().mockResolvedValue([chunk]),
     };
 
-    const result = await getDependenciesHandler(engine, { module: 'com.example:svc' } as any);
-    const structured = (result as any).structuredContent;
+    const result = await getDependenciesHandler(engine, { module: 'com.example:svc' });
+    const structured = structuredOf(result);
 
     expect(structured.target).toBe('com.example:svc');
     expect(structured.dependencyEdges).toBeDefined();
-    expect(structured.dependencyEdges.some((e: any) => e.targetPath === 'src/dep.ts')).toBe(true);
+    expect(structured.dependencyEdges!.some((e) => e.targetPath === 'src/dep.ts')).toBe(true);
   });
 });

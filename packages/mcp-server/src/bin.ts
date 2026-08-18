@@ -27,8 +27,10 @@ import {
   MultiCollectionSearchEngine,
 } from '@ia-framework/retrieval';
 import type { CollectionEngine } from '@ia-framework/retrieval';
+import type { EffectiveFilter } from '@ia-framework/retrieval';
 import { MetricsStore, TokenCounter, generateSessionId } from '@ia-framework/observability';
 import { createMcpServer } from './server.js';
+import { registerContractGate, warmContractGates } from './tools/search-codebase.js';
 import { createCapabilities, serverMode, type ServerCapabilities } from './capabilities.js';
 
 const logger = createLogger('mcp-server');
@@ -108,16 +110,22 @@ async function main(): Promise<void> {
   const frameworkDir = dirname(configPath);
   const graphDbPath = join(frameworkDir, 'graph.sqlite');
   let dependencyGraph:
-    | { getNeighborFiles(filePaths: string[], hops: 1 | 2): Promise<string[]> }
+    | {
+        getNeighborFiles(
+          filePaths: string[],
+          hops: 1 | 2,
+          filter: EffectiveFilter,
+        ): Promise<string[]>;
+      }
     | undefined;
 
   try {
     const graph = new DependencyGraph({ dbPath: graphDbPath });
     graph.initialize();
-    // Wrap sync getNeighborFiles as async to match SearchEngineConfig interface
+    // Wrap sync getNeighborFiles as async to match SearchEngineConfig interface.
     dependencyGraph = {
-      getNeighborFiles: (filePaths: string[], hops: 1 | 2) =>
-        Promise.resolve(graph.getNeighborFiles(filePaths, hops)),
+      getNeighborFiles: (filePaths, hops, filter) =>
+        Promise.resolve(graph.getNeighborFiles(filePaths, hops, filter)),
     };
     capabilities.dependencyGraphAvailable = true;
     logger.info({ graphDbPath }, 'Dependency graph loaded for search expansion');
@@ -127,7 +135,10 @@ async function main(): Promise<void> {
     capabilities.degradedReasons.push(
       `Dependency graph expansion unavailable: ${String(err)}. Results may include fewer related files.`,
     );
-    logger.warn({ graphDbPath, err: String(err) }, 'Dependency graph not available — expansion disabled');
+    logger.warn(
+      { graphDbPath, err: String(err) },
+      'Dependency graph not available — expansion disabled',
+    );
   }
 
   // Discover active collections — convention: {base} for AST, {base}-llm for LLM
@@ -166,6 +177,18 @@ async function main(): Promise<void> {
         { collection: candidate.collectionName, type: candidate.name },
         'Collection discovered',
       );
+
+      // Register the embedding-contract gate for this collection (EMB-09, A-27).
+      // QdrantVectorStore.initialize() is assertSearchable()'s only caller, so
+      // it is the real contract gate; it also reconciles payload indexes, which
+      // context.md decision 1 requires to be additive and silent on success.
+      registerContractGate(candidate.collectionName, async () => {
+        await vectorStore.initialize({
+          textDimensions: embeddingProvider.dimensions,
+          codeDimensions: embeddingProvider.dimensions,
+          embeddingContract: embeddingProvider.contract,
+        });
+      });
     } else {
       logger.info(
         { collection: candidate.collectionName, type: candidate.name },
@@ -178,6 +201,18 @@ async function main(): Promise<void> {
     logger.error('No Qdrant collections found. Run "ia-framework index" first.');
     process.exit(1);
   }
+
+  // Operator visibility for the embedding contract (EMB-09, D-2): warn at
+  // startup and keep the server up. Never throws — a throw here would become
+  // process.exit(1) above, replacing the actionable per-request refusal with an
+  // opaque dead server.
+  await warmContractGates((collectionName, err) => {
+    logger.warn(
+      { collection: collectionName, err: err.message },
+      'Embedding contract is not searchable — searches will be refused. ' +
+        'Run "ia index --force" to rebuild the collection with the active embedding contract.',
+    );
+  });
 
   const searchEngine = new MultiCollectionSearchEngine({
     engines: collectionEngines,
@@ -200,7 +235,10 @@ async function main(): Promise<void> {
     capabilities.degradedReasons.push(
       `Metrics collection disabled: ${String(err)}. Observability data will not be recorded.`,
     );
-    logger.warn({ metricsDbPath, err: String(err) }, 'Metrics store unavailable — metrics disabled');
+    logger.warn(
+      { metricsDbPath, err: String(err) },
+      'Metrics store unavailable — metrics disabled',
+    );
   }
   const tokenCounter = new TokenCounter();
   const sessionId = generateSessionId();

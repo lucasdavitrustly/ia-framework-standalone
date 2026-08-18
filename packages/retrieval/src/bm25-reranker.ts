@@ -10,6 +10,7 @@
  */
 
 import type { RetrievalResult } from './types.js';
+import { tokenize } from '@ia-framework/core';
 
 export interface Bm25RerankOptions {
   /** Final number of results to return after re-ranking */
@@ -24,20 +25,6 @@ export interface Bm25RerankOptions {
 
 interface TermFrequency {
   [term: string]: number;
-}
-
-/**
- * Tokenize text into lowercase terms, splitting on non-alphanumeric boundaries.
- * Handles camelCase and snake_case splitting for code relevance.
- */
-function tokenize(text: string): string[] {
-  // Split camelCase, snake_case, dots, slashes, and whitespace
-  return text
-    .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2') // ACRONYMWord
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 1);
 }
 
 function computeTf(tokens: string[]): TermFrequency {

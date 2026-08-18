@@ -1,5 +1,6 @@
 import type { EmbeddingProvider } from './interface.js';
 import type { EmbeddingProviderConfig } from '@ia-framework/core';
+import { requestSignal } from './http.js';
 import { OpenAIEmbeddingProvider } from './providers/openai.js';
 import { OllamaEmbeddingProvider } from './providers/ollama.js';
 
@@ -69,6 +70,7 @@ export async function discoverDimensions(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model }),
+      signal: requestSignal(),
     });
     if (res.ok) {
       const info = (await res.json()) as { model_info?: Record<string, unknown> };
@@ -86,6 +88,7 @@ export async function discoverDimensions(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, input: 'dimension probe' }),
+    signal: requestSignal(),
   });
   if (!embedRes.ok) {
     throw new Error(

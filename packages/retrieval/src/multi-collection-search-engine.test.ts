@@ -2,6 +2,18 @@ import { describe, it, expect, vi } from 'vitest';
 import type { RetrievalResult } from './types.js';
 import type { SearchEngine } from './search-engine.js';
 import { MultiCollectionSearchEngine } from './multi-collection-search-engine.js';
+import { createEffectiveFilter } from './effective-filter.js';
+import { multiHopExpand } from './multi-hop.js';
+
+/**
+ * Vitest asymmetric matchers are typed `any`; narrow them to `unknown` so
+ * nested matcher shapes stay lint-clean without suppressions.
+ */
+const arrayContaining = (items: unknown[]): unknown[] =>
+  expect.arrayContaining(items) as unknown[];
+const objectContaining = (shape: Record<string, unknown>): unknown =>
+  expect.objectContaining(shape) as unknown;
+
 
 type MockSearchEngine = {
   search: ReturnType<typeof vi.fn>;
@@ -144,6 +156,72 @@ describe('MultiCollectionSearchEngine', () => {
       expect(results[0]!.chunkId).toBe('a');
       expect(results[0]!.source).toBe('ast');
     });
+
+    it('preserves metadata supplied by a later collection for a merged chunk', async () => {
+      const astResult = makeResult({
+        chunkId: 'shared',
+        score: 0.9,
+        signature: 'refund(): void',
+        enrichment: { description: 'Refunds a payment.' },
+      });
+      const llmResult = makeResult({
+        chunkId: 'shared',
+        score: 0.8,
+        classSignature: 'class PaymentService',
+        enrichment: {
+          businessContext: 'Payment lifecycle',
+          semanticTags: ['refund'],
+        },
+      });
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: createMockEngine([astResult]) as unknown as SearchEngine },
+          { name: 'llm', engine: createMockEngine([llmResult]) as unknown as SearchEngine },
+        ],
+      });
+
+      const [result] = await engine.search({ text: 'refund', limit: 10 });
+
+      expect(result?.signature).toBe('refund(): void');
+      expect(result?.classSignature).toBe('class PaymentService');
+      expect(result?.enrichment).toEqual({
+        description: 'Refunds a payment.',
+        businessContext: 'Payment lifecycle',
+        semanticTags: ['refund'],
+      });
+    });
+
+    it('preserves metadata supplied by a later collection for hybrid merged chunks', async () => {
+      const astResult = makeResult({
+        chunkId: 'shared-hybrid',
+        score: 0.02,
+        enrichment: { description: 'AST description' },
+      });
+      const llmResult = makeResult({
+        chunkId: 'shared-hybrid',
+        score: 0.01,
+        stereotype: 'service',
+        enrichment: { semanticTags: ['payments'] },
+      });
+      const astEngine = createMockEngine([], [astResult]);
+      const llmEngine = createMockEngine([], [llmResult]);
+
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
+        ],
+      });
+
+      const [result] = await engine.searchHybrid({ text: 'payment service', limit: 10 });
+
+      expect(result?.stereotype).toBe('service');
+      expect(result?.enrichment).toEqual({
+        description: 'AST description',
+        semanticTags: ['payments'],
+      });
+    });
   });
 
   describe('searchHybrid()', () => {
@@ -221,9 +299,12 @@ describe('MultiCollectionSearchEngine', () => {
         dependencyGraph: depGraph,
       });
 
-      const results = await engine.searchWithExpansion({ text: 'test', limit: 5 }, { hops: 1 });
+      const filter = createEffectiveFilter();
+      const results = await engine.searchWithExpansion({ text: 'test', limit: 5 }, filter, {
+        hops: 1,
+      });
 
-      expect(depGraph.getNeighborFiles).toHaveBeenCalledOnce();
+      expect(depGraph.getNeighborFiles).toHaveBeenCalledWith(['/test/a.ts'], 1, filter);
       // Base results + expansion results
       expect(results.length).toBeGreaterThanOrEqual(1);
     });
@@ -237,7 +318,10 @@ describe('MultiCollectionSearchEngine', () => {
         // no dependencyGraph
       });
 
-      const results = await engine.searchWithExpansion({ text: 'test', limit: 5 });
+      const results = await engine.searchWithExpansion(
+        { text: 'test', limit: 5 },
+        createEffectiveFilter(),
+      );
 
       expect(results).toHaveLength(1);
       expect(results[0]!.chunkId).toBe('a');
@@ -255,9 +339,124 @@ describe('MultiCollectionSearchEngine', () => {
         dependencyGraph: depGraph,
       });
 
-      await engine.searchWithExpansion({ text: 'test', limit: 5 }, { hops: 0 });
+      await engine.searchWithExpansion({ text: 'test', limit: 5 }, createEffectiveFilter(), {
+        hops: 0,
+      });
 
       expect(depGraph.getNeighborFiles).not.toHaveBeenCalled();
+    });
+
+    it('T33: preserves the scoped filter across both collection searches', async () => {
+      const filter = createEffectiveFilter(
+        { must: [{ key: 'language', match: { value: 'typescript' } }] },
+        'repo-a',
+      );
+      const astResult = makeResult({ chunkId: 'repo-a', score: 0.9, repoId: 'repo-a' });
+      const outOfScopeResult = makeResult({ chunkId: 'repo-b', score: 0.9, repoId: 'repo-b' });
+      const scopedSearch = vi.fn((query: { filter?: Record<string, unknown> }) =>
+        Promise.resolve(
+          JSON.stringify(query.filter).includes('repo-a') ? [astResult] : [outOfScopeResult],
+        ),
+      );
+      const astEngine = createMockEngine();
+      astEngine.search = scopedSearch;
+      const llmEngine = createMockEngine();
+      llmEngine.search = scopedSearch;
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
+        ],
+      });
+
+      const results = await engine.searchWithExpansion(
+        { text: 'payment service', limit: 5 },
+        filter,
+        { hops: 0 },
+      );
+
+      const expectedFilter = objectContaining({
+        must: arrayContaining([
+          { key: 'repoId', match: { value: 'repo-a' } },
+          { key: 'language', match: { value: 'typescript' } },
+        ]),
+        must_not: arrayContaining([
+          { key: 'stereotype', match: { value: 'test' } },
+          { key: 'kind', match: { value: '__ia_contract__' } },
+        ]),
+      });
+      expect(astEngine.search).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: expectedFilter }),
+      );
+      expect(llmEngine.search).toHaveBeenCalledWith(
+        expect.objectContaining({ filter: expectedFilter }),
+      );
+      expect(results.every((result) => result.repoId === 'repo-a')).toBe(true);
+    });
+
+    it('T33: returns the unexpanded base result when dependency expansion is empty', async () => {
+      const baseResult = makeResult({ chunkId: 'base', score: 0.9 });
+      const astEngine = createMockEngine([baseResult]);
+      const dependencyGraph = { getNeighborFiles: vi.fn().mockResolvedValue([]) };
+      const engine = new MultiCollectionSearchEngine({
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
+        dependencyGraph,
+      });
+
+      await expect(
+        engine.searchWithExpansion({ text: 'payment service' }, createEffectiveFilter(), {
+          hops: 1,
+        }),
+      ).resolves.toEqual([{ ...baseResult, source: 'ast' }]);
+      expect(dependencyGraph.getNeighborFiles).toHaveBeenCalledOnce();
+    });
+
+    it('preserves enrichment on dependency expansion results', async () => {
+      const baseResult = makeResult({
+        chunkId: 'base',
+        score: 0.9,
+        filePath: '/test/base.ts',
+        relativePath: 'test/base.ts',
+      });
+      const dependencyResult = makeResult({
+        chunkId: 'dependency',
+        score: 0,
+        filePath: '/test/dependency.ts',
+        relativePath: 'test/dependency.ts',
+        signature: 'loadDependency(): void',
+        enrichment: { description: 'Loads the dependency.' },
+      });
+      const astEngine = createMockEngine([baseResult], undefined, [dependencyResult]);
+      const dependencyGraph = {
+        getNeighborFiles: vi.fn().mockResolvedValue(['/test/dependency.ts']),
+      };
+      const engine = new MultiCollectionSearchEngine({
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
+        dependencyGraph,
+      });
+
+      const [result] = (await engine.searchWithExpansion(
+        { text: 'load dependency', limit: 5 },
+        createEffectiveFilter(),
+        { hops: 1 },
+      )).filter((item) => item.chunkId === 'dependency');
+
+      expect(result?.signature).toBe('loadDependency(): void');
+      expect(result?.enrichment).toEqual({ description: 'Loads the dependency.' });
+    });
+
+    it('T33: rejects missing filters on every multi-collection expansion entry point', async () => {
+      const engine = new MultiCollectionSearchEngine({ engines: [] });
+
+      await expect(
+        engine.searchWithExpansion({ text: 'query' }, undefined as never),
+      ).rejects.toThrow(/EffectiveFilter is required/);
+      await expect(engine.getFile('src/file.ts', undefined as never)).rejects.toThrow(
+        /EffectiveFilter is required/,
+      );
+      await expect(
+        engine.searchWithInterfaceExpansion({ text: 'Service' }, undefined as never),
+      ).rejects.toThrow(/EffectiveFilter is required/);
     });
   });
 
@@ -280,10 +479,22 @@ describe('MultiCollectionSearchEngine', () => {
         ],
       });
 
-      const results = await engine.getFile('test/file.ts');
+      const results = await engine.getFile('test/file.ts', createEffectiveFilter());
 
-      expect(astEngine.getFile).toHaveBeenCalledWith('test/file.ts', undefined);
-      expect(llmEngine.getFile).toHaveBeenCalledWith('test/file.ts', undefined);
+      expect(astEngine.getFile).toHaveBeenCalledWith(
+        'test/file.ts',
+        expect.objectContaining({
+          excludeTests: true,
+          reservedExclusion: true,
+        }),
+      );
+      expect(llmEngine.getFile).toHaveBeenCalledWith(
+        'test/file.ts',
+        expect.objectContaining({
+          excludeTests: true,
+          reservedExclusion: true,
+        }),
+      );
       expect(results.length).toBe(3); // 2 ast + 1 llm
       const sources = results.map((r: RetrievalResult) => r.source);
       expect(sources).toContain('ast');
@@ -301,10 +512,20 @@ describe('MultiCollectionSearchEngine', () => {
         ],
       });
 
-      await engine.getFile('test/file.ts', 'payment-gateway');
+      await engine.getFile('test/file.ts', createEffectiveFilter({}, 'payment-gateway'));
 
-      expect(astEngine.getFile).toHaveBeenCalledWith('test/file.ts', 'payment-gateway');
-      expect(llmEngine.getFile).toHaveBeenCalledWith('test/file.ts', 'payment-gateway');
+      expect(astEngine.getFile).toHaveBeenCalledWith(
+        'test/file.ts',
+        expect.objectContaining({
+          repoId: 'payment-gateway',
+        }),
+      );
+      expect(llmEngine.getFile).toHaveBeenCalledWith(
+        'test/file.ts',
+        expect.objectContaining({
+          repoId: 'payment-gateway',
+        }),
+      );
     });
 
     it('Test 13: deduplicates by chunkId - keeps first occurrence', async () => {
@@ -319,7 +540,7 @@ describe('MultiCollectionSearchEngine', () => {
         ],
       });
 
-      const results = await engine.getFile('test/file.ts');
+      const results = await engine.getFile('test/file.ts', createEffectiveFilter());
 
       // deduped: only one result with chunkId 'shared'
       expect(results.filter((r: RetrievalResult) => r.chunkId === 'shared')).toHaveLength(1);
@@ -333,10 +554,148 @@ describe('MultiCollectionSearchEngine', () => {
         engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
       });
 
-      const results = await engine.getFile('test/file.ts');
+      const results = await engine.getFile('test/file.ts', createEffectiveFilter());
 
       expect(results).toHaveLength(1);
       expect(results[0]!.source).toBe('ast');
+    });
+
+    it('merges metadata when the same file chunk is returned by both collections', async () => {
+      const astChunk = makeResult({
+        chunkId: 'shared-file',
+        score: 0,
+        enrichment: { description: 'AST file summary' },
+      });
+      const llmChunk = makeResult({
+        chunkId: 'shared-file',
+        score: 0,
+        signature: 'load(): void',
+        enrichment: { semanticTags: ['file'] },
+      });
+      const astEngine = createMockEngine([], undefined, [astChunk]);
+      const llmEngine = createMockEngine([], undefined, [llmChunk]);
+      const engine = new MultiCollectionSearchEngine({
+        engines: [
+          { name: 'ast', engine: astEngine as unknown as SearchEngine },
+          { name: 'llm', engine: llmEngine as unknown as SearchEngine },
+        ],
+      });
+
+      const [result] = await engine.getFile('test/file.ts', createEffectiveFilter());
+
+      expect(result?.signature).toBe('load(): void');
+      expect(result?.enrichment).toEqual({
+        description: 'AST file summary',
+        semanticTags: ['file'],
+      });
+    });
+  });
+
+  describe('searchWithInterfaceExpansion()', () => {
+    it('T33: forwards the effective filter to the AST interface expansion', async () => {
+      const filter = createEffectiveFilter({}, 'repo-a');
+      const interfaceResults = [makeResult({ chunkId: 'impl', score: 0, repoId: 'repo-a' })];
+      const astEngine = {
+        ...createMockEngine(),
+        searchWithInterfaceExpansion: vi.fn().mockResolvedValue(interfaceResults),
+      };
+      const engine = new MultiCollectionSearchEngine({
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
+      });
+
+      const results = await engine.searchWithInterfaceExpansion({ text: 'Service' }, filter);
+
+      expect(astEngine.searchWithInterfaceExpansion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filter: objectContaining({
+            must: arrayContaining([{ key: 'repoId', match: { value: 'repo-a' } }]),
+          }),
+        }),
+        filter,
+      );
+      expect(results).toEqual([{ ...interfaceResults[0], source: 'ast' }]);
+    });
+
+    it('preserves enrichment on interface implementation results', async () => {
+      const filter = createEffectiveFilter({}, 'repo-a');
+      const interfaceResult = makeResult({
+        chunkId: 'impl-enriched',
+        score: 0,
+        repoId: 'repo-a',
+        signature: 'process(): void',
+        enrichment: { description: 'Implements the payment interface.' },
+      });
+      const astEngine = {
+        ...createMockEngine(),
+        searchWithInterfaceExpansion: vi.fn().mockResolvedValue([interfaceResult]),
+      };
+      const engine = new MultiCollectionSearchEngine({
+        engines: [{ name: 'ast', engine: astEngine as unknown as SearchEngine }],
+      });
+
+      const [result] = await engine.searchWithInterfaceExpansion({ text: 'PaymentService' }, filter);
+
+      expect(result?.signature).toBe('process(): void');
+      expect(result?.enrichment).toEqual({ description: 'Implements the payment interface.' });
+    });
+  });
+
+  describe('multi-hop expansion metadata', () => {
+    it('preserves enrichment on hierarchy expansion', async () => {
+      const hit = makeResult({
+        chunkId: 'base-class',
+        score: 0,
+        signature: 'class PaymentService',
+        enrichment: { description: 'Coordinates payment operations.' },
+      });
+      const results = await multiHopExpand(
+        [makeResult({ chunkId: 'base', score: 0.9, content: 'new PaymentService();' })],
+        { scrollByName: vi.fn().mockResolvedValue([hit]) },
+        createEffectiveFilter(),
+        { expandMethodCalls: false },
+      );
+
+      expect(results[0]?.signature).toBe('class PaymentService');
+      expect(results[0]?.enrichment).toEqual({ description: 'Coordinates payment operations.' });
+    });
+
+    it('preserves enrichment on method-call expansion', async () => {
+      const hit = makeResult({
+        chunkId: 'called-method',
+        score: 0,
+        signature: 'fetchData(): Data',
+        enrichment: { semanticTags: ['io', 'data'] },
+      });
+      const results = await multiHopExpand(
+        [makeResult({ chunkId: 'base', score: 0.9, content: 'client.fetchData();' })],
+        { scrollByDefines: vi.fn().mockResolvedValue([hit]) },
+        createEffectiveFilter(),
+        { expandHierarchy: false },
+      );
+
+      expect(results[0]?.signature).toBe('fetchData(): Data');
+      expect(results[0]?.enrichment).toEqual({ semanticTags: ['io', 'data'] });
+    });
+
+    it('preserves enrichment on repository-scoped multi-hop expansion', async () => {
+      const hit = makeResult({
+        chunkId: 'cross-repo-class',
+        score: 0,
+        repoId: 'repo-b',
+        enrichment: { businessContext: 'Shared payment domain' },
+      });
+      const results = await multiHopExpand(
+        [makeResult({ chunkId: 'base', score: 0.9, content: 'new PaymentService();' })],
+        {
+          scrollByName: vi.fn().mockResolvedValue([]),
+          scrollByNameInRepo: vi.fn().mockResolvedValue([hit]),
+        },
+        createEffectiveFilter({}, 'repo-b'),
+        { expandMethodCalls: false },
+      );
+
+      expect(results[0]?.repoId).toBe('repo-b');
+      expect(results[0]?.enrichment).toEqual({ businessContext: 'Shared payment domain' });
     });
   });
 

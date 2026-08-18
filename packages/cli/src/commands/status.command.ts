@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
-import { loadConfig } from '@ia-framework/core';
+import { loadConfig, RepoRegistry } from '@ia-framework/core';
 import { QdrantVectorStore } from '@ia-framework/vector-store';
 import { getLastIndexedCommit, getCurrentCommit } from '@ia-framework/indexer';
 import { MetricsStore } from '@ia-framework/observability';
@@ -23,7 +23,11 @@ export function statusCommand(): Command {
         console.log('ia-framework status');
         console.log('═══════════════════════════════════════');
         console.log(`Config:         ${configPath}`);
-        console.log(`Target project: ${config.targetProjectPath}`);
+        const registry = RepoRegistry.fromConfig(config, dirname(configPath));
+        const repos = registry.getRepos();
+        console.log(
+          `Target project: ${config.targetProjectPath ?? repos.map((repo) => repo.path).join(', ')}`,
+        );
         console.log(`Embedding:      ${config.embedding.provider} / ${config.embedding.model}`);
         const effectiveQdrantHost = process.env['QDRANT_HOST'] ?? 'localhost';
         console.log(`Vector store:   ${effectiveQdrantHost}:${config.vectorStore.port}`);
@@ -52,30 +56,42 @@ export function statusCommand(): Command {
           console.log(`  → Is Docker running? Try: docker compose up -d qdrant`);
         }
 
-        // Show last indexed commit vs current
+        // Show last indexed commit vs current, scoped to each repository.
         console.log('');
         try {
-          const lastCommit = await getLastIndexedCommit(
-            frameworkDir,
-            config.vectorStore.collectionName,
-          );
-          const currentCommit = config.targetProjectPath
-            ? await getCurrentCommit(config.targetProjectPath)
-            : undefined;
-
-          if (lastCommit) {
-            const upToDate = lastCommit === currentCommit;
-            const indicator = upToDate ? '✓ up to date' : '⚠ stale';
-            console.log(`Last indexed:   ${lastCommit.slice(0, 8)} (${indicator})`);
-            if (currentCommit) {
-              console.log(`Current HEAD:   ${currentCommit.slice(0, 8)}`);
+          for (const repo of repos) {
+            let lastCommit = await getLastIndexedCommit(
+              frameworkDir,
+              config.vectorStore.collectionName,
+              repo.name,
+            );
+            // Preserve visibility of legacy single-repo state written before repo
+            // scoping was introduced, without making an unsafe fallback for multi-repo state.
+            if (!lastCommit && repos.length === 1) {
+              lastCommit = await getLastIndexedCommit(
+                frameworkDir,
+                config.vectorStore.collectionName,
+              );
             }
-            if (!upToDate) {
+            const currentCommit = await getCurrentCommit(repo.path);
+            const label = repos.length > 1 ? `Last indexed [${repo.name}]:` : 'Last indexed:';
+
+            if (lastCommit) {
+              const upToDate = lastCommit === currentCommit;
+              const indicator = upToDate ? '✓ up to date' : '⚠ stale';
+              console.log(`${label.padEnd(16)} ${lastCommit.slice(0, 8)} (${indicator})`);
+              if (currentCommit) {
+                const headLabel =
+                  repos.length > 1 ? `Current HEAD [${repo.name}]:` : 'Current HEAD:';
+                console.log(`${headLabel.padEnd(16)} ${currentCommit.slice(0, 8)}`);
+              }
+              if (!upToDate) {
+                console.log(`  → Run: ia-framework index`);
+              }
+            } else {
+              console.log(`${label} never`);
               console.log(`  → Run: ia-framework index`);
             }
-          } else {
-            console.log(`Last indexed:   never`);
-            console.log(`  → Run: ia-framework index`);
           }
         } catch {
           console.log(`Last indexed:   unknown (could not read git state)`);

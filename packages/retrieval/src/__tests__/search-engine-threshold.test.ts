@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SearchEngine } from '../search-engine.js';
 import type { SearchEngineConfig } from '../types.js';
+import type { EmbeddingContract } from '@ia-framework/core';
+
+const MOCK_CONTRACT: EmbeddingContract = {
+  provider: 'openai',
+  model: 'mock-model',
+  dimension: 384,
+  tokenizerVersion: 1,
+  sparseHashVersion: 1,
+};
 
 describe('SearchEngine score threshold behavior', () => {
   let mockVectorStore: {
@@ -10,6 +19,7 @@ describe('SearchEngine score threshold behavior', () => {
   let mockEmbeddingProvider: {
     embed: ReturnType<typeof vi.fn>;
     dimensions: number;
+    contract: EmbeddingContract;
   };
   let config: SearchEngineConfig;
 
@@ -21,6 +31,7 @@ describe('SearchEngine score threshold behavior', () => {
     mockEmbeddingProvider = {
       embed: vi.fn().mockResolvedValue(new Array(384).fill(0.1)),
       dimensions: 384,
+      contract: MOCK_CONTRACT,
     };
     config = {
       embeddingProvider: mockEmbeddingProvider,
@@ -203,12 +214,104 @@ describe('SearchEngine score threshold behavior', () => {
 
       expect(results).toHaveLength(0);
     });
+
+    it('T27: excludes test-stereotype results on the hybrid path', async () => {
+      const makePayload = (chunkId: string, stereotype?: string) => ({
+        chunkId,
+        filePath: `/src/${chunkId}.ts`,
+        relativePath: `src/${chunkId}.ts`,
+        language: 'typescript',
+        chunkType: 'function',
+        name: chunkId,
+        content: `function ${chunkId}() {}`,
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: [chunkId],
+        indexedAt: '2024-01-01',
+        ...(stereotype ? { stereotype } : {}),
+      });
+      mockVectorStore.searchHybrid.mockResolvedValue([
+        { id: 'test', score: 0.03, payload: makePayload('test', 'test'), vectorName: 'sparse' },
+        { id: 'prod', score: 0.02, payload: makePayload('prod', 'service'), vectorName: 'semantic' },
+      ]);
+
+      const results = await new SearchEngine(config).searchHybrid({ text: 'payment' });
+
+      expect(results.map((result) => result.name)).toEqual(['prod']);
+    });
+
+    it('T27: applies lean-payload diversity on the hybrid path', async () => {
+      const makePayload = (chunkId: string, relativePath: string) => ({
+        chunkId,
+        relativePath,
+        language: 'typescript',
+        chunkType: 'function',
+        name: chunkId,
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: [],
+        indexedAt: '2024-01-01',
+      });
+      mockVectorStore.searchHybrid.mockResolvedValue(
+        [
+          ['a1', 'src/A.ts', 0.03],
+          ['a2', 'src/A.ts', 0.029],
+          ['b1', 'src/B.ts', 0.028],
+        ].map(([id, path, score]) => ({
+          id,
+          score,
+          payload: makePayload(String(id), String(path)),
+          vectorName: 'semantic',
+        })),
+      );
+
+      const results = await new SearchEngine({
+        ...config,
+        mmrLambda: 0.5,
+        mmrEnabled: true,
+      }).searchHybrid({ text: 'how does payment work', limit: 2 });
+
+      expect(new Set(results.map((result) => result.relativePath)).size).toBe(2);
+    });
+
+    it('T27: applies elbow truncation on the hybrid path', async () => {
+      const makePayload = (chunkId: string) => ({
+        chunkId,
+        relativePath: `src/${chunkId}.ts`,
+        language: 'typescript',
+        chunkType: 'function',
+        name: chunkId,
+        startLine: 1,
+        endLine: 1,
+        imports: [],
+        exports: [],
+        indexedAt: '2024-01-01',
+      });
+      mockVectorStore.searchHybrid.mockResolvedValue(
+        [0.03, 0.029, 0.01].map((score, index) => ({
+          id: `point-${index}`,
+          score,
+          payload: makePayload(`chunk-${index}`),
+          vectorName: 'semantic',
+        })),
+      );
+
+      const results = await new SearchEngine({
+        ...config,
+        mmrEnabled: false,
+        elbowDropThreshold: 0.5,
+      }).searchHybrid({ text: 'payment', limit: 10 });
+
+      expect(results.length).toBeLessThan(3);
+    });
   });
 });
 
-describe('MultiCollectionSearchEngine score threshold behavior', () => {
-  it('scoreThreshold is stripped before child engines receive over-fetch query', () => {
-    // Covered by multi-collection-search-engine.test.ts Test 4 (updated to assert undefined)
-    expect(true).toBe(true);
-  });
-});
+// The MultiCollectionSearchEngine scoreThreshold-stripping case that used to sit
+// here as `expect(true).toBe(true)` is genuinely covered by
+// `multi-collection-search-engine.test.ts:123-128`, which asserts
+// `expect.objectContaining({ scoreThreshold: undefined })` on both child engines.
+// A placeholder duplicating another layer's assertion proves nothing (D-7,
+// implement.md Check C), so it was removed rather than restated.

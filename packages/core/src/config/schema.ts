@@ -6,6 +6,7 @@ export const EmbeddingProviderConfigSchema = z.object({
   baseUrl: z.string().url().optional(),
   apiKey: z.string().optional(),
   dimensions: z.number().int().positive().optional(),
+  prefixes: z.object({ document: z.string(), query: z.string() }).optional(),
 });
 
 export const VectorStoreConfigSchema = z.object({
@@ -27,7 +28,7 @@ export const IndexingConfigSchema = z.object({
   excludePatterns: z.array(z.string()).default([]),
   maxChunkLines: z.number().int().positive().optional(),
   respectGitignore: z.boolean().optional(),
-  /** Override default embedding concurrency (provider-aware). Ollama default: 3, OpenAI default: 10. */
+  /** Override default embedding concurrency (provider-aware). Ollama default: 6, OpenAI default: 10. Note: each unit runs 2 requests (semantic + signature), so in-flight requests are ~2x this value. */
   embeddingConcurrency: z.number().int().positive().optional(),
   /** Number of chunks per embedding API call (default: 50, range: 1-200). */
   embeddingBatchSize: z.number().int().min(1).max(200).optional(),

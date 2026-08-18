@@ -50,11 +50,14 @@ describe('MCP Server Tools', () => {
     test('Test 1: calls searchEngine.searchWithExpansion() with the query text', async () => {
       const engine = makeMockEngine([]);
       await searchCodebaseHandler(engine, { query: 'authentication middleware' });
-      const [query, options] = engine.searchWithExpansion.mock.calls[0] as [
+      const [query, filter, options] = engine.searchWithExpansion.mock.calls[0] as [
         { text: string },
+        { excludeTests: boolean; reservedExclusion: boolean },
         { hops: number },
       ];
       expect(query.text).toBe('authentication middleware');
+      expect(filter.excludeTests).toBe(true);
+      expect(filter.reservedExclusion).toBe(true);
       expect(options.hops).toEqual(expect.any(Number));
     });
 
@@ -71,11 +74,14 @@ describe('MCP Server Tools', () => {
     test('Test 3: passes limit to searchEngine.searchWithExpansion()', async () => {
       const engine = makeMockEngine([]);
       await searchCodebaseHandler(engine, { query: 'auth', limit: 3 });
-      const [query, options] = engine.searchWithExpansion.mock.calls[0] as [
+      const [query, filter, options] = engine.searchWithExpansion.mock.calls[0] as [
         { limit?: number | undefined },
+        { excludeTests: boolean; reservedExclusion: boolean },
         { hops: number },
       ];
       expect(query.limit).toBe(3);
+      expect(filter.excludeTests).toBe(true);
+      expect(filter.reservedExclusion).toBe(true);
       expect(options.hops).toEqual(expect.any(Number));
     });
 
@@ -97,6 +103,7 @@ describe('MCP Server Tools', () => {
 
       expect(engine.search).toHaveBeenCalledWith(
         expect.objectContaining({ text: 'fallback query' }),
+        expect.anything(),
       );
       expect(text).toContain('dependency expansion was unavailable');
       expect(text).toContain('src/fallback.ts');
@@ -107,7 +114,10 @@ describe('MCP Server Tools', () => {
     test('Test 5: calls searchEngine.getFile() with the provided path', async () => {
       const engine = makeMockEngine([], [makeResult()]);
       await getFileHandler(engine, { path: 'src/auth/middleware.ts' });
-      expect(engine.getFile).toHaveBeenCalledWith('src/auth/middleware.ts', undefined);
+      expect(engine.getFile).toHaveBeenCalledWith(
+        'src/auth/middleware.ts',
+        expect.objectContaining({ excludeTests: true, reservedExclusion: true }),
+      );
     });
 
     test('Test 6: formats results as markdown code blocks', async () => {
@@ -232,10 +242,10 @@ describe('MCP Server Tools', () => {
 
     test('checks each repo in configuration order and returns matches (exact join, no scan)', async () => {
       const calls: Array<string | undefined> = [];
-      const readFileFn = vi.fn(async (_path: string, repo?: string) => {
+      const readFileFn = vi.fn((_path: string, repo?: string) => {
         calls.push(repo);
-        if (repo === 'achpro') return 'achpro content';
-        throw new Error('ENOENT');
+        if (repo === 'achpro') return Promise.resolve('achpro content');
+        return Promise.reject(new Error('ENOENT'));
       });
       const resolve = buildResolveFileAcrossRepos(repoMap, accessibility(), readFileFn);
 
@@ -249,7 +259,7 @@ describe('MCP Server Tools', () => {
     });
 
     test('skips inaccessible repos and reports them (FR-007) without reading them', async () => {
-      const readFileFn = vi.fn(async () => 'content');
+      const readFileFn = vi.fn(() => Promise.resolve('content'));
       const resolve = buildResolveFileAcrossRepos(
         repoMap,
         accessibility({ paypro: { accessible: false, error: 'ENOENT dir' } }),
@@ -266,7 +276,7 @@ describe('MCP Server Tools', () => {
     });
 
     test('forwards startLine/endLine to the read (FR-009)', async () => {
-      const readFileFn = vi.fn(async () => 'sliced');
+      const readFileFn = vi.fn(() => Promise.resolve('sliced'));
       const resolve = buildResolveFileAcrossRepos(repoMap, accessibility(), readFileFn);
 
       await resolve('src/Foo.java', { startLine: 10, endLine: 20 });

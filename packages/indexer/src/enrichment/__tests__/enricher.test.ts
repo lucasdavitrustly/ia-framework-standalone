@@ -46,18 +46,31 @@ function makeLargeContent(size = 500): string {
 // Mock fetch to intercept Ollama calls
 function mockFetch() {
   fetchCalls = [];
-  const mockFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+  const mockFn = vi.fn((input: string | URL | Request, init?: RequestInit) => {
     const bodyStr = typeof init?.body === 'string' ? init.body : '';
-    const body = bodyStr ? JSON.parse(bodyStr) : {};
-    fetchCalls.push({ url: url.toString(), body });
+    const body: unknown = bodyStr ? JSON.parse(bodyStr) : {};
+    const url = input instanceof Request ? input.url : input.toString();
+    fetchCalls.push({ url, body });
 
-    // Count chunks in the prompt by counting occurrences of chunk IDs
+    // Honour the bounded array schema: return exactly minItems enrichment
+    // objects so the enricher's length check passes.
+    const count =
+      (body as { format?: { minItems?: number } })?.format?.minItems ?? 0;
+    const arr = Array.from({ length: count }, (_, i) => ({
+      description: `desc ${i}`,
+      businessContext: 'ctx',
+      semanticTags: ['a', 'b', 'c'],
+      relationships: [],
+    }));
+
     // Return a valid enrichment response
-    return new Response(
-      JSON.stringify({
-        response: JSON.stringify({ chunks: [] }),
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          response: JSON.stringify(arr),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
     );
   });
 

@@ -1,4 +1,13 @@
 import type { CodeChunk } from '@ia-framework/ast-parser';
+import {
+  buildSparseVector as buildCanonicalSparseVector,
+  EmbeddingResponseError,
+} from '@ia-framework/core';
+import type { EmbeddingProvider, InputFailure } from '@ia-framework/embedding';
+import PQueue from 'p-queue';
+
+/** Max simultaneous per-item embed() calls during response-shape fan-out. */
+export const FANOUT_CONCURRENCY = 4;
 
 /**
  * T029: 3-vector embedder
@@ -18,12 +27,7 @@ import type { CodeChunk } from '@ia-framework/ast-parser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface SparseVector {
-  /** Hash-bucketed token positions (stable within a run) */
-  indices: number[];
-  /** Term frequency counts corresponding to each index */
-  values: number[];
-}
+export type SparseVector = ReturnType<typeof buildCanonicalSparseVector>;
 
 export interface EmbedderResult {
   /** Dense vector for semantic search (description + context) */
@@ -34,86 +38,56 @@ export interface EmbedderResult {
   sparse: SparseVector;
 }
 
-/** Minimal embedding provider interface (subset of EmbeddingProvider) */
-interface EmbeddingProvider {
-  embed(text: string, type?: string): Promise<number[]>;
-  embedBatch(texts: string[], type?: string): Promise<number[][]>;
-}
-
 // Extended CodeChunk with enrichment fields (added by LlmEnricher)
-type EnrichedCodeChunk = CodeChunk & {
+export type EnrichedCodeChunk = CodeChunk & {
   description?: string | undefined;
   businessContext?: string | undefined;
   semanticTags?: string[] | undefined;
   signature?: string | undefined;
+  signatureOnly?: boolean | undefined;
 };
 
-// ── Sparse vector helpers ─────────────────────────────────────────────────────
+export interface EmbedderBatchOutcome {
+  readonly results: (EmbedderResult | null)[];
+  readonly failures: InputFailure[];
+}
 
-/** Number of hash buckets for sparse vector indices */
-const SPARSE_BUCKET_SIZE = 65536;
+export function embeddingFailureFromError(error: unknown, index: number): InputFailure {  const reason = error instanceof Error ? error.message : String(error);
+  let retryable = true;
 
-/**
- * Tokenize a string by camelCase, dots, underscores, and spaces.
- * "processPayment" → ["process", "Payment", "payment"]
- * "com.example.foo" → ["com", "example", "foo"]
- */
-function tokenize(text: string): string[] {
-  if (!text) return [];
-  // Split on non-alphanumeric characters
-  const byNonAlpha = text.split(/[^a-zA-Z0-9]+/).filter((t) => t.length > 0);
-  // Further split camelCase: "processPayment" → ["process", "Payment"]
-  const tokens: string[] = [];
-  for (const word of byNonAlpha) {
-    const camelParts = word.split(/(?=[A-Z])/).filter((t) => t.length > 0);
-    tokens.push(...camelParts);
+  if (error instanceof EmbeddingResponseError) {
+    retryable = false;
+  } else if (typeof error === 'object' && error !== null && 'retryable' in error) {
+    retryable = Boolean((error as { retryable?: unknown }).retryable);
+  } else if (/(?:runner-failure|llama-server process no longer running|llama runner process no longer running)/i.test(reason)) {
+    retryable = true;
+  } else if (
+    /\b(?:400|401|403|404)\b|malformed|dimension|returned \d+ embeddings|context length|model not found/i.test(
+      reason,
+    )
+  ) {
+    retryable = false;
   }
-  // Lowercase all tokens and deduplicate
-  return [...new Set(tokens.map((t) => t.toLowerCase()))].filter((t) => t.length > 1);
+
+  return { index, reason, retryable };
 }
 
 /**
- * Hash a token string to a stable bucket index in [0, SPARSE_BUCKET_SIZE).
- * Uses djb2-inspired 32-bit hash.
+ * Detect a context-length / oversized-input embedding error. Such errors are
+ * deterministic for a given input, so the pipeline splits the batch rather than
+ * retrying the identical request.
  */
-function hashToken(token: string): number {
-  let hash = 5381;
-  for (let i = 0; i < token.length; i++) {
-    hash = ((hash << 5) + hash + token.charCodeAt(i)) >>> 0;
-  }
-  return hash % SPARSE_BUCKET_SIZE;
-}
-
-/**
- * Build a sparse vector from a collection of token sources.
- * Counts term frequencies and maps to hash bucket indices.
- */
-function buildSparseVector(sources: (string | string[] | undefined)[]): SparseVector {
-  const termFreq = new Map<number, number>();
-
-  for (const source of sources) {
-    if (!source) continue;
-    const texts = Array.isArray(source) ? source : [source];
-    for (const text of texts) {
-      for (const token of tokenize(text)) {
-        const idx = hashToken(token);
-        termFreq.set(idx, (termFreq.get(idx) ?? 0) + 1);
-      }
-    }
-  }
-
-  // Sort by index for deterministic output
-  const sorted = [...termFreq.entries()].sort(([a], [b]) => a - b);
-  return {
-    indices: sorted.map(([idx]) => idx),
-    values: sorted.map(([, freq]) => freq),
-  };
+export function isContextLengthError(error: unknown): boolean {
+  const reason = error instanceof Error ? error.message : String(error);
+  return /context[- ]?length|context window|exceeds context|input too large|too large|context-length/i.test(
+    reason,
+  );
 }
 
 // ── ThreeVectorEmbedder class ─────────────────────────────────────────────────
 
 export class ThreeVectorEmbedder {
-  constructor(private readonly provider: EmbeddingProvider) {}
+  constructor(private readonly provider: Pick<EmbeddingProvider, 'embed' | 'embedBatch'>) {}
 
   /**
    * Produce semantic, signature, and sparse vectors for a single enriched chunk.
@@ -124,7 +98,12 @@ export class ThreeVectorEmbedder {
       this.provider.embed(buildSignatureInput(chunk), 'document'),
     ]);
 
-    const sparse = buildSparseVector([chunk.name, chunk.defines, chunk.imports, chunk.annotations]);
+    const sparse = buildCanonicalSparseVector([
+      chunk.name,
+      chunk.defines,
+      chunk.imports,
+      chunk.annotations,
+    ]);
 
     return { semantic, signature, sparse };
   }
@@ -134,22 +113,149 @@ export class ThreeVectorEmbedder {
    * Batches the embedding calls for efficiency.
    */
   async embedBatch(chunks: EnrichedCodeChunk[]): Promise<EmbedderResult[]> {
-    if (chunks.length === 0) return [];
+    const outcome = await this.embedBatchWithFailures(chunks);
+    if (outcome.failures.length > 0) {
+      throw new Error(outcome.failures.map((failure) => `[${failure.index}] ${failure.reason}`).join('; '));
+    }
+
+    return outcome.results.map((result, index) => {
+      if (!result) {
+        throw new Error(`short provider response: missing embedding vector for input ${index}`);
+      }
+      return result;
+    });
+  }
+
+  /**
+   * Produce all vectors while retaining provider failures by chunk position.
+   * The pipeline uses this form to store successful siblings independently.
+   */
+  async embedBatchWithFailures(
+    chunks: EnrichedCodeChunk[],
+    signal?: AbortSignal,
+  ): Promise<EmbedderBatchOutcome> {
+    if (chunks.length === 0) return { results: [], failures: [] };
 
     const semanticInputs = chunks.map(buildSemanticInput);
     const signatureInputs = chunks.map(buildSignatureInput);
 
-    const [semanticVectors, signatureVectors] = await Promise.all([
-      this.provider.embedBatch(semanticInputs, 'document'),
-      this.provider.embedBatch(signatureInputs, 'document'),
+    const [semanticOutcome, signatureOutcome] = await Promise.all([
+      this.embedChannelWithFailures(semanticInputs, signal),
+      this.embedChannelWithFailures(signatureInputs, signal),
     ]);
 
-    return chunks.map((chunk, i) => ({
-      semantic: semanticVectors[i] ?? [],
-      signature: signatureVectors[i] ?? [],
-      sparse: buildSparseVector([chunk.name, chunk.defines, chunk.imports, chunk.annotations]),
-    }));
+    const failures = new Map<number, InputFailure>();
+    const addFailure = (failure: InputFailure): void => {
+      const previous = failures.get(failure.index);
+      if (!previous || (!failure.retryable && previous.retryable)) {
+        failures.set(failure.index, failure);
+      }
+    };
+
+    for (const failure of [...semanticOutcome.failures, ...signatureOutcome.failures]) {
+      addFailure(failure);
+    }
+
+    const results = chunks.map((chunk, index) => {
+      const semantic = semanticOutcome.vectors[index];
+      const signature = signatureOutcome.vectors[index];
+      if (!semantic || !signature) {
+        if (!failures.has(index)) {
+          addFailure({
+            index,
+            reason: 'short provider response: missing semantic or signature vector',
+            retryable: false,
+          });
+        }
+        return null;
+      }
+
+      return {
+        semantic,
+        signature,
+        sparse: buildCanonicalSparseVector([
+          chunk.name,
+          chunk.defines,
+          chunk.imports,
+          chunk.annotations,
+        ]),
+      };
+    });
+
+    return { results, failures: [...failures.values()].sort((a, b) => a.index - b.index) };
   }
+
+  private async embedChannelWithFailures(
+    inputs: string[],
+    signal?: AbortSignal,
+  ): Promise<{
+    vectors: (number[] | null)[];
+    failures: InputFailure[];
+  }> {
+    try {
+      return await this.provider.embedBatch(inputs, 'document', signal);
+    } catch (error) {
+      const failure = embeddingFailureFromError(error, 0);
+      const responseShapeFailure =
+        error instanceof EmbeddingResponseError ||
+        /malformed|dimension|returned \d+ embeddings|empty vector|no embedding returned/i.test(
+          failure.reason,
+        );
+      if (!responseShapeFailure) throw error;
+
+      // Per-item fan-out to isolate the offending input. Bounded so a batch of
+      // 50 does not open 50 simultaneous sockets (which, with the whole-run
+      // concurrency, could exhaust connections and induce the very hangs the
+      // request timeout guards against).
+      const vectors = new Array<number[] | null>(inputs.length).fill(null);
+      const failures: InputFailure[] = [];
+      const queue = new PQueue({ concurrency: FANOUT_CONCURRENCY });
+      await Promise.all(
+        inputs.map((_input, index) =>
+          queue.add(async () => {
+            try {
+              vectors[index] = await this.provider.embed(inputs[index]!, 'document', signal);
+            } catch (error) {
+              failures.push(embeddingFailureFromError(error, index));
+            }
+          }),
+        ),
+      );
+      return {
+        vectors,
+        failures: failures.sort((left, right) => left.index - right.index),
+      };
+    }
+  }
+
+}
+
+/**
+ * Per-channel budget texts for one chunk, each including the document prefix so
+ * the estimate matches what the provider actually sends. The embedder issues one
+ * request per channel, so these are measured separately by the budgeter (see
+ * sizedInputFromChannels) rather than concatenated.
+ */
+export function buildEmbeddingBudgetChannels(
+  chunk: EnrichedCodeChunk,
+  documentPrefix = '',
+): string[] {
+  return [
+    `${documentPrefix}${buildSemanticInput(chunk)}`,
+    `${documentPrefix}${buildSignatureInput(chunk)}`,
+  ];
+}
+
+/**
+ * @deprecated Concatenates both channels, which double-counts tokens and causes
+ * false-positive oversized rejections. Use buildEmbeddingBudgetChannels with
+ * sizedInputFromChannels. Retained for callers not yet migrated.
+ */
+export function buildEmbeddingBudgetInput(
+  chunk: EnrichedCodeChunk,
+  documentPrefix = '',
+): string {
+  return `${documentPrefix}${buildSemanticInput(chunk)}\n${documentPrefix}${buildSignatureInput(chunk)}`;
 }
 
 // ── Input builders ────────────────────────────────────────────────────────────
@@ -195,6 +301,8 @@ function buildAnnotationMetaText(chunk: EnrichedCodeChunk): string {
  * Fallback: annotationMeta synthesis (T119) → raw chunk content
  */
 function buildSemanticInput(chunk: EnrichedCodeChunk): string {
+  if (chunk.signatureOnly) return chunk.content;
+
   const parts: string[] = [];
 
   if (chunk.description) parts.push(chunk.description);
@@ -227,6 +335,8 @@ function buildSemanticInput(chunk: EnrichedCodeChunk): string {
  * Fallback: name + chunkType
  */
 function buildSignatureInput(chunk: EnrichedCodeChunk): string {
+  if (chunk.signatureOnly) return chunk.content;
+
   const parts: string[] = [];
 
   if (chunk.signature) parts.push(chunk.signature);

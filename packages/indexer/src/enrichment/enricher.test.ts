@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 
 /**
  * T015: LLM enricher — given chunks + mock Ollama response, returns enriched metadata.
@@ -47,8 +48,10 @@ interface EnrichmentConfig {
 // Dynamic import; fails at runtime when module is missing (that is the TDD fail state).
 // Using indirect specifier to prevent static TS errors from blocking test execution.
 const enricherSpecifier = './enricher.js';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const enricherModule = (await import(enricherSpecifier).catch(() => null)) as any;
+const enricherModule = (await import(enricherSpecifier).catch(() => null)) as Record<
+  string,
+  unknown
+> | null;
 
 interface EnrichmentProgress {
   batchesCompleted: number;
@@ -57,7 +60,6 @@ interface EnrichmentProgress {
   warning?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 const LlmEnricher = enricherModule?.LlmEnricher as
   | (new (config: EnrichmentConfig) => {
       enrich(
@@ -124,11 +126,11 @@ describe('LlmEnricher — enriched metadata (T015)', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ response: JSON.stringify(ollamaPayload) }),
+      json: () => Promise.resolve(({ response: JSON.stringify(ollamaPayload) })),
     } as Response);
 
     const enricher = new LlmEnricher!(baseConfig);
-    const result = (await enricher.enrich([makeChunk('chunk-1', 'scheduleRetry')])) as TestChunk[];
+    const result = await enricher.enrich([makeChunk('chunk-1', 'scheduleRetry')]);
 
     expect(result).toHaveLength(1);
     expect(result[0]!.description).toBe('Schedules payment retry with exponential backoff');
@@ -156,11 +158,11 @@ describe('LlmEnricher — enriched metadata (T015)', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ response: JSON.stringify(ollamaPayload) }),
+      json: () => Promise.resolve(({ response: JSON.stringify(ollamaPayload) })),
     } as Response);
 
     const enricher = new LlmEnricher!(baseConfig);
-    const result = (await enricher.enrich([makeChunk('chunk-1', 'processPayment')])) as TestChunk[];
+    const result = await enricher.enrich([makeChunk('chunk-1', 'processPayment')]);
 
     expect(result[0]!.enrichedAt).toBeDefined();
     expect(result[0]!.enrichmentModel).toBe('qwen3:8b');
@@ -190,12 +192,12 @@ describe('LlmEnricher — enriched metadata (T015)', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ response: JSON.stringify(ollamaPayload) }),
+      json: () => Promise.resolve(({ response: JSON.stringify(ollamaPayload) })),
     } as Response);
 
     const enricher = new LlmEnricher!(baseConfig);
     const chunks = [makeChunk('chunk-1', 'method1'), makeChunk('chunk-2', 'method2')];
-    const result = (await enricher.enrich(chunks)) as TestChunk[];
+    const result = await enricher.enrich(chunks);
 
     expect(result).toHaveLength(2);
     expect(result[0]!.description).toBe('Desc for chunk 1');
@@ -221,12 +223,12 @@ describe('LlmEnricher — enriched metadata (T015)', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ response: JSON.stringify(ollamaPayload) }),
+      json: () => Promise.resolve(({ response: JSON.stringify(ollamaPayload) })),
     } as Response);
 
     const enricher = new LlmEnricher!(baseConfig);
     const original = makeChunk('chunk-1', 'processPayment');
-    const result = (await enricher.enrich([original])) as TestChunk[];
+    const result = await enricher.enrich([original]);
 
     expect(result[0]!.id).toBe('chunk-1');
     expect(result[0]!.language).toBe('java');
@@ -305,7 +307,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
       const ids = callCount === 1 ? ['c1', 'c2'] : ['c3', 'c4'];
       return Promise.resolve({
         ok: true,
-        json: async () => ({ response: makePayload(ids) }),
+        json: () => Promise.resolve(({ response: makePayload(ids) })),
       } as Response);
     });
 
@@ -318,7 +320,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
       retryAttempts: 1,
     });
 
-    const result = (await enricher.enrich(chunks as unknown as TestChunk[])) as TestChunk[];
+    const result = await enricher.enrich(chunks as unknown as TestChunk[]);
 
     // Two classes → two Ollama calls
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -350,26 +352,27 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        response: JSON.stringify({
-          chunks: [
-            {
-              id: 's1',
-              description: 'd1',
-              businessContext: '',
-              semanticTags: [],
-              relationships: [],
-            },
-            {
-              id: 's2',
-              description: 'd2',
-              businessContext: '',
-              semanticTags: [],
-              relationships: [],
-            },
-          ],
+      json: () =>
+        Promise.resolve({
+          response: JSON.stringify({
+            chunks: [
+              {
+                id: 's1',
+                description: 'd1',
+                businessContext: '',
+                semanticTags: [],
+                relationships: [],
+              },
+              {
+                id: 's2',
+                description: 'd2',
+                businessContext: '',
+                semanticTags: [],
+                relationships: [],
+              },
+            ],
+          }),
         }),
-      }),
     } as Response);
 
     const enricher = new LlmEnricher!({
@@ -455,43 +458,23 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
     // total = 4 * 1333 = 5333 tokens > 70% of 7500 = 5250 tokens → class grouping
     // FooService group: [sig1, m1] → 1 batch (2667 tokens ≤ 2875 budget)
     // BarService group: [o1, o2] → 1 batch (2667 tokens ≤ 2875 budget)
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        response: JSON.stringify({
-          chunks: [
-            {
-              id: 'sig1',
-              description: 'class sig',
-              businessContext: '',
-              semanticTags: [],
-              relationships: [],
-            },
-            {
-              id: 'm1',
-              description: 'method',
-              businessContext: '',
-              semanticTags: [],
-              relationships: [],
-            },
-            {
-              id: 'o1',
-              description: 'other',
-              businessContext: '',
-              semanticTags: [],
-              relationships: [],
-            },
-            {
-              id: 'o2',
-              description: 'other2',
-              businessContext: '',
-              semanticTags: [],
-              relationships: [],
-            },
-          ],
-        }),
-      }),
-    } as Response);
+    // Return exactly one enrichment object per chunk in the batch (bounded schema).
+    global.fetch = vi.fn((_: unknown, init?: RequestInit) => {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        format?: { minItems?: number };
+      };
+      const count = body.format?.minItems ?? 0;
+      const chunks = Array.from({ length: count }, (_, i) => ({
+        description: `desc ${i}`,
+        businessContext: '',
+        semanticTags: [],
+        relationships: [],
+      }));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ response: JSON.stringify(chunks) }),
+      } as Response);
+    });
 
     const enricher = new LlmEnricher!({
       provider: 'ollama',
@@ -516,7 +499,7 @@ describe('LlmEnricher — large-file class grouping (T032)', () => {
 // ── T017: graceful degradation ─────────────────────────────────────────────────
 describe('LlmEnricher — graceful degradation (T017)', () => {
   let originalFetch: typeof global.fetch;
-  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: MockInstance<typeof console.warn> | undefined;
 
   beforeEach(() => {
     originalFetch = global.fetch;
@@ -534,7 +517,7 @@ describe('LlmEnricher — graceful degradation (T017)', () => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const enricher = new LlmEnricher!(baseConfig);
-    const result = (await enricher.enrich([makeChunk('chunk-1', 'processPayment')])) as TestChunk[];
+    const result = await enricher.enrich([makeChunk('chunk-1', 'processPayment')]);
 
     expect(result).toHaveLength(1);
     expect(result[0]!.description).toBeUndefined();
@@ -564,13 +547,13 @@ describe('LlmEnricher — graceful degradation (T017)', () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
-      text: async () => '{"error":"internal server error"}',
-      json: async () => ({ error: 'internal server error' }),
+      text: () => Promise.resolve('{"error":"internal server error"}'),
+      json: () => Promise.resolve(({ error: 'internal server error' })),
     } as Response);
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const enricher = new LlmEnricher!({ ...baseConfig, skipOnFailure: true });
-    const result = (await enricher.enrich([makeChunk('chunk-1', 'processPayment')])) as TestChunk[];
+    const result = await enricher.enrich([makeChunk('chunk-1', 'processPayment')]);
 
     expect(result[0]!.description).toBeUndefined();
     expect(result[0]!.id).toBe('chunk-1');
@@ -590,7 +573,7 @@ describe('LlmEnricher — graceful degradation (T017)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('LlmEnricher — enrichment progress callback (T083)', () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: MockInstance<typeof console.warn> | undefined;
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -611,8 +594,32 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     }));
     return {
       ok: true,
-      json: async () => ({ response: JSON.stringify({ chunks: enriched }) }),
+      json: () => Promise.resolve(({ response: JSON.stringify({ chunks: enriched }) })),
     } as Response;
+  }
+
+  /**
+   * Batch-size-aware fetch mock: returns exactly `format.minItems` enrichment
+   * objects, matching the bounded array schema the enricher now sends. This is
+   * required because the enricher rejects (and retries) length mismatches.
+   */
+  function boundedFetch() {
+    return vi.fn((_: unknown, init?: RequestInit) => {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        format?: { minItems?: number };
+      };
+      const count = body.format?.minItems ?? 0;
+      const arr = Array.from({ length: count }, (_, i) => ({
+        description: `Description ${i}`,
+        businessContext: 'payments',
+        semanticTags: ['tag'],
+        relationships: [],
+      }));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ response: JSON.stringify(arr) }),
+      } as Response);
+    });
   }
 
   it('T083: onProgress is called once per batch during flat batching', async () => {
@@ -620,7 +627,7 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
 
     // 25 chunks → 2 batches (20 + 5) with dynamic batching (MAX_BATCH_CHUNKS=20)
     const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
-    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+    global.fetch = boundedFetch();
 
     const progressEvents: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
     const enricher = new LlmEnricher!(baseConfig);
@@ -633,7 +640,7 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
     const chunks = Array.from({ length: 45 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
-    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+    global.fetch = boundedFetch();
 
     const events: Array<{ batchesCompleted: number; batchesTotal: number }> = [];
     const enricher = new LlmEnricher!(baseConfig);
@@ -648,7 +655,7 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
     const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
-    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+    global.fetch = boundedFetch();
 
     const completed: number[] = [];
     const enricher = new LlmEnricher!(baseConfig);
@@ -662,7 +669,7 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     expect(LlmEnricher, 'LlmEnricher must be exported from ./enricher.ts').toBeDefined();
 
     const chunks = [makeChunk('c0', 'fn0'), makeChunk('c1', 'fn1')];
-    global.fetch = vi.fn().mockResolvedValue(makeOllamaResponse(chunks));
+    global.fetch = boundedFetch();
 
     const events: Array<{ batchesCompleted: number; batchesTotal: number; currentFile?: string }> =
       [];
@@ -691,10 +698,10 @@ describe('LlmEnricher — enrichment progress callback (T083)', () => {
     const chunks = Array.from({ length: 25 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
 
     let callCount = 0;
-    global.fetch = vi.fn().mockImplementation(async () => {
+    global.fetch = vi.fn().mockImplementation(() => {
       callCount++;
-      if (callCount === 1) throw new Error('Network error');
-      return makeOllamaResponse(chunks.slice(20, 25));
+      if (callCount === 1) return Promise.reject(new Error('Network error'));
+      return Promise.resolve(makeOllamaResponse(chunks.slice(20, 25)));
     });
 
     const completed: number[] = [];
@@ -730,25 +737,29 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
     let concurrent = 0;
     let maxConcurrent = 0;
 
-    global.fetch = vi.fn().mockImplementation(async () => {
+    global.fetch = vi.fn().mockImplementation(async (_: unknown, init?: RequestInit) => {
       concurrent++;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
       // Simulate Ollama latency so batches overlap
       await new Promise((r) => setTimeout(r, 50));
       concurrent--;
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        format?: { minItems?: number };
+      };
+      const count = body.format?.minItems ?? 0;
       return {
         ok: true,
-        json: async () => ({
-          response: JSON.stringify({
-            chunks: chunks.slice(0, 20).map((c) => ({
-              id: c.id,
-              description: `desc-${c.id}`,
-              businessContext: 'ctx',
-              semanticTags: ['tag'],
-              relationships: [],
-            })),
+        json: () =>
+          Promise.resolve({
+            response: JSON.stringify(
+              Array.from({ length: count }, (_, i) => ({
+                description: `desc-${i}`,
+                businessContext: 'ctx',
+                semanticTags: ['tag'],
+                relationships: [],
+              })),
+            ),
           }),
-        }),
       } as Response;
     });
 
@@ -758,7 +769,7 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
       retryAttempts: 0,
     });
 
-    const result = (await enricher.enrich(chunks)) as TestChunk[];
+    const result = await enricher.enrich(chunks);
 
     // Verify concurrency: with 3 batches and concurrency=3, all should overlap
     expect(maxConcurrent).toBeGreaterThan(1);
@@ -777,24 +788,28 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
     let concurrent = 0;
     let maxConcurrent = 0;
 
-    global.fetch = vi.fn().mockImplementation(async () => {
+    global.fetch = vi.fn().mockImplementation(async (_: unknown, init?: RequestInit) => {
       concurrent++;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
       await new Promise((r) => setTimeout(r, 30));
       concurrent--;
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        format?: { minItems?: number };
+      };
+      const count = body.format?.minItems ?? 0;
       return {
         ok: true,
-        json: async () => ({
-          response: JSON.stringify({
-            chunks: chunks.slice(0, 20).map((c) => ({
-              id: c.id,
-              description: `desc-${c.id}`,
-              businessContext: 'ctx',
-              semanticTags: [],
-              relationships: [],
-            })),
+        json: () =>
+          Promise.resolve({
+            response: JSON.stringify(
+              Array.from({ length: count }, (_, i) => ({
+                description: `desc-${i}`,
+                businessContext: 'ctx',
+                semanticTags: [],
+                relationships: [],
+              })),
+            ),
           }),
-        }),
       } as Response;
     });
 
@@ -817,22 +832,26 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
     // 45 chunks → 3 batches (20+20+5) with dynamic batching
     const chunks = Array.from({ length: 45 }, (_, i) => makeChunk(`c${i}`, `fn${i}`));
 
-    global.fetch = vi.fn().mockImplementation(async () => {
+    global.fetch = vi.fn().mockImplementation(async (_: unknown, init?: RequestInit) => {
       // Random delay to simulate varying Ollama response times
       await new Promise((r) => setTimeout(r, Math.random() * 30));
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        format?: { minItems?: number };
+      };
+      const count = body.format?.minItems ?? 0;
       return {
         ok: true,
-        json: async () => ({
-          response: JSON.stringify({
-            chunks: chunks.slice(0, 20).map((c) => ({
-              id: c.id,
-              description: `desc-${c.id}`,
-              businessContext: 'ctx',
-              semanticTags: [],
-              relationships: [],
-            })),
+        json: () =>
+          Promise.resolve({
+            response: JSON.stringify(
+              Array.from({ length: count }, (_, i) => ({
+                description: `desc-${i}`,
+                businessContext: 'ctx',
+                semanticTags: [],
+                relationships: [],
+              })),
+            ),
           }),
-        }),
       } as Response;
     });
 
@@ -852,5 +871,178 @@ describe('LlmEnricher — concurrent batch processing (T124)', () => {
     // batchesCompleted reaches 3 by the last event
     const completedValues = progressEvents.map((p) => p.batchesCompleted).sort((a, b) => a - b);
     expect(completedValues).toEqual([1, 2, 3]);
+  });
+});
+
+// ── D-011: bounded schema, keep_alive, timeout, retry-on-partial ───────────────
+describe('LlmEnricher — bounded output schema & partial-response retry (D-011)', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('sends a bounded array schema (minItems == batch size), keep_alive and a timeout signal', async () => {
+    let captured: { body: unknown; hasSignal: boolean } | undefined;
+    global.fetch = vi.fn((_: unknown, init?: RequestInit) => {
+      captured = {
+        body: JSON.parse(typeof init?.body === 'string' ? init.body : '{}'),
+        hasSignal: Boolean(init?.signal),
+      };
+      const arr = [
+        { description: 'd0', businessContext: 'c', semanticTags: ['x', 'y', 'z'], relationships: [] },
+        { description: 'd1', businessContext: 'c', semanticTags: ['x', 'y', 'z'], relationships: [] },
+      ];
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ response: JSON.stringify(arr) }),
+      } as Response);
+    });
+
+    const enricher = new LlmEnricher!({ ...baseConfig, numCtx: 100000 });
+    await enricher.enrich([makeChunk('c0', 'fnA'), makeChunk('c1', 'fnB')]);
+
+    const body = captured!.body as {
+      format?: { type?: string; minItems?: number; maxItems?: number };
+      keep_alive?: string;
+    };
+    expect(body.format?.type).toBe('array');
+    expect(body.format?.minItems).toBe(2);
+    expect(body.format?.maxItems).toBe(2);
+    expect(body.keep_alive).toBeDefined();
+    expect(captured!.hasSignal).toBe(true);
+  });
+
+  it('retries when the model returns fewer objects than the batch, then enriches all', async () => {
+    let call = 0;
+    global.fetch = vi.fn(() => {
+      call++;
+      // First response is partial (1 object for a 2-chunk batch) → must retry.
+      const arr =
+        call === 1
+          ? [{ description: 'only-one', businessContext: 'c', semanticTags: ['a', 'b', 'c'], relationships: [] }]
+          : [
+              { description: 'd0', businessContext: 'c', semanticTags: ['a', 'b', 'c'], relationships: [] },
+              { description: 'd1', businessContext: 'c', semanticTags: ['a', 'b', 'c'], relationships: [] },
+            ];
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ response: JSON.stringify(arr) }),
+      } as Response);
+    });
+
+    const enricher = new LlmEnricher!({
+      ...baseConfig,
+      numCtx: 100000,
+      retryAttempts: 2,
+      skipOnFailure: true,
+    });
+    const result = await enricher.enrich([makeChunk('c0', 'fnA'), makeChunk('c1', 'fnB')]);
+
+    expect(call).toBeGreaterThanOrEqual(2); // retried after the partial response
+    expect(result[0]!.description).toBe('d0');
+    expect(result[1]!.description).toBe('d1');
+  });
+});
+
+// ── D-011: split-on-truncation recovery ───────────────────────────────────────
+describe('LlmEnricher — split-on-truncation (D-011)', () => {
+  let originalFetch: typeof global.fetch;
+  let warnSpy: MockInstance<typeof console.warn> | undefined;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    warnSpy?.mockRestore();
+  });
+
+  /** Returns exactly `format.minItems` enrichment objects. */
+  function full(count: number) {
+    return {
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          response: JSON.stringify(
+            Array.from({ length: count }, (_, i) => ({
+              description: `d${i}`,
+              businessContext: 'c',
+              semanticTags: ['a', 'b', 'c'],
+              relationships: [],
+            })),
+          ),
+          done_reason: 'stop',
+        }),
+    } as Response;
+  }
+  function truncated() {
+    return {
+      ok: true,
+      // Truncated JSON + done_reason:'length' → EnrichmentTruncationError.
+      json: () => Promise.resolve({ response: '[{"description":"cut', done_reason: 'length' }),
+    } as Response;
+  }
+  function batchSize(init?: RequestInit): number {
+    const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+      format?: { minItems?: number };
+    };
+    return body.format?.minItems ?? 0;
+  }
+
+  it('splits a truncated batch and recovers every chunk', async () => {
+    const calls: number[] = [];
+    global.fetch = vi.fn((_: unknown, init?: RequestInit) => {
+      const n = batchSize(init);
+      calls.push(n);
+      // The full 4-chunk batch truncates; halves of 2 succeed.
+      return Promise.resolve(n >= 4 ? truncated() : full(n));
+    });
+
+    const chunks = [
+      makeChunk('c0', 'fnA'),
+      makeChunk('c1', 'fnB'),
+      makeChunk('c2', 'fnC'),
+      makeChunk('c3', 'fnD'),
+    ];
+    const enricher = new LlmEnricher!({
+      ...baseConfig,
+      numCtx: 100000,
+      retryAttempts: 2, // must NOT be consumed on truncation
+      skipOnFailure: true,
+    });
+    const result = await enricher.enrich(chunks);
+
+    // 1 truncated call of 4, then 2 successful calls of 2 (no wasted retries).
+    expect(calls).toEqual([4, 2, 2]);
+    expect(result.map((c) => c.description)).toEqual(['d0', 'd1', 'd0', 'd1']);
+  });
+
+  it('skips a single chunk that still truncates at size 1 (bounded loss)', async () => {
+    global.fetch = vi.fn((_: unknown, init?: RequestInit) => {
+      const n = batchSize(init);
+      // Everything truncates, down to size 1.
+      return Promise.resolve(n >= 2 ? truncated() : truncated());
+    });
+
+    const chunks = [makeChunk('c0', 'fnA'), makeChunk('c1', 'fnB')];
+    const enricher = new LlmEnricher!({
+      ...baseConfig,
+      numCtx: 100000,
+      retryAttempts: 2,
+      skipOnFailure: true,
+    });
+    const result = await enricher.enrich(chunks);
+
+    // No throw; both chunks pass through unenriched rather than aborting.
+    expect(result).toHaveLength(2);
+    expect(result[0]!.description).toBeUndefined();
+    expect(result[1]!.description).toBeUndefined();
   });
 });

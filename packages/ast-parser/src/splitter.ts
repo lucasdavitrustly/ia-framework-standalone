@@ -12,30 +12,105 @@ const DEFAULT_MAX_CHUNK_LINES = 200;
  * For multi-line signatures → returns all lines up to and including the `{`.
  */
 function extractSignature(content: string): { signature: string; bodyStartIndex: number } {
-  // Find the first opening brace that starts a block
-  const braceIndex = content.indexOf('{');
-  if (braceIndex === -1) {
-    // No brace found (e.g., arrow function without braces, or malformed)
-    // Return the first line as signature
+  const lines = content.split('\n');
+  const declarationLine = findDeclarationLine(lines);
+  const braceState = { inBlockComment: false };
+  let braceLine = -1;
+  const scanStart = declarationLine === -1 ? 0 : declarationLine;
+  for (let lineIndex = scanStart; lineIndex < lines.length; lineIndex++) {
+    if (hasStructuralOpeningBrace(lines[lineIndex]!, braceState)) {
+      braceLine = lineIndex;
+      break;
+    }
+  }
+
+  if (braceLine === -1) {
+    // No brace found (e.g. arrow function without braces, or malformed).
     const firstNewline = content.indexOf('\n');
     if (firstNewline === -1) return { signature: content, bodyStartIndex: content.length };
     return { signature: content.slice(0, firstNewline), bodyStartIndex: firstNewline + 1 };
   }
 
-  // Include the line with the opening brace
-  const nextNewline = content.indexOf('\n', braceIndex);
-  if (nextNewline === -1) {
-    return { signature: content, bodyStartIndex: content.length };
-  }
-
-  return {
-    signature: content.slice(0, nextNewline),
-    bodyStartIndex: nextNewline + 1,
-  };
+  // Include every line through the structural opening brace. This avoids
+  // treating braces in annotations, comments, strings, or regexes as the body
+  // boundary and preserves multiline declarations.
+  const signature = lines.slice(0, braceLine + 1).join('\n');
+  const bodyStartIndex = signature.length < content.length ? signature.length + 1 : content.length;
+  return { signature, bodyStartIndex };
 }
 
 function makeChunkId(filePath: string, startLine: number, endLine: number): string {
   return createHash('sha1').update(`${filePath}:${startLine}:${endLine}`).digest('hex');
+}
+
+function makePartChunkId(
+  filePath: string,
+  startLine: number,
+  endLine: number,
+  partIndex: number,
+): string {
+  return createHash('sha1')
+    .update(`${filePath}:${startLine}:${endLine}:part:${partIndex}`)
+    .digest('hex');
+}
+
+function hasStructuralOpeningBrace(line: string, state: { inBlockComment: boolean }): boolean {
+  let quote: '"' | "'" | '`' | undefined;
+  let escaped = false;
+  for (let index = 0; index < line.length; index++) {
+    const character = line[index]!;
+    const next = line[index + 1];
+    if (state.inBlockComment) {
+      if (character === '*' && next === '/') {
+        state.inBlockComment = false;
+        index++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      state.inBlockComment = true;
+      index++;
+      continue;
+    }
+    if (character === '/' && next === '/') break;
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '{') return true;
+  }
+  return false;
+}
+
+const TYPE_DECLARATION = /(?:^|\s)(class|interface|enum|record|trait|module|object)\s+/;
+
+function findDeclarationLine(lines: string[], name?: string): number {
+  const escapedName = name?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const namePattern = escapedName ? new RegExp(`\\b${escapedName}\\b`) : undefined;
+  if (namePattern) {
+    const namedTypeLine = lines.findIndex(
+      (line) => namePattern.test(line) && TYPE_DECLARATION.test(line),
+    );
+    if (namedTypeLine !== -1) return namedTypeLine;
+  }
+  return lines.findIndex((line) => TYPE_DECLARATION.test(line));
+}
+
+/**
+ * Backfill `totalParts` on every generated sub-chunk once the total count is
+ * known (it is only known after the split loop completes).
+ */
+function backfillTotalParts(subChunks: CodeChunk[]): void {
+  const totalParts = subChunks.length;
+  for (const subChunk of subChunks) {
+    subChunk.totalParts = totalParts;
+  }
 }
 
 /**
@@ -77,7 +152,8 @@ function splitChunk(chunk: CodeChunk, maxLines: number): CodeChunk[] {
     const partName = chunk.name ? `${chunk.name}$part${partIndex}` : `part${partIndex}`;
 
     subChunks.push({
-      id: makeChunkId(chunk.filePath, segmentStartLine, segmentEndLine),
+      ...chunk,
+      id: makePartChunkId(chunk.filePath, segmentStartLine, segmentEndLine, partIndex),
       filePath: chunk.filePath,
       relativePath: chunk.relativePath,
       language: chunk.language,
@@ -89,11 +165,20 @@ function splitChunk(chunk: CodeChunk, maxLines: number): CodeChunk[] {
       imports: chunk.imports,
       exports: [], // Sub-chunks don't export — the parent does
       parentName: chunk.name,
+      parentStartLine: chunk.startLine,
+      parentEndLine: chunk.endLine,
+      partIndex,
+      // A body segment has no doc comment / annotation of its own; clear the
+      // values inherited via the `...chunk` spread so parts 2..N do not falsely
+      // reference the parent's declaration doc/annotation lines.
+      docCommentStartLine: undefined,
+      annotationStartLine: undefined,
     });
 
     lineOffset += maxLines;
   }
 
+  backfillTotalParts(subChunks);
   return subChunks;
 }
 
@@ -132,9 +217,10 @@ function splitClassAtMethodBoundaries(chunk: CodeChunk, maxLines: number): CodeC
 
   const boundaries = detectMethodBoundaries(bodyLines);
 
-  // If no method boundaries detected or only one method, fall back to fixed split
+  // A class with zero or one method has no safe semantic boundary. Keep it whole
+  // so the input-safety layer can apply its signature-only fallback.
   if (boundaries.length <= 1) {
-    return splitChunk(chunk, maxLines);
+    return [chunk];
   }
 
   const signatureLineCount = signature.split('\n').length;
@@ -147,25 +233,32 @@ function splitClassAtMethodBoundaries(chunk: CodeChunk, maxLines: number): CodeC
 
     // If adding the next method would exceed maxLines, flush current group
     if (groupLines > maxLines && i > 1) {
-      const segmentLines = bodyLines.slice(groupStart, boundaries[i - 1]!);
+      const segmentLines = bodyLines.slice(groupStart, boundaries[i - 1]);
       const segmentContent = signature + '\n' + segmentLines.join('\n');
       const segmentStartLine = chunk.startLine + signatureLineCount + groupStart;
       const segmentEndLine = segmentStartLine + segmentLines.length - 1;
       const partIndex = subChunks.length + 1;
+      const partName = chunk.name ? `${chunk.name}$part${partIndex}` : `part${partIndex}`;
 
       subChunks.push({
-        id: makeChunkId(chunk.filePath, segmentStartLine, segmentEndLine),
+        ...chunk,
+        id: makePartChunkId(chunk.filePath, segmentStartLine, segmentEndLine, partIndex),
         filePath: chunk.filePath,
         relativePath: chunk.relativePath,
         language: chunk.language,
         chunkType: chunk.chunkType,
-        name: `${chunk.name}$part${partIndex}`,
+        name: partName,
         content: segmentContent,
         startLine: segmentStartLine,
         endLine: segmentEndLine,
         imports: chunk.imports,
         exports: [],
         parentName: chunk.name,
+        parentStartLine: chunk.startLine,
+        parentEndLine: chunk.endLine,
+        partIndex,
+        docCommentStartLine: undefined,
+        annotationStartLine: undefined,
       });
 
       groupStart = boundaries[i - 1]!;
@@ -179,25 +272,36 @@ function splitClassAtMethodBoundaries(chunk: CodeChunk, maxLines: number): CodeC
     const segmentStartLine = chunk.startLine + signatureLineCount + groupStart;
     const segmentEndLine = segmentStartLine + segmentLines.length - 1;
     const partIndex = subChunks.length + 1;
+    const partName = chunk.name ? `${chunk.name}$part${partIndex}` : `part${partIndex}`;
 
     subChunks.push({
-      id: makeChunkId(chunk.filePath, segmentStartLine, segmentEndLine),
+      ...chunk,
+      id: makePartChunkId(chunk.filePath, segmentStartLine, segmentEndLine, partIndex),
       filePath: chunk.filePath,
       relativePath: chunk.relativePath,
       language: chunk.language,
       chunkType: chunk.chunkType,
-      name: `${chunk.name}$part${partIndex}`,
+      name: partName,
       content: segmentContent,
       startLine: segmentStartLine,
       endLine: segmentEndLine,
       imports: chunk.imports,
       exports: [],
       parentName: chunk.name,
+      parentStartLine: chunk.startLine,
+      parentEndLine: chunk.endLine,
+      partIndex,
+      docCommentStartLine: undefined,
+      annotationStartLine: undefined,
     });
   }
 
   // If we couldn't split meaningfully (e.g. single huge method), fall back
-  return subChunks.length > 1 ? subChunks : splitChunk(chunk, maxLines);
+  if (subChunks.length > 1) {
+    backfillTotalParts(subChunks);
+    return subChunks;
+  }
+  return splitChunk(chunk, maxLines);
 }
 
 /** Threshold: chunks with this many lines or fewer are candidates for grouping */

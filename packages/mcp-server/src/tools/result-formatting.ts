@@ -8,32 +8,26 @@ interface FormattableRetrievalResult {
   packageName?: string | undefined;
   layerHints?: string[] | undefined;
   expansionRepo?: string | undefined;
+  parentName?: string | undefined;
+  parentStartLine?: number | undefined;
+  parentEndLine?: number | undefined;
+  partIndex?: number | undefined;
+  totalParts?: number | undefined;
+  truncated?: boolean | undefined;
 }
 
-export interface QueryIntent {
-  architectureQuery: boolean;
-  dataFlowQuery: boolean;
-  entryPointQuery: boolean;
-}
-
-export function analyzeRetrievalQuery(query: string): QueryIntent {
-  const normalized = query.toLowerCase();
-  return {
-    architectureQuery:
-      normalized.includes('architecture') ||
-      normalized.includes('main modules') ||
-      normalized.includes('how they interact'),
-    dataFlowQuery:
-      normalized.includes('data flow') ||
-      normalized.includes('request to database') ||
-      normalized.includes('route to model') ||
-      normalized.includes('controller') ||
-      normalized.includes('repository'),
-    entryPointQuery:
-      normalized.includes('entry point') ||
-      normalized.includes('main entry') ||
-      normalized.includes('where is the main'),
-  };
+export function isValidLineRange(
+  startLine: number | undefined,
+  endLine: number | undefined,
+): startLine is number {
+  return (
+    typeof startLine === 'number' &&
+    typeof endLine === 'number' &&
+    Number.isInteger(startLine) &&
+    Number.isInteger(endLine) &&
+    startLine >= 1 &&
+    endLine >= startLine
+  );
 }
 
 export function buildCodeAnchor(result: {
@@ -56,8 +50,25 @@ export function buildCodeAnchor(result: {
 }
 
 export function formatRetrievalContext(result: FormattableRetrievalResult): string {
+  const hasPartMetadata =
+    Number.isInteger(result.partIndex) &&
+    result.partIndex! >= 1 &&
+    Number.isInteger(result.totalParts) &&
+    result.totalParts! >= result.partIndex!;
+  const constructName = result.parentName ?? result.name;
+  const hasParentRange = isValidLineRange(result.parentStartLine, result.parentEndLine);
+  const constructLine =
+    hasPartMetadata && constructName
+      ? `Construct: ${constructName} (${hasParentRange ? `lines ${result.parentStartLine}-${result.parentEndLine}, ` : ''}part ${result.partIndex}/${result.totalParts}).${
+          hasParentRange && result.parentName
+            ? ` Use get_file(path=${JSON.stringify(result.repoId ? `${result.repoId}:${result.relativePath}` : result.relativePath)}, name=${JSON.stringify(result.parentName)}) to retrieve the complete construct.`
+            : ''
+        }`
+      : '';
+
   return [
     `Anchor: ${buildCodeAnchor(result)}`,
+    constructLine,
     result.modulePath ? `Module: ${result.modulePath}` : '',
     result.packageName ? `Package: ${result.packageName}` : '',
     result.layerHints?.length ? `Layers: ${result.layerHints.join(', ')}` : '',

@@ -7,6 +7,7 @@
 
 import type { RetrievalResult } from './types.js';
 import { extractSymbols } from './symbol-extractor.js';
+import { assertEffectiveFilter, type EffectiveFilter } from './effective-filter.js';
 
 export interface MultiHopConfig {
   /** Maximum symbols to extract for second pass (default: 15) */
@@ -19,11 +20,15 @@ export interface MultiHopConfig {
 
 export interface MultiHopEngine {
   /** Search by name: scroll for chunks whose `name` matches */
-  scrollByName?(name: string): Promise<RetrievalResult[]>;
+  scrollByName?(name: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   /** Search by method definition: find chunks that define a method */
-  scrollByDefines?(methodName: string): Promise<RetrievalResult[]>;
+  scrollByDefines?(methodName: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   /** Search by name in a specific repo (for cross-repo symbol lookup) */
-  scrollByNameInRepo?(name: string, repoId: string): Promise<RetrievalResult[]>;
+  scrollByNameInRepo?(
+    name: string,
+    repoId: string,
+    filter: EffectiveFilter,
+  ): Promise<RetrievalResult[]>;
 }
 
 /**
@@ -38,8 +43,10 @@ export interface MultiHopEngine {
 export async function multiHopExpand(
   initialResults: RetrievalResult[],
   engine: MultiHopEngine,
+  filter: EffectiveFilter,
   config: MultiHopConfig = {},
 ): Promise<RetrievalResult[]> {
+  assertEffectiveFilter(filter, 'multiHopExpand');
   const { maxSymbols = 15, expandMethodCalls = true, expandHierarchy = true } = config;
 
   if (!engine.scrollByName && !engine.scrollByDefines) return [];
@@ -51,18 +58,23 @@ export async function multiHopExpand(
   // Expand class references (find their definitions)
   if (expandHierarchy && engine.scrollByName) {
     for (const className of symbols.classReferences) {
-      const hits = await engine.scrollByName(className);
+      const hits = await engine.scrollByName(className, filter);
       for (const hit of hits) {
         if (!seenIds.has(hit.chunkId)) {
           seenIds.add(hit.chunkId);
           expanded.push({ ...hit, expansionSource: 'multi-hop' });
         }
       }
-      // Cross-repo fallback: if no local hit and scrollByNameInRepo exists, try cross-repo
-      if (hits.length === 0 && engine.scrollByNameInRepo) {
-        // Attempt cross-repo lookup for unresolved class references
-        // The caller must provide repo context; tag with expansionRepo
-        // This is a best-effort expansion — skipped if no results
+      // A repository-scoped lookup is the only safe cross-repo fallback. Without
+      // repo context, trying another collection would bypass the caller's scope.
+      if (hits.length === 0 && filter.repoId !== undefined && engine.scrollByNameInRepo) {
+        const crossRepoHits = await engine.scrollByNameInRepo(className, filter.repoId, filter);
+        for (const hit of crossRepoHits) {
+          if (!seenIds.has(hit.chunkId)) {
+            seenIds.add(hit.chunkId);
+            expanded.push({ ...hit, expansionSource: 'multi-hop' });
+          }
+        }
       }
     }
   }
@@ -70,7 +82,7 @@ export async function multiHopExpand(
   // Expand method calls (find their definitions)
   if (expandMethodCalls && engine.scrollByDefines) {
     for (const methodName of symbols.methodCalls) {
-      const hits = await engine.scrollByDefines(methodName);
+      const hits = await engine.scrollByDefines(methodName, filter);
       for (const hit of hits) {
         if (!seenIds.has(hit.chunkId)) {
           seenIds.add(hit.chunkId);

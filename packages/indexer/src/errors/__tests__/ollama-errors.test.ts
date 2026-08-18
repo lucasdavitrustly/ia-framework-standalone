@@ -107,6 +107,19 @@ describe('categorizeOllamaError', () => {
     };
     expect(categorizeOllamaError(ctx)).toBe('parse-failure');
   });
+
+  it('returns "truncation" when truncated flag is set (even over parseFailure)', () => {
+    const ctx: OllamaErrorContext = {
+      status: 200,
+      body: '[{"description":"cut off mid',
+      model: 'qwen2.5-coder:1.5b',
+      baseUrl: 'http://localhost:11434',
+      phase: 'enrichment',
+      truncated: true,
+      parseFailure: true,
+    };
+    expect(categorizeOllamaError(ctx)).toBe('truncation');
+  });
 });
 
 describe('formatOllamaError', () => {

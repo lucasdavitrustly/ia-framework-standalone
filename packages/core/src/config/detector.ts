@@ -13,8 +13,10 @@ async function fileExists(path: string): Promise<boolean> {
 
 async function getPackageName(dir: string): Promise<string | undefined> {
   try {
-    const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf-8'));
-    return pkg.name as string | undefined;
+    const pkg: unknown = JSON.parse(await readFile(join(dir, 'package.json'), 'utf-8'));
+    if (pkg === null || typeof pkg !== 'object') return undefined;
+    const { name } = pkg as { name?: unknown };
+    return typeof name === 'string' ? name : undefined;
   } catch {
     return undefined;
   }

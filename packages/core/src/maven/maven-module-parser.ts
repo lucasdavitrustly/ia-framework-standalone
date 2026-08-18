@@ -4,6 +4,24 @@ import type { MavenModuleInfo, ModuleGraph, ModuleGraphJSON } from './types.js';
 /**
  * Parses Maven POM files and builds a module dependency graph.
  */
+/** The subset of a parsed pom.xml this parser reads. */
+interface PomDependency {
+  groupId?: string;
+  artifactId?: string;
+}
+
+interface PomProject {
+  groupId?: string;
+  artifactId?: string;
+  version?: string;
+  parent?: { groupId?: string; version?: string };
+  dependencies?: { dependency?: PomDependency | PomDependency[] };
+}
+
+interface PomDocument extends PomProject {
+  project?: PomProject;
+}
+
 export class MavenModuleParser {
   private readonly xmlParser: XMLParser;
 
@@ -18,15 +36,15 @@ export class MavenModuleParser {
    * Parse a single pom.xml string into MavenModuleInfo.
    */
   parsePom(xmlContent: string, pomPath: string): MavenModuleInfo {
-    const parsed = this.xmlParser.parse(xmlContent);
-    const project = parsed.project ?? parsed;
+    const parsed = this.xmlParser.parse(xmlContent) as PomDocument;
+    const project: PomProject = parsed.project ?? parsed;
 
-    const parentGroupId = project.parent?.groupId as string | undefined;
-    const parentVersion = project.parent?.version as string | undefined;
+    const parentGroupId = project.parent?.groupId;
+    const parentVersion = project.parent?.version;
 
-    const groupId = (project.groupId as string) ?? parentGroupId ?? '';
-    const artifactId = (project.artifactId as string) ?? '';
-    const version = (project.version as string) ?? parentVersion ?? '';
+    const groupId = project.groupId ?? parentGroupId ?? '';
+    const artifactId = project.artifactId ?? '';
+    const version = project.version ?? parentVersion ?? '';
 
     const deps: string[] = [];
     const depsNode = project.dependencies?.dependency;
@@ -109,7 +127,8 @@ function createModuleGraph(modules: Map<string, MavenModuleInfo>): ModuleGraph {
     toJSON(): ModuleGraphJSON {
       const result: ModuleGraphJSON = { version: 1, modules: {} };
       for (const [moduleId, info] of modules) {
-        const { moduleId: _id, ...rest } = info;
+        const rest = { ...info };
+        delete (rest as { moduleId?: string }).moduleId;
         result.modules[moduleId] = rest;
       }
       return result;

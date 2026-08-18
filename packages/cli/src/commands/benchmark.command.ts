@@ -26,6 +26,19 @@ import type {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve the project path a benchmark targets. `targetProjectPath` is the
+ * legacy single-repo field and is optional on ProjectConfig, so fall back to
+ * the first configured repo and then to the framework dir — the same
+ * resolution db.command.ts already uses.
+ */
+function resolveTargetProjectPath(
+  config: { targetProjectPath?: string | undefined; repos?: Array<{ path: string }> | undefined },
+  frameworkDir: string,
+): string {
+  return config.targetProjectPath ?? config.repos?.[0]?.path ?? frameworkDir;
+}
+
 function getConfigPath(options: { config?: string }): string {
   return (
     options.config ||
@@ -98,7 +111,7 @@ function runSubcommand(): Command {
           }
 
           // Validate corpus before running — exits 1 if any queries are invalid
-          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          const validationErrors = await validateCorpus(queries, resolveTargetProjectPath(config, frameworkDir));
           if (validationErrors.length > 0) {
             for (const err of validationErrors) {
               console.error(`  [corpus] [${err.queryId}] ${err.error}`);
@@ -599,7 +612,7 @@ function initCorpusSubcommand(): Command {
           const corpusPath = options.corpus ?? join(frameworkDir, 'benchmark-queries.json');
 
           // Guard: ensure target project is NOT the ia-framework repo itself
-          if (await isFrameworkRepo(config.targetProjectPath)) {
+          if (await isFrameworkRepo(resolveTargetProjectPath(config, frameworkDir))) {
             process.stderr.write(
               `✗ targetProjectPath appears to be the ia-framework repo itself:\n` +
                 `  ${config.targetProjectPath}\n\n` +
@@ -707,7 +720,7 @@ function initCorpusSubcommand(): Command {
           );
 
           const genOptions: CorpusGeneratorOptions = {
-            targetProjectPath: config.targetProjectPath,
+            targetProjectPath: resolveTargetProjectPath(config, frameworkDir),
             completionBaseUrl,
             completionApiKey,
             completionModel,
@@ -719,7 +732,7 @@ function initCorpusSubcommand(): Command {
           await writeFile(corpusPath, JSON.stringify(queries, null, 2), { encoding: 'utf-8' });
 
           // Validate corpus — warn but don't fail
-          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          const validationErrors = await validateCorpus(queries, resolveTargetProjectPath(config, frameworkDir));
           if (validationErrors.length > 0) {
             console.log('\nValidation warnings (non-fatal):');
             for (const err of validationErrors) {
@@ -798,7 +811,7 @@ function baselineSubcommand(): Command {
           }
 
           // Validate corpus
-          const validationErrors = await validateCorpus(queries, config.targetProjectPath);
+          const validationErrors = await validateCorpus(queries, resolveTargetProjectPath(config, frameworkDir));
           if (validationErrors.length > 0) {
             for (const err of validationErrors) {
               console.error(`  [corpus] [${err.queryId}] ${err.error}`);
@@ -910,7 +923,7 @@ function validateModelsSubcommand(): Command {
     .description('Re-analyze stored run for model identity mismatches')
     .argument('<run-id>', 'Run ID or prefix to validate')
     .option('-c, --config <path>', 'Path to benchmark config', DEFAULT_CONFIG)
-    .action(async (runIdArg: string, options: { config?: string }) => {
+    .action((runIdArg: string, options: { config?: string }) => {
       const configPath = options.config ?? DEFAULT_CONFIG;
       const frameworkDir = dirname(configPath);
       const benchmarksDbPath = join(frameworkDir, 'benchmarks.sqlite');

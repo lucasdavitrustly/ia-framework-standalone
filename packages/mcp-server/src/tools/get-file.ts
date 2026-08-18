@@ -1,13 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { RetrievalResult } from '@ia-framework/retrieval';
-import { formatRetrievalContext } from './result-formatting.js';
+import { createEffectiveFilter } from '@ia-framework/retrieval';
+import type { RetrievalResult, EffectiveFilter } from '@ia-framework/retrieval';
+import { formatRetrievalContext, isValidLineRange } from './result-formatting.js';
 import { coercedNumber } from './coerce.js';
 import { withDegradation, type ServerCapabilities } from '../capabilities.js';
+import { validateRelativePath } from '../context/live-source-reader.js';
 
 type Engine = {
-  getFile(path: string, repoId?: string): Promise<RetrievalResult[]>;
+  getFile(path: string, filter: EffectiveFilter): Promise<RetrievalResult[]>;
   search?(query: { text: string; limit?: number | undefined }): Promise<RetrievalResult[]>;
 };
 
@@ -67,6 +69,8 @@ export interface GetFileOptions {
   sessionCache?: boolean;
   /** Runtime capabilities — degradation surfaced in response structuredContent. */
   capabilities?: ServerCapabilities | undefined;
+  /** Configured repository names, used to validate an explicit repo:path prefix. */
+  knownRepos?: readonly string[] | undefined;
 }
 
 export type ToolOutput = CallToolResult;
@@ -125,6 +129,66 @@ export function parseRepoPath(input: string): { repo?: string; path: string } {
   return { path: input };
 }
 
+interface ParentRange {
+  name: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+}
+
+interface NameResolution {
+  matchingChunks: RetrievalResult[];
+  parentRanges: ParentRange[];
+}
+
+function resolveNameMatches(results: RetrievalResult[], requestedName: string): NameResolution {
+  const normalizedName = requestedName.toLowerCase();
+  const directMatches = results.filter((result) => result.name?.toLowerCase() === normalizedName);
+  const parentMatches = results.filter(
+    (result) => result.parentName?.toLowerCase() === normalizedName,
+  );
+  const exactMatches = directMatches.length > 0 ? directMatches : parentMatches;
+
+  const parentRanges = [...
+    new Map(
+      exactMatches
+        .filter((result) => isValidLineRange(result.parentStartLine, result.parentEndLine))
+        .map((result) => {
+          const range: ParentRange = {
+            name: result.parentName ?? result.name ?? requestedName,
+            startLine: result.parentStartLine!,
+            endLine: result.parentEndLine!,
+            language: result.language,
+          };
+          return [`${range.name}:${range.startLine}:${range.endLine}`, range] as const;
+        }),
+    ).values(),
+  ];
+
+  if (exactMatches.length > 0) {
+    return { matchingChunks: exactMatches, parentRanges };
+  }
+
+  // Compatibility fallback: preserve case-insensitive identifier-boundary
+  // matching when no exact chunk or parent identity exists, but never promote
+  // fallback hits to a parent range.
+  const escapedName = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const boundaryPattern = new RegExp(`(?:^|[^a-z0-9])${escapedName}(?:$|[^a-z0-9])`, 'i');
+  return {
+    matchingChunks: results.filter(
+      (result) => result.name && boundaryPattern.test(result.name),
+    ),
+    parentRanges: [],
+  };
+}
+
+function sliceStoredContent(result: RetrievalResult, startLine: number, endLine: number): string {
+  const lines = result.content.split('\n');
+  const start = Math.max(0, startLine - result.startLine);
+  const end = Math.min(lines.length, endLine - result.startLine + 1);
+  return start < end ? lines.slice(start, end).join('\n') : '';
+}
+
 /**
  * Handle the get_file tool call.
  * Returns all chunks for a file formatted as sequential code blocks.
@@ -143,18 +207,59 @@ export async function getFileHandler(
 ): Promise<ToolOutput> {
   const { repo, path: filePath } = parseRepoPath(input.path);
   const readFileFn = options?.readFileFn;
+  let usedSemanticFallback = false;
+
+  try {
+    validateRelativePath(filePath);
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: error instanceof Error ? error.message : String(error),
+        },
+      ],
+      structuredContent: { answered: false, invalidPath: true },
+    };
+  }
+
+  const hasAnyRange = input.startLine !== undefined || input.endLine !== undefined;
+  if (hasAnyRange && !isValidLineRange(input.startLine, input.endLine)) {
+    return {
+      content: [{ type: 'text', text: 'startLine and endLine must be positive integers with startLine <= endLine.' }],
+      structuredContent: { answered: false, invalidRange: true },
+    };
+  }
+
+  if (repo && options?.knownRepos && !options.knownRepos.includes(repo)) {
+    const configured = options.knownRepos.length > 0 ? options.knownRepos.join(', ') : '(none)';
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Unknown repo '${repo}' — configured repos: ${configured}`,
+        },
+      ],
+      structuredContent: {
+        answered: false,
+        unknownRepo: repo,
+        configuredRepos: options.knownRepos,
+      },
+    };
+  }
 
   let results: RetrievalResult[];
   let fallbackNote: string | undefined;
 
   try {
-    results = await engine.getFile(filePath, repo);
+    results = await engine.getFile(filePath, createEffectiveFilter({}, repo));
   } catch (error) {
     if (!engine.search) {
       throw error;
     }
 
     results = await engine.search({ text: filePath, limit: 5 });
+    usedSemanticFallback = true;
     fallbackNote =
       `Note: direct file retrieval was unavailable (${error instanceof Error ? error.message : String(error)}). ` +
       'Returning indexed evidence matching the requested path.';
@@ -163,6 +268,7 @@ export async function getFileHandler(
   // Semantic search fallback when getFile returns empty (not throws)
   if (results.length === 0 && !readFileFn && engine.search) {
     results = await engine.search({ text: filePath, limit: 5 });
+    usedSemanticFallback = true;
   }
 
   // Defense-in-depth: when a repo prefix was given, ensure only that repo's
@@ -172,7 +278,59 @@ export async function getFileHandler(
     results = results.filter((r) => r.repoId === repo);
   }
 
+  if (usedSemanticFallback) {
+    const exactResults = results.filter((result) => result.relativePath === filePath);
+    if (exactResults.length === 0 && results.length > 0) {
+      const candidates = results.map((result) => ({
+        repo: result.repoId,
+        path: result.relativePath,
+        name: result.name,
+      }));
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No exact indexed file matched ${input.path}. Candidate evidence was not rendered as the requested file:\n${candidates
+              .map((candidate) => `- ${candidate.repo ? `${candidate.repo}:` : ''}${candidate.path}`)
+              .join('\n')}`,
+          },
+        ],
+        structuredContent: { answered: false, fallbackUsed: true, candidates },
+      };
+    }
+    results = exactResults;
+  }
+
   if (results.length === 0) {
+    if (repo && readFileFn) {
+      try {
+        const hasRange = isValidLineRange(input.startLine, input.endLine);
+        const content = await readFileFn(
+          filePath,
+          repo,
+          hasRange ? input.startLine : undefined,
+          hasRange ? input.endLine : undefined,
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `## File: ${filePath} (resolved from repo: ${repo})\n\n\`\`\`\n${content}\n\`\`\``,
+            },
+          ],
+          structuredContent: {
+            answered: true,
+            resolvedVia: 'filesystem-fallback',
+            repo,
+            path: filePath,
+            content,
+          },
+        };
+      } catch {
+        // Continue to the explicit no-indexed-results response below.
+      }
+    }
+
     // ── Feature 017: cross-repo existence-check fallback ──────────────────────
     // When the index yields no chunk and no `repo:` prefix was supplied, try to
     // locate the file on disk under each configured repo (exact join, no scan)
@@ -208,6 +366,17 @@ export async function getFileHandler(
     chunkType: r.chunkType,
     startLine: r.startLine,
     endLine: r.endLine,
+    ...(r.parentName !== undefined ? { parent_name: r.parentName } : {}),
+    ...(isValidLineRange(r.parentStartLine, r.parentEndLine)
+      ? { parent_start_line: r.parentStartLine, parent_end_line: r.parentEndLine }
+      : {}),
+    ...(r.partIndex !== undefined && Number.isInteger(r.partIndex) && r.partIndex >= 1
+      ? { part_index: r.partIndex }
+      : {}),
+    ...(r.totalParts !== undefined && Number.isInteger(r.totalParts) && r.totalParts >= 1
+      ? { total_parts: r.totalParts }
+      : {}),
+    ...(r.truncated !== undefined ? { truncated: r.truncated } : {}),
   }));
 
   // Resolve the repo(s) the matched chunks belong to. When the caller did not
@@ -291,15 +460,62 @@ export async function getFileHandler(
     try {
       // ── Name filter path: filter chunks by name, read only matching ranges ──
       if (input.name) {
-        const nameFilter = input.name.toLowerCase();
-        const matchingChunks = results.filter(
-          (r) => r.name && r.name.toLowerCase().includes(nameFilter),
-        );
+        const { matchingChunks, parentRanges } = resolveNameMatches(results, input.name);
 
         if (matchingChunks.length > 0) {
-          // Read only the matching chunk ranges from disk
-          const sections: string[] = [];
           const lang = matchingChunks[0]?.language ?? '';
+          const filteredChunks = matchingChunks.map((r) => ({
+            repo: r.repoId,
+            path: r.relativePath,
+            name: r.name,
+            chunkType: r.chunkType,
+            startLine: r.startLine,
+            endLine: r.endLine,
+            ...(r.parentName !== undefined ? { parent_name: r.parentName } : {}),
+            ...(isValidLineRange(r.parentStartLine, r.parentEndLine)
+              ? { parent_start_line: r.parentStartLine, parent_end_line: r.parentEndLine }
+              : {}),
+            ...(r.partIndex !== undefined && Number.isInteger(r.partIndex) && r.partIndex >= 1
+              ? { part_index: r.partIndex }
+              : {}),
+            ...(r.totalParts !== undefined && Number.isInteger(r.totalParts) && r.totalParts >= 1
+              ? { total_parts: r.totalParts }
+              : {}),
+            ...(r.truncated !== undefined ? { truncated: r.truncated } : {}),
+          }));
+
+          if (parentRanges.length > 0) {
+            const constructSections: string[] = [];
+            const constructContents: string[] = [];
+            let totalLines = 0;
+            for (const parentRange of parentRanges) {
+              const content = await readFileFn(
+                filePath,
+                effectiveRepo,
+                parentRange.startLine,
+                parentRange.endLine,
+              );
+              const header = `### construct: ${parentRange.name} (lines ${parentRange.startLine}-${parentRange.endLine})`;
+              constructSections.push(`${header}\n\`\`\`${parentRange.language}\n${content}\n\`\`\``);
+              constructContents.push(content);
+              totalLines += parentRange.endLine - parentRange.startLine + 1;
+            }
+            const title = `## File: ${filePath} (filtered by name: "${input.name}")`;
+            const text = `${title}\n\n${constructSections.join('\n\n')}`;
+            await storeInCache(text, totalLines);
+            return {
+              content: [{ type: 'text', text }],
+              structuredContent: {
+                answered: true,
+                resolvedVia: 'index',
+                content: constructContents.join('\n\n'),
+                chunks: filteredChunks,
+              },
+            };
+          }
+
+          // Read only the matching chunk ranges from disk.
+          const sections: string[] = [];
 
           for (const chunk of matchingChunks.sort((a, b) => a.startLine - b.startLine)) {
             const chunkContent = await readFileFn(
@@ -313,15 +529,6 @@ export async function getFileHandler(
               : `### Lines ${chunk.startLine}-${chunk.endLine}`;
             sections.push(`${header}\n\`\`\`${lang}\n${chunkContent}\n\`\`\``);
           }
-
-          const filteredChunks = matchingChunks.map((r) => ({
-            repo: r.repoId,
-            path: r.relativePath,
-            name: r.name,
-            chunkType: r.chunkType,
-            startLine: r.startLine,
-            endLine: r.endLine,
-          }));
 
           const title = `## File: ${filePath} (filtered by name: "${input.name}")`;
           const text = `${title}\n\n${sections.join('\n\n')}`;
@@ -403,12 +610,12 @@ export async function getFileHandler(
     } catch {
       // readFileFn failed — fall through to stored-content rendering below,
       // but mark the response so callers know we used the fallback.
-      return buildStoredContentResponse(results, filePath, input.path, fallbackNote, chunks, true);
+      return buildStoredContentResponse(results, filePath, input, fallbackNote, true);
     }
   }
 
   // ── Stored-content rendering (no readFileFn) ──────────────────────────────
-  return buildStoredContentResponse(results, filePath, input.path, fallbackNote, chunks, false);
+  return buildStoredContentResponse(results, filePath, input, fallbackNote, false);
 }
 
 type ChunkMeta = {
@@ -535,7 +742,6 @@ async function buildMultiRepoFileResponse(
     repoGroups.set(key, group);
   }
 
-  const nameFilter = input.name?.toLowerCase();
   const sections: string[] = [];
 
   for (const [repoKey, groupResults] of repoGroups) {
@@ -543,13 +749,25 @@ async function buildMultiRepoFileResponse(
     sections.push(`## [${repoKey}]`);
 
     try {
-      if (nameFilter) {
-        const matching = groupResults
-          .filter((r) => r.name && r.name.toLowerCase().includes(nameFilter))
-          .sort((a, b) => a.startLine - b.startLine);
-        const toRead = matching.length > 0 ? matching : null;
+      if (input.name) {
+        const { matchingChunks, parentRanges } = resolveNameMatches(groupResults, input.name);
+        const toRead = matchingChunks.length > 0 ? matchingChunks : null;
         if (toRead) {
-          for (const chunk of toRead) {
+          if (parentRanges.length > 0) {
+            for (const parentRange of parentRanges) {
+              const content = await readFileFn(
+                filePath,
+                repoKey,
+                parentRange.startLine,
+                parentRange.endLine,
+              );
+              const header = `### construct: ${parentRange.name} (lines ${parentRange.startLine}-${parentRange.endLine})`;
+              sections.push(`${header}\n\`\`\`${parentRange.language}\n${content}\n\`\`\``);
+            }
+            continue;
+          }
+
+          for (const chunk of toRead.sort((a, b) => a.startLine - b.startLine)) {
             const content = await readFileFn(filePath, repoKey, chunk.startLine, chunk.endLine);
             const header = chunk.name
               ? `### ${chunk.chunkType}: ${chunk.name} (lines ${chunk.startLine}-${chunk.endLine})`
@@ -598,21 +816,49 @@ async function buildMultiRepoFileResponse(
 function buildStoredContentResponse(
   results: RetrievalResult[],
   filePath: string,
-  inputPath: string,
+  input: GetFileInput,
   fallbackNote: string | undefined,
-  chunks: Array<{
-    repo: string | undefined;
-    path: string | undefined;
-    name: string | undefined;
-    chunkType: string | undefined;
-    startLine: number;
-    endLine: number;
-  }>,
   fsReadFailed: boolean,
 ): ToolOutput {
+  let scopedResults = results;
+  let scopeNote: string | undefined;
+  if (input.name) {
+    const resolution = resolveNameMatches(results, input.name);
+    scopedResults = resolution.matchingChunks;
+    if (resolution.parentRanges.length > 0) {
+      scopeNote =
+        `Stored content fallback cannot reconstruct the complete parent range ` +
+        `(${resolution.parentRanges.map((range) => `${range.startLine}-${range.endLine}`).join(', ')}) from split fragments.`;
+    }
+  } else if (isValidLineRange(input.startLine, input.endLine)) {
+    scopedResults = scopedResults.filter(
+      (result) => result.endLine >= input.startLine! && result.startLine <= input.endLine!,
+    );
+  }
+
+  const chunks = scopedResults.map((r) => ({
+    repo: r.repoId,
+    path: r.relativePath,
+    name: r.name,
+    chunkType: r.chunkType,
+    startLine: r.startLine,
+    endLine: r.endLine,
+    ...(r.parentName !== undefined ? { parent_name: r.parentName } : {}),
+    ...(isValidLineRange(r.parentStartLine, r.parentEndLine)
+      ? { parent_start_line: r.parentStartLine, parent_end_line: r.parentEndLine }
+      : {}),
+    ...(r.partIndex !== undefined && Number.isInteger(r.partIndex) && r.partIndex >= 1
+      ? { part_index: r.partIndex }
+      : {}),
+    ...(r.totalParts !== undefined && Number.isInteger(r.totalParts) && r.totalParts >= 1
+      ? { total_parts: r.totalParts }
+      : {}),
+    ...(r.truncated !== undefined ? { truncated: r.truncated } : {}),
+  }));
+
   // Group results by repoId
   const repoGroups = new Map<string, RetrievalResult[]>();
-  for (const r of results) {
+  for (const r of scopedResults) {
     const key = r.repoId ?? '_default';
     const group = repoGroups.get(key) ?? [];
     group.push(r);
@@ -631,21 +877,25 @@ function buildStoredContentResponse(
 
     for (const r of sorted) {
       const sourceTag = r.source ? ` [${r.source}]` : '';
+      const storedContent =
+        !input.name && isValidLineRange(input.startLine, input.endLine)
+          ? sliceStoredContent(r, input.startLine, input.endLine!)
+          : r.content;
       const header = r.name
         ? `### ${r.chunkType}: ${r.name} (lines ${r.startLine}-${r.endLine})${sourceTag}`
         : `### Lines ${r.startLine}-${r.endLine}${sourceTag}`;
       const contextLine = formatRetrievalContext(r);
-      allSections.push(`${header}\n${contextLine}\n\`\`\`${r.language}\n${r.content}\n\`\`\``);
+      allSections.push(`${header}\n${contextLine}\n\`\`\`${r.language}\n${storedContent}\n\`\`\``);
     }
   }
 
-  const title = fallbackNote ? `## Indexed evidence for: ${inputPath}` : `## File: ${filePath}`;
-  const conclusion = `Conclusion: returning ${results.length} indexed ${results.length === 1 ? 'section' : 'sections'} for ${inputPath}.`;
+  const title = fallbackNote ? `## Indexed evidence for: ${input.path}` : `## File: ${filePath}`;
+  const conclusion = `Conclusion: returning ${scopedResults.length} indexed ${scopedResults.length === 1 ? 'section' : 'sections'} for ${input.path}.`;
 
   // Detect lean-payload case: filesystem read failed AND stored chunk content
   // is empty, so we have nothing useful to return. Give the caller actionable
   // diagnostics rather than a silent empty response.
-  const allContentEmpty = results.every((r) => !r.content || r.content.trim() === '');
+  const allContentEmpty = scopedResults.every((r) => !r.content || r.content.trim() === '');
   const leanPayloadNote =
     fsReadFailed && allContentEmpty
       ? `\n\n> Warning: the file could not be read from the filesystem and the index holds no stored content for it (lean-payload schema). ` +
@@ -653,7 +903,7 @@ function buildStoredContentResponse(
         `(c) the working directory does not resolve to the project root. Verify the configured repo root and the file path.`
       : '';
 
-  const text = `${conclusion}${leanPayloadNote}\n\n${fallbackNote ? `${fallbackNote}\n\n` : ''}${title}\n\n${allSections.join('\n\n')}`;
+  const text = `${conclusion}${leanPayloadNote}\n\n${fallbackNote ? `${fallbackNote}\n\n` : ''}${scopeNote ? `${scopeNote}\n\n` : ''}${title}\n\n${allSections.join('\n\n')}`;
 
   const usedFallback = fsReadFailed || !!fallbackNote;
 
@@ -700,7 +950,7 @@ export function registerGetFileTool(
           .string()
           .optional()
           .describe(
-            'Filter to chunks matching this function/class name (case-insensitive). Returns only matching sections.',
+            'Filter to chunks by exact function/class or parent name first; when none matches, use a case-insensitive substring fallback. Returns only matching sections.',
           ),
       },
     },

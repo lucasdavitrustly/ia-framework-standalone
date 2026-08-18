@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildEnrichmentPrompt, type ChunkForPrompt } from './prompt.js';
+import { buildEnrichmentPrompt, buildEnrichmentSchema, type ChunkForPrompt } from './prompt.js';
 
 // ── T115: Enrichment prompt includes annotationMeta for controller stereotypes ──
 
@@ -63,5 +63,48 @@ describe('buildEnrichmentPrompt - annotationMeta inclusion (T115)', () => {
     // Should not contain annotation meta markers
     expect(prompt).not.toContain('API endpoints:');
     expect(prompt).not.toContain('operationSummaries');
+  });
+});
+
+// ── D-011: bounded output schema & short relationship targets ──────────────────
+
+describe('buildEnrichmentSchema - output bounds (D-011)', () => {
+  it('bounds the array to exactly the chunk count', () => {
+    const schema = buildEnrichmentSchema(7) as { minItems: number; maxItems: number };
+    expect(schema.minItems).toBe(7);
+    expect(schema.maxItems).toBe(7);
+  });
+
+  it('bounds relationships and target length to prevent output-token runaway', () => {
+    const schema = buildEnrichmentSchema(3) as {
+      items: {
+        properties: {
+          relationships: { maxItems: number; items: { properties: { target: { maxLength: number } } } };
+          semanticTags: { maxItems: number };
+        };
+      };
+    };
+    const props = schema.items.properties;
+    expect(props.relationships.maxItems).toBe(3);
+    expect(props.relationships.items.properties.target.maxLength).toBe(80);
+    expect(props.semanticTags.maxItems).toBe(5);
+  });
+});
+
+describe('buildEnrichmentPrompt - relationship target hint (D-011)', () => {
+  it('asks for a filename-only target, not an absolute path', () => {
+    const chunks: ChunkForPrompt[] = [
+      {
+        id: 'c1',
+        name: 'AbstractProcessHandler',
+        language: 'java',
+        chunkType: 'class-signature',
+        content: 'abstract class AbstractProcessHandler {}',
+      },
+    ];
+    const prompt = buildEnrichmentPrompt(chunks, 'achpro-services/src/.../AbstractProcessHandler.java');
+    expect(prompt).toContain('filename only');
+    // The lean format hint must not advertise a bare "<file>" target anymore.
+    expect(prompt).not.toContain('"target":"<file>"');
   });
 });

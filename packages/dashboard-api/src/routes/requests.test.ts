@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
 import { requestsRouter, type RequestsStoreDep } from './requests.js';
@@ -9,6 +8,26 @@ import type {
   DailyRequestStats,
   ToolRequestStats,
 } from '@ia-framework/observability';
+
+/** Typed views of the JSON bodies this suite asserts on. */
+interface RequestsListBody {
+  total?: number;
+  limit?: number;
+  offset?: number;
+  items?: Array<{ toolName?: string }>;
+}
+
+interface RequestDetailBody {
+  id?: string;
+  responseContent?: string;
+  error?: string;
+}
+
+interface RequestStatsBody {
+  summary?: { totalRequests?: number };
+  byDay?: unknown[];
+  byTool?: unknown[];
+}
 
 function makeRequest(overrides: Partial<McpRequest> = {}): McpRequest {
   return {
@@ -38,7 +57,7 @@ function makeStore(requests: McpRequest[] = []): RequestsStoreDep {
       if (options.to) filtered = filtered.filter((r) => r.timestamp <= options.to!);
       const items = filtered
         .slice(options.offset, options.offset + options.limit)
-        .map(({ responseContent, ...rest }) => rest);
+        .map(({ responseContent: _responseContent, ...rest }) => rest);
       return { items, total: filtered.length } as RequestsPage;
     },
     getRequestStats(): RequestSummaryStats {
@@ -88,7 +107,7 @@ describe('requestsRouter', () => {
       const app = createTestApp(makeStore(reqs));
       const res = await app.request('/api/requests');
       expect(res.status).toBe(200);
-      const body = (await res.json()) as any as any;
+      const body = (await res.json()) as RequestsListBody;
       expect(body.total).toBe(2);
       expect(body.items).toHaveLength(2);
       expect(body.limit).toBe(50);
@@ -99,7 +118,7 @@ describe('requestsRouter', () => {
       const reqs = [makeRequest(), makeRequest(), makeRequest()];
       const app = createTestApp(makeStore(reqs));
       const res = await app.request('/api/requests?limit=1&offset=1');
-      const body = (await res.json()) as any;
+      const body = (await res.json()) as RequestsListBody;
       expect(body.items).toHaveLength(1);
       expect(body.limit).toBe(1);
       expect(body.offset).toBe(1);
@@ -112,9 +131,9 @@ describe('requestsRouter', () => {
       ];
       const app = createTestApp(makeStore(reqs));
       const res = await app.request('/api/requests?tool_name=get_file');
-      const body = (await res.json()) as any;
+      const body = (await res.json()) as RequestsListBody;
       expect(body.total).toBe(1);
-      expect(body.items[0].toolName).toBe('get_file');
+      expect(body.items![0]!.toolName).toBe('get_file');
     });
   });
 
@@ -124,7 +143,7 @@ describe('requestsRouter', () => {
       const app = createTestApp(makeStore([req]));
       const res = await app.request(`/api/requests/${req.id}`);
       expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
+      const body = (await res.json()) as RequestDetailBody;
       expect(body.responseContent).toBe('full response here');
       expect(body.id).toBe(req.id);
     });
@@ -133,7 +152,7 @@ describe('requestsRouter', () => {
       const app = createTestApp(makeStore([]));
       const res = await app.request('/api/requests/nonexistent');
       expect(res.status).toBe(404);
-      const body = (await res.json()) as any;
+      const body = (await res.json()) as RequestDetailBody;
       expect(body.error).toBe('Request not found');
     });
   });
@@ -143,8 +162,8 @@ describe('requestsRouter', () => {
       const app = createTestApp(makeStore([makeRequest()]));
       const res = await app.request('/api/requests/stats');
       expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.summary.totalRequests).toBe(1);
+      const body = (await res.json()) as RequestStatsBody;
+      expect(body.summary!.totalRequests).toBe(1);
       expect(body.byDay).toHaveLength(1);
       expect(body.byTool).toHaveLength(1);
     });

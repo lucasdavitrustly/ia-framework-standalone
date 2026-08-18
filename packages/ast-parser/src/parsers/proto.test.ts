@@ -26,8 +26,8 @@ service PaymentService {
     const chunks = parseProto(content, filePath, relativePath);
     const serviceChunks = chunks.filter((c) => c.chunkType === 'service-def');
     expect(serviceChunks).toHaveLength(1);
-    expect(serviceChunks[0].name).toBe('PaymentService');
-    expect(serviceChunks[0].language).toBe('proto');
+    expect(serviceChunks[0]!.name).toBe('PaymentService');
+    expect(serviceChunks[0]!.language).toBe('proto');
   });
 
   it('produces a message-def chunk for each message definition', () => {
@@ -67,7 +67,7 @@ enum PaymentStatus {
     const chunks = parseProto(content, filePath, relativePath);
     const enumChunks = chunks.filter((c) => c.chunkType === 'enum');
     expect(enumChunks).toHaveLength(1);
-    expect(enumChunks[0].name).toBe('PaymentStatus');
+    expect(enumChunks[0]!.name).toBe('PaymentStatus');
   });
 
   it('handles a proto file with service, messages, and enum together', () => {
@@ -127,7 +127,7 @@ service UserService {
   it('returns a module chunk for empty proto file', () => {
     const chunks = parseProto('', filePath, relativePath);
     expect(chunks).toHaveLength(1);
-    expect(chunks[0].chunkType).toBe('module');
+    expect(chunks[0]!.chunkType).toBe('module');
   });
 
   it('returns a module chunk for proto file with only syntax and package', () => {
@@ -138,7 +138,7 @@ package com.example;
 
     const chunks = parseProto(content, filePath, relativePath);
     expect(chunks).toHaveLength(1);
-    expect(chunks[0].chunkType).toBe('module');
+    expect(chunks[0]!.chunkType).toBe('module');
   });
 
   it('assigns correct filePath, relativePath, and startLine/endLine', () => {
