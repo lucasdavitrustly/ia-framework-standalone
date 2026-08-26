@@ -9,6 +9,15 @@
 # Usage: source this file then call setup_skills "$SCRIPT_DIR"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# OFFICIAL_SKILLS — allowlist
+#
+# The single source of truth for which skills may be distributed. A directory
+# in skills/ is not offered by scan_skills() unless its skill.json .name field
+# appears here. Adding a skill is a deliberate two-place edit (this array).
+# ──────────────────────────────────────────────────────────────────────────────
+OFFICIAL_SKILLS=("mcp-bench")
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Legacy-skill migration registry
 #
 # When a skill is renamed, the installer/uninstaller can no longer see the old
@@ -44,6 +53,349 @@ commands/tab-format-spec.md \
 hooks/tab-spec-formatter-jira-guard.js hooks/tab-spec-formatter-output-guard.js"
       ;;
     *) echo "" ;;
+  esac
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Deprecated-skill registry
+#
+# DEPRECATED_SKILLS: names of skills no longer distributed (removed from
+# skills/), whose traces must still be purged from every IDE that installed
+# them. _deprecated_assets_for returns the HISTORY-DERIVED union of every
+# agents/commands/hooks basename that skill ever shipped (git log --all
+# --diff-filter=A), NOT the current tree — the source directories are deleted,
+# so a glob would find nothing. Pure: no filesystem access, no node.
+# ──────────────────────────────────────────────────────────────────────────────
+DEPRECATED_SKILLS=("grill-with-docs" "jira-feed" "refuter" "tlc-spec-driven")
+
+_deprecated_assets_for() {
+  case "$1" in
+    grill-with-docs)
+      echo ""
+      ;;
+    jira-feed)
+      echo "agents/jira-feed-formatter.md \
+commands/jira-feed.md \
+hooks/jira-feed-jira-guard.js hooks/jira-feed-output-guard.js"
+      ;;
+    refuter)
+      echo "agents/refuter-analyst.md agents/refuter-orchestrator.md agents/refuter-report-writer.md \
+commands/refuter.md \
+hooks/refuter-audit-trail.js hooks/refuter-citation-verifier.js hooks/refuter-convergence.js \
+hooks/refuter-drift-detector.js hooks/refuter-evidence-guard.js hooks/refuter-learning-append.js \
+hooks/refuter-orchestration-complete.js"
+      ;;
+    tlc-spec-driven)
+      echo "agents/tlc-specify-runner.md \
+commands/delivery.md commands/start-work-on.md commands/tlc-design.md commands/tlc-discuss.md \
+commands/tlc-execute.md commands/tlc-map-codebase.md commands/tlc-project-init.md commands/tlc-quick.md \
+commands/tlc-roadmap.md commands/tlc-session.md commands/tlc-specify.md commands/tlc-state.md \
+commands/tlc-tasks.md"
+      ;;
+    *) echo "" ;;
+  esac
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _registry_has_deprecated_entry IDE_ID PATH…
+# Read-only probe: does IDE_ID's hook registry contain any of the given
+# absolute command paths? Exit 0 = trace found, 1 = none. Never writes —
+# unlike json_remove_hooks, which unconditionally re-stringifies the file even
+# on a no-op match. Missing/malformed registry reads as "no trace" (exit 1),
+# never aborts.
+# ──────────────────────────────────────────────────────────────────────────────
+_registry_has_deprecated_entry() {
+  local ide_id="$1"
+  shift
+  local paths=("$@")
+
+  local settings_file=""
+  case "$ide_id" in
+    claude-code) settings_file="${HOME}/.claude/settings.json" ;;
+    codex)       settings_file="${HOME}/.codex/hooks.json" ;;
+    *)           return 1 ;;
+  esac
+
+  [ -f "$settings_file" ] || return 1
+
+  local paths_str
+  paths_str="$(printf '%s\n' "${paths[@]}")"
+
+  REGISTRY_PROBE_FILE="$settings_file" \
+  REGISTRY_PROBE_PATHS="$paths_str" \
+  node --input-type=module <<'EOF'
+import { readFileSync } from 'fs';
+const f = process.env.REGISTRY_PROBE_FILE;
+const wanted = new Set(process.env.REGISTRY_PROBE_PATHS.split('\n').filter(Boolean));
+try {
+  const cfg = JSON.parse(readFileSync(f, 'utf8'));
+  const hooks = cfg.hooks ?? {};
+  for (const event of Object.keys(hooks)) {
+    for (const group of hooks[event] ?? []) {
+      for (const h of group.hooks ?? []) {
+        if (wanted.has(h.command)) process.exit(0);
+      }
+    }
+  }
+  process.exit(1);
+} catch {
+  process.exit(1);
+}
+EOF
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _deprecated_trace_in NAME IDE_ID
+# Read-only per-(skill, IDE) detector. Exit 0 = trace found, 1 = none; sets
+# global TRACE_STATE in {linked|broken|copied|files|registry}. Detection order:
+#   1. Skill-directory symlink state via detect_link_state (skipped when
+#      IDE_SKILLS_DIR is empty, e.g. vscode-copilot). A copied directory
+#      dominates — it alone drives the non-interactive CI carve-out.
+#   2. Any manifest asset present (-L or -e) in agents/commands/hooks dirs,
+#      including the .toml agent twin -> "files".
+#   3. claude-code/codex only: a registry-only orphan (link already gone, hook
+#      registration survives) -> "registry".
+# Writes nothing on any path.
+# ──────────────────────────────────────────────────────────────────────────────
+_deprecated_trace_in() {
+  local name="$1"
+  local ide_id="$2"
+  TRACE_STATE=""
+
+  source_ide_descriptor "$ide_id" 2>/dev/null || return 1
+  local skills_dir="${IDE_SKILLS_DIR:-}"
+  local agents_dir="${IDE_AGENTS_DIR:-}"
+  local commands_dir="${IDE_COMMANDS_DIR:-}"
+  local hooks_dir="${IDE_HOOKS_DIR:-}"
+  unset IDE_ID IDE_NAME IDE_DETECT_PATH IDE_GLOBAL_DIR \
+        IDE_SKILLS_DIR IDE_AGENTS_DIR IDE_COMMANDS_DIR IDE_HOOKS_DIR \
+        IDE_MCP_CONFIG IDE_MCP_FORMAT IDE_AGENT_FORMAT \
+        IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
+
+  local assets
+  assets="$(_deprecated_assets_for "$name")"
+
+  # 1. Skill-directory symlink state.
+  if [ -n "$skills_dir" ]; then
+    local dir_state
+    dir_state=$(detect_link_state "${skills_dir}/${name}")
+    case "$dir_state" in
+      copied|linked|broken)
+        TRACE_STATE="$dir_state"
+        return 0
+        ;;
+    esac
+  fi
+
+  # 2. Per-file manifest assets (agents .md + .toml twin, commands, hooks).
+  local rel base target toml_target
+  for rel in $assets; do
+    base="$(basename "$rel")"
+    case "$rel" in
+      agents/*)
+        [ -n "$agents_dir" ] || continue
+        target="${agents_dir}/${base}"
+        toml_target="${agents_dir}/$(basename "$base" .md).toml"
+        if [ -L "$target" ] || [ -e "$target" ] || [ -e "$toml_target" ]; then
+          TRACE_STATE="files"
+          return 0
+        fi
+        ;;
+      commands/*)
+        [ -n "$commands_dir" ] || continue
+        target="${commands_dir}/${base}"
+        if [ -L "$target" ] || [ -e "$target" ]; then
+          TRACE_STATE="files"
+          return 0
+        fi
+        ;;
+      hooks/*)
+        [ -n "$hooks_dir" ] || continue
+        target="${hooks_dir}/${base}"
+        if [ -L "$target" ] || [ -e "$target" ]; then
+          TRACE_STATE="files"
+          return 0
+        fi
+        ;;
+    esac
+  done
+
+  # 3. Registry-only orphan: link already gone, registration may remain.
+  case "$ide_id" in
+    claude-code|codex)
+      local hook_paths=()
+      for rel in $assets; do
+        case "$rel" in
+          hooks/*)
+            [ -n "$hooks_dir" ] || continue
+            hook_paths+=("${hooks_dir}/$(basename "$rel")")
+            ;;
+        esac
+      done
+      if [ "${#hook_paths[@]}" -gt 0 ] && _registry_has_deprecated_entry "$ide_id" "${hook_paths[@]}"; then
+        TRACE_STATE="registry"
+        return 0
+      fi
+      ;;
+  esac
+
+  return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _remove_deprecated_from NAME IDE_ID
+# The only mutator: deletes one skill's every trace from one IDE. Always
+# returns 0; sets RM_LINKS (int, files/symlinks actually removed), RM_HOOKS
+# (int, manifest hook basenames processed through json_remove_hooks), RM_NAMES
+# (space-separated removed basenames, for the summary line).
+#
+# Removal order (a requirement, not an implementation detail):
+#   skill-dir symlink -> agents (.md + .toml twin) -> hooks (json_remove_hooks
+#   THEN rm -f, called even when the link is already absent so an orphaned
+#   registry entry is purged) -> commands.
+#
+# Writes only under the four IDE_*_DIR of the seven known descriptors, and
+# only for basenames the closed manifest names (DEPR-N04) — no
+# developer-supplied path ever reaches rm. Uses the braced
+# { [ -L ] || [ -e ]; } && rm form throughout (DEPR-N03, style per D-3).
+# ──────────────────────────────────────────────────────────────────────────────
+_remove_deprecated_from() {
+  local name="$1"
+  local ide_id="$2"
+  RM_LINKS=0
+  RM_HOOKS=0
+  RM_NAMES=""
+
+  source_ide_descriptor "$ide_id" 2>/dev/null || return 0
+  local skills_dir="${IDE_SKILLS_DIR:-}"
+  local agents_dir="${IDE_AGENTS_DIR:-}"
+  local commands_dir="${IDE_COMMANDS_DIR:-}"
+  local hooks_dir="${IDE_HOOKS_DIR:-}"
+  unset IDE_ID IDE_NAME IDE_DETECT_PATH IDE_GLOBAL_DIR \
+        IDE_SKILLS_DIR IDE_AGENTS_DIR IDE_COMMANDS_DIR IDE_HOOKS_DIR \
+        IDE_MCP_CONFIG IDE_MCP_FORMAT IDE_AGENT_FORMAT \
+        IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
+
+  local assets
+  assets="$(_deprecated_assets_for "$name")"
+
+  # 1. Skill-directory symlink.
+  if [ -n "$skills_dir" ]; then
+    local link="${skills_dir}/${name}"
+    { [ -L "$link" ] || [ -e "$link" ]; } && rm -rf "$link" && RM_LINKS=$((RM_LINKS + 1))
+  fi
+
+  local rel base target toml_target
+
+  # 2. Agents: .md link + .toml twin (codex installs a real transformed copy,
+  #    not a symlink — [ -e ] covers it).
+  if [ -n "$agents_dir" ]; then
+    for rel in $assets; do
+      case "$rel" in
+        agents/*)
+          base="$(basename "$rel")"
+          target="${agents_dir}/${base}"
+          toml_target="${agents_dir}/$(basename "$base" .md).toml"
+          { [ -L "$target" ] || [ -e "$target" ]; } && rm -f "$target" \
+            && RM_LINKS=$((RM_LINKS + 1)) && RM_NAMES="${RM_NAMES}${base} "
+          { [ -L "$toml_target" ] || [ -e "$toml_target" ]; } && rm -f "$toml_target" \
+            && RM_LINKS=$((RM_LINKS + 1)) && RM_NAMES="${RM_NAMES}$(basename "$toml_target") "
+          ;;
+      esac
+    done
+  fi
+
+  # 3. Hooks: deregister (json_remove_hooks) THEN unlink. Deregistration runs
+  #    even when the link file is already absent, purging the orphan (the
+  #    live claude-code case).
+  if [ -n "$hooks_dir" ]; then
+    for rel in $assets; do
+      case "$rel" in
+        hooks/*)
+          base="$(basename "$rel")"
+          target="${hooks_dir}/${base}"
+          json_remove_hooks "$ide_id" "$target"
+          RM_HOOKS=$((RM_HOOKS + 1))
+          RM_NAMES="${RM_NAMES}${base} "
+          { [ -L "$target" ] || [ -e "$target" ]; } && rm -f "$target" \
+            && RM_LINKS=$((RM_LINKS + 1))
+          ;;
+      esac
+    done
+  fi
+
+  # 4. Commands.
+  if [ -n "$commands_dir" ]; then
+    for rel in $assets; do
+      case "$rel" in
+        commands/*)
+          base="$(basename "$rel")"
+          target="${commands_dir}/${base}"
+          { [ -L "$target" ] || [ -e "$target" ]; } && rm -f "$target" \
+            && RM_LINKS=$((RM_LINKS + 1)) && RM_NAMES="${RM_NAMES}${base} "
+          ;;
+      esac
+    done
+  fi
+
+  RM_NAMES="${RM_NAMES% }"
+  return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _prompt_deprecated_removal NAME STATE IDE_NAMES_LABEL [COPIED_PATH]
+# One consent decision per deprecated skill, covering every affected IDE at
+# once. Stdout is exactly "remove" or "keep"; every word of prose goes to
+# stderr (read -rp's own bracket text is never asserted — it is invisible
+# under non-TTY stdin, per D-4).
+#
+# Non-interactive (is_noninteractive): no prompt. "remove" for
+# linked|broken|files|registry. "keep" + a stderr warning for "copied" — the
+# one state never auto-removed unattended (A-01 CI carve-out).
+#
+# Interactive: a single stderr line carries the skill name, the word
+# "deprecated" and every affected IDE_NAME — the entire asserted payload.
+# "copied" adds a second stderr line naming COPIED_PATH, that it is a real
+# directory (not a link), and that removal is permanent because the content
+# is not in this repo's git history. An empty answer defaults to "remove"
+# uniformly, including "copied" (CONTEXT.md overrides spec P1-3 AC 8 / A-08 —
+# protection lives in the prompt wording, not the default). Declining prints
+# a warning naming both causes (source gone from the repo; re-offered next
+# run) and persists nothing to disk.
+# ──────────────────────────────────────────────────────────────────────────────
+_prompt_deprecated_removal() {
+  local name="$1"
+  local state="$2"
+  local ide_names_label="$3"
+  local copied_path="${4:-}"
+
+  if is_noninteractive; then
+    if [ "$state" = "copied" ]; then
+      echo -e "  ${YELLOW:-}⚠${NC:-} ${name} kept — ${copied_path} is a real directory, not a link, and is not removed automatically in non-interactive mode." >&2
+      echo "keep"
+    else
+      echo "remove"
+    fi
+    return 0
+  fi
+
+  echo -e "  ${WHITE:-}•${NC:-} ${name} — deprecated, found in ${ide_names_label}" >&2
+  if [ "$state" = "copied" ]; then
+    echo -e "    ${copied_path} is a real directory, not a link — removal is permanent because this content is not in this repo's git history." >&2
+  fi
+
+  local answer
+  read -rp "  [remove/keep] (remove): " answer
+  answer="${answer:-remove}"
+
+  case "$(echo "$answer" | tr '[:upper:]' '[:lower:]')" in
+    keep)
+      echo -e "  ${YELLOW:-}⚠${NC:-} ${name} kept — its source no longer exists in the repo, so its links are dead; it will be offered for removal again on the next run." >&2
+      echo "keep"
+      ;;
+    *)
+      echo "remove"
+      ;;
   esac
 }
 
@@ -129,6 +481,98 @@ migrate_legacy_skills() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# remove_deprecated_skills
+# The single public entry point for purging every trace of the four
+# DEPRECATED_SKILLS from every DETECTED IDE (never SELECTED_IDES — DEPR-06 /
+# P1-4 AC 2). No args. Always returns 0.
+#
+# Three passes per skill:
+#   1. detect (read-only) — _deprecated_trace_in for every DETECTED_IDE
+#   2. exactly one prompt — naming every affected IDE_NAME at once; a "copied"
+#      trace on any affected IDE dominates the state passed to the prompt,
+#      since it alone drives the non-interactive CI carve-out (A-01)
+#   3. apply — _remove_deprecated_from per affected IDE, iff the decision was
+#      "remove"
+#
+# No trace anywhere for a skill means no prompt and no output whatsoever
+# (P1-3 AC 7, P1-4 AC 6). Exactly one summary line per changed (skill, IDE)
+# pair, carrying counts and removed basenames; nothing printed for an
+# unchanged pair.
+#
+# Deliberately does NOT reuse aggregate_skill_state(): that function scans
+# SELECTED_IDES for the regular mcp-bench install lifecycle (correctly
+# scoped to the IDEs chosen for this run). Deprecated-skill cleanup has the
+# opposite scope requirement — DEV-306771 requires it to run against every
+# DETECTED_IDES entry regardless of selection — so its DETECTED_IDES-wide
+# aggregation (Pass 1 below) is implemented inline rather than through a
+# same-named function whose contract is pinned to SELECTED_IDES.
+# ──────────────────────────────────────────────────────────────────────────────
+remove_deprecated_skills() {
+  { [ "${DETECTED_IDES+set}" = set ] && [ "${#DETECTED_IDES[@]}" -gt 0 ]; } || return 0
+
+  local name
+  for name in "${DEPRECATED_SKILLS[@]}"; do
+
+    # ── Pass 1: detect (read-only) across every detected IDE ────────────────
+    local affected_ide_ids=() affected_ide_names=()
+    local overall_state="" copied_path=""
+    local ide_id
+    for ide_id in "${DETECTED_IDES[@]}"; do
+      _deprecated_trace_in "$name" "$ide_id" || continue
+      local trace_state="$TRACE_STATE"
+
+      source_ide_descriptor "$ide_id" 2>/dev/null || continue
+      local ide_name="${IDE_NAME:-$ide_id}"
+      local skills_dir="${IDE_SKILLS_DIR:-}"
+      unset IDE_ID IDE_NAME IDE_DETECT_PATH IDE_GLOBAL_DIR \
+            IDE_SKILLS_DIR IDE_AGENTS_DIR IDE_COMMANDS_DIR IDE_HOOKS_DIR \
+            IDE_MCP_CONFIG IDE_MCP_FORMAT IDE_AGENT_FORMAT \
+            IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
+
+      affected_ide_ids+=("$ide_id")
+      affected_ide_names+=("$ide_name")
+
+      if [ "$trace_state" = "copied" ]; then
+        overall_state="copied"
+        [ -n "$skills_dir" ] && copied_path="${skills_dir}/${name}"
+      elif [ "$overall_state" != "copied" ]; then
+        overall_state="$trace_state"
+      fi
+    done
+
+    [ "${#affected_ide_ids[@]}" -eq 0 ] && continue
+
+    # ── Pass 2: exactly one prompt for this skill ────────────────────────────
+    local ide_names_label
+    ide_names_label=$(IFS=', '; echo "${affected_ide_names[*]}")
+
+    local decision
+    decision=$(_prompt_deprecated_removal "$name" "$overall_state" "$ide_names_label" "$copied_path")
+
+    [ "$decision" = "remove" ] || continue
+
+    # ── Pass 3: apply per affected IDE ───────────────────────────────────────
+    local i
+    for i in "${!affected_ide_ids[@]}"; do
+      ide_id="${affected_ide_ids[$i]}"
+      local ide_name="${affected_ide_names[$i]}"
+
+      _remove_deprecated_from "$name" "$ide_id"
+
+      if [ "$RM_LINKS" -gt 0 ] || [ "$RM_HOOKS" -gt 0 ]; then
+        if [ -n "$RM_NAMES" ]; then
+          echo -e "  ${GREEN:-}✓${NC:-} removed ${name} from ${ide_name} (${RM_LINKS} link(s), ${RM_HOOKS} hook registration(s): ${RM_NAMES})"
+        else
+          echo -e "  ${GREEN:-}✓${NC:-} removed ${name} from ${ide_name} (${RM_LINKS} link(s), ${RM_HOOKS} hook registration(s))"
+        fi
+      fi
+    done
+  done
+
+  return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # scan_skills
 # Populates AVAILABLE_SKILLS (names) array from skills/*/skill.json.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -152,8 +596,9 @@ try {
 } catch {}
 EOF
 )
-    [ -n "$name" ] && AVAILABLE_SKILLS+=("$name")
+    [ -n "$name" ] && [[ " ${OFFICIAL_SKILLS[*]} " == *" $name "* ]] && AVAILABLE_SKILLS+=("$name")
   done
+  return 0
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -750,6 +1195,10 @@ setup_skills() {
     echo -e "  ${YELLOW:-}⚠${NC:-} No IDEs detected — skills installation skipped."
     return 0
   fi
+
+  # Purge deprecated skills from every detected IDE, reached even when the
+  # developer selects no IDE for this run (DEPR-12 / P1-4 AC 1).
+  remove_deprecated_skills
 
   echo -e "  ${YELLOW:-}→${NC:-} Select which IDE(s) to install skills for:"
   prompt_ide_select

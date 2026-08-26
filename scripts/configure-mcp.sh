@@ -502,14 +502,79 @@ EOF
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# _migrate_claude_settings_mcpservers TARGET_CLAUDE_JSON
+# One-time cleanup: Claude Code's settings.json does NOT support a top-level
+# "mcpServers" key (Claude Code silently ignores it there — confirmed via
+# official docs, code.claude.com/docs/en/debug-your-config). Earlier versions
+# of this installer wrote MCP entries there by mistake. Move any entries found
+# there into TARGET_CLAUDE_JSON's top-level "mcpServers" key (an id already
+# present in the target file wins — it reflects the corrected/current config),
+# then delete the key from settings.json, leaving "hooks"/"env"/"model"/etc.
+# untouched. No-op (and silent) if the key is already absent from settings.json.
+# ──────────────────────────────────────────────────────────────────────────────
+_migrate_claude_settings_mcpservers() {
+  local target_file="$1"
+  local settings_file="${HOME}/.claude/settings.json"
+  [ -f "$settings_file" ] || return 0
+
+  mkdir -p "$(dirname "$target_file")"
+  [ -f "$target_file" ] || echo '{}' > "$target_file"
+
+  local migrated_ids
+  migrated_ids=$(CLAUDE_SETTINGS_FILE="$settings_file" CLAUDE_TARGET_FILE="$target_file" \
+  node --input-type=module <<'EOF'
+import { readFileSync, writeFileSync } from 'fs';
+const settingsFile = process.env.CLAUDE_SETTINGS_FILE;
+const targetFile = process.env.CLAUDE_TARGET_FILE;
+
+let settings = {};
+try { settings = JSON.parse(readFileSync(settingsFile, 'utf8')); } catch { process.exit(0); }
+if (!settings.mcpServers || Object.keys(settings.mcpServers).length === 0) {
+  if (settings.mcpServers) {
+    delete settings.mcpServers;
+    writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+  }
+  process.exit(0);
+}
+
+let target = {};
+try { target = JSON.parse(readFileSync(targetFile, 'utf8')); } catch {}
+target.mcpServers ??= {};
+
+const migrated = [];
+for (const [id, entry] of Object.entries(settings.mcpServers)) {
+  if (!(id in target.mcpServers)) {
+    target.mcpServers[id] = entry;
+    migrated.push(id);
+  }
+}
+writeFileSync(targetFile, JSON.stringify(target, null, 2) + '\n');
+
+delete settings.mcpServers;
+writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+
+process.stdout.write(migrated.join(','));
+EOF
+)
+  if [ -n "$migrated_ids" ]; then
+    echo -e "  ${YELLOW:-}ℹ${NC:-} Migrated MCP server(s) [${migrated_ids}] from ~/.claude/settings.json (unsupported location) to $(basename "$target_file") — Claude Code only reads mcpServers from the latter"
+  fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # install_mcp_claude MCP_JSON_PATH IDE_MCP_CONFIG IA_FRAMEWORK_DIR CONFIG_FILE
-# Merges MCP entry into ~/.claude/settings.json under "mcp" key.
+# Merges MCP entry into ~/.claude.json under the top-level "mcpServers" key
+# (Claude Code "user" scope — active across all projects for this user).
+# Note: ~/.claude/settings.json does NOT support "mcpServers" (Claude Code
+# ignores it there); this must NOT be redirected back to settings.json.
 # ──────────────────────────────────────────────────────────────────────────────
 install_mcp_claude() {
   local mcp_json="$1"
   local config_file="$2"
   local ia_dir="$3"
   local config_path="$4"
+
+  _migrate_claude_settings_mcpservers "$config_file"
 
   mkdir -p "$(dirname "$config_file")"
   [ -f "$config_file" ] || echo '{}' > "$config_file"

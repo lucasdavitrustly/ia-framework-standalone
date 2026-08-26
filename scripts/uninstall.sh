@@ -60,28 +60,26 @@ echo ""
 declare -a ITEMS_TO_REMOVE=()
 
 # Scan all IDE descriptors (not just detected ones — remove from any that were configured)
-local descriptor_dir="${SCRIPT_DIR}/scripts/ide-descriptors"
-local skills_dir="${SCRIPT_DIR}/skills"
-local mcps_dir="${SCRIPT_DIR}/mcps"
+descriptor_dir="${SCRIPT_DIR}/scripts/ide-descriptors"
+skills_dir="${SCRIPT_DIR}/skills"
+mcps_dir="${SCRIPT_DIR}/mcps"
 
 for descriptor in "${descriptor_dir}"/*.sh; do
   [ -f "$descriptor" ] || continue
   # shellcheck source=/dev/null
   source "$descriptor"
-  local ide_name="${IDE_NAME:-$IDE_ID}"
+  ide_name="${IDE_NAME:-$IDE_ID}"
 
   # Check skills
   if [ -n "${IDE_SKILLS_DIR:-}" ] && [ -d "${IDE_SKILLS_DIR:-}" ]; then
     for skill_json in "${skills_dir}"/*/skill.json; do
       [ -f "$skill_json" ] || continue
-      local skill_name
       skill_name=$(node --input-type=module <<EOF
 import { readFileSync } from 'fs';
 try { const s = JSON.parse(readFileSync('${skill_json}','utf8')); process.stdout.write(s.name||''); } catch {}
 EOF
 )
-      local link="${IDE_SKILLS_DIR}/${skill_name}"
-      local state
+      link="${IDE_SKILLS_DIR}/${skill_name}"
       state=$(detect_link_state "$link")
       if [ "$state" != "absent" ]; then
         ITEMS_TO_REMOVE+=("skill:${skill_name}:${ide_name}:${state}")
@@ -93,13 +91,11 @@ EOF
   if [ -n "${IDE_MCP_CONFIG:-}" ] && [ -f "${IDE_MCP_CONFIG:-}" ] && [ -n "${IDE_MCP_FORMAT:-}" ]; then
     for mcp_json in "${mcps_dir}"/*/mcp.json; do
       [ -f "$mcp_json" ] || continue
-      local mcp_id
       mcp_id=$(node --input-type=module <<EOF
 import { readFileSync } from 'fs';
 try { const m = JSON.parse(readFileSync('${mcp_json}','utf8')); process.stdout.write(m.id||''); } catch {}
 EOF
 )
-      local mcp_state
       mcp_state=$(detect_mcp_state "$mcp_id" "$IDE_MCP_CONFIG" "$IDE_MCP_FORMAT")
       if [ "$mcp_state" = "configured" ]; then
         ITEMS_TO_REMOVE+=("mcp:${mcp_id}:${ide_name}")
@@ -113,6 +109,27 @@ EOF
         IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
 done
 
+# Also check for deprecated-skill traces (read-only) so an IDE whose only
+# affected asset is a deprecated skill is not swallowed by the "nothing to
+# remove" early-exit below — the glob above can never see a deprecated
+# skill, since its source directory no longer exists in the repo.
+detect_ides
+if { [ "${DETECTED_IDES+set}" = set ] && [ "${#DETECTED_IDES[@]}" -gt 0 ]; }; then
+  for dep_name in "${DEPRECATED_SKILLS[@]}"; do
+    for dep_ide_id in "${DETECTED_IDES[@]}"; do
+      if _deprecated_trace_in "$dep_name" "$dep_ide_id"; then
+        source_ide_descriptor "$dep_ide_id" 2>/dev/null || continue
+        dep_ide_name="${IDE_NAME:-$dep_ide_id}"
+        unset IDE_ID IDE_NAME IDE_DETECT_PATH IDE_GLOBAL_DIR \
+              IDE_SKILLS_DIR IDE_AGENTS_DIR IDE_COMMANDS_DIR IDE_HOOKS_DIR \
+              IDE_MCP_CONFIG IDE_MCP_FORMAT IDE_AGENT_FORMAT \
+              IDE_SUPPORTS_SYMLINK IDE_SUPPORTS_HOOKS IDE_SUPPORTS_COMMANDS
+        ITEMS_TO_REMOVE+=("deprecated:${dep_name}:${dep_ide_name}:${TRACE_STATE}")
+      fi
+    done
+  done
+fi
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Display summary of what will be removed
 # ──────────────────────────────────────────────────────────────────────────────
@@ -121,12 +138,12 @@ if [ "${#ITEMS_TO_REMOVE[@]}" -eq 0 ]; then
   exit 0
 fi
 
-local skill_count=0
-local mcp_count=0
+skill_count=0
+mcp_count=0
+deprecated_count=0
 
 echo -e "${BOLD}Items that will be removed:${NC}"
 for item in "${ITEMS_TO_REMOVE[@]}"; do
-  local type name ide state=""
   IFS=':' read -r type name ide state <<< "$item"
   case "$type" in
     skill)
@@ -137,11 +154,15 @@ for item in "${ITEMS_TO_REMOVE[@]}"; do
       echo -e "  ${YELLOW}⊘${NC} MCP config: ${name} → ${ide}"
       mcp_count=$((mcp_count+1))
       ;;
+    deprecated)
+      echo -e "  ${YELLOW}⊘${NC} Deprecated skill: ${name} → ${ide} ${BLUE}(${state})${NC}"
+      deprecated_count=$((deprecated_count+1))
+      ;;
   esac
 done
 
 echo ""
-echo -e "  Total: ${skill_count} skill link(s), ${mcp_count} MCP config entry/entries"
+echo -e "  Total: ${skill_count} skill link(s), ${mcp_count} MCP config entry/entries, ${deprecated_count} deprecated-skill trace(s)"
 echo ""
 
 if $DRY_RUN; then
@@ -158,7 +179,6 @@ if ! $FORCE_YES; then
     exit 0
   fi
 
-  local confirm
   read -rp "  Remove all ia-framework MCPs and skill links? [y/N]: " confirm
   confirm="${confirm:-N}"
   if ! [[ "$confirm" =~ ^[Yy] ]]; then
@@ -173,18 +193,24 @@ echo -e "${YELLOW}→${NC} Removing..."
 # ──────────────────────────────────────────────────────────────────────────────
 # Execute removal
 # ──────────────────────────────────────────────────────────────────────────────
-local removed_skills=0
-local removed_mcps=0
+removed_skills=0
+removed_mcps=0
+
+# Purge deprecated-skill traces from every detected IDE once, before the
+# per-descriptor loop below (which sets SELECTED_IDES=("$ide_id") per IDE for
+# migrate_legacy_skills — a DETECTED_IDES-wide routine run inside it would
+# fire once per IDE and emit N times the output; D-5).
+remove_deprecated_skills || true
 
 for descriptor in "${descriptor_dir}"/*.sh; do
   [ -f "$descriptor" ] || continue
   # shellcheck source=/dev/null
   source "$descriptor"
-  local ide_id="${IDE_ID}"
-  local ide_name="${IDE_NAME:-$ide_id}"
-  local ide_skills="${IDE_SKILLS_DIR:-}"
-  local ide_mcp_config="${IDE_MCP_CONFIG:-}"
-  local ide_mcp_format="${IDE_MCP_FORMAT:-}"
+  ide_id="${IDE_ID}"
+  ide_name="${IDE_NAME:-$ide_id}"
+  ide_skills="${IDE_SKILLS_DIR:-}"
+  ide_mcp_config="${IDE_MCP_CONFIG:-}"
+  ide_mcp_format="${IDE_MCP_FORMAT:-}"
 
   # Sweep any pre-rename (legacy) skill links + hook registrations for this IDE.
   SELECTED_IDES=("$ide_id")
@@ -194,14 +220,12 @@ for descriptor in "${descriptor_dir}"/*.sh; do
   if [ -n "$ide_skills" ]; then
     for skill_json in "${skills_dir}"/*/skill.json; do
       [ -f "$skill_json" ] || continue
-      local skill_name
       skill_name=$(node --input-type=module <<EOF
 import { readFileSync } from 'fs';
 try { const s = JSON.parse(readFileSync('${skill_json}','utf8')); process.stdout.write(s.name||''); } catch {}
 EOF
 )
-      local link="${ide_skills}/${skill_name}"
-      local state
+      link="${ide_skills}/${skill_name}"
       state=$(detect_link_state "$link")
       if [ "$state" != "absent" ]; then
         unlink_skill "$skill_name" "$ide_id"
@@ -214,13 +238,11 @@ EOF
   if [ -n "$ide_mcp_config" ] && [ -f "$ide_mcp_config" ] && [ -n "$ide_mcp_format" ]; then
     for mcp_json in "${mcps_dir}"/*/mcp.json; do
       [ -f "$mcp_json" ] || continue
-      local mcp_id
       mcp_id=$(node --input-type=module <<EOF
 import { readFileSync } from 'fs';
 try { const m = JSON.parse(readFileSync('${mcp_json}','utf8')); process.stdout.write(m.id||''); } catch {}
 EOF
 )
-      local mcp_state
       mcp_state=$(detect_mcp_state "$mcp_id" "$ide_mcp_config" "$ide_mcp_format")
       if [ "$mcp_state" = "configured" ]; then
         uninstall_mcp "$mcp_id" "$ide_mcp_config" "$ide_mcp_format"

@@ -288,8 +288,9 @@ detect_ides() {
 # ──────────────────────────────────────────────────────────────────────────────
 # prompt_ide_select
 # Displays detected IDEs as a toggle list; populates SELECTED_IDES.
-# Pre-selects OpenCode (index 0, since it's always sorted first).
-# In non-interactive mode: selects OpenCode only (if present) or first detected.
+# Pre-selects OpenCode and Claude Code (whichever are detected) as defaults.
+# In non-interactive mode: selects OpenCode + Claude Code (whichever detected),
+# falling back to the first detected IDE if neither is present.
 # ──────────────────────────────────────────────────────────────────────────────
 prompt_ide_select() {
   SELECTED_IDES=()
@@ -302,13 +303,21 @@ prompt_ide_select() {
     return 0
   fi
 
+  # Default IDEs: OpenCode and Claude Code, limited to whichever were detected.
+  local default_ides=()
+  for candidate in opencode claude-code; do
+    if [[ " ${DETECTED_IDES[*]} " == *" ${candidate} "* ]]; then
+      default_ides+=("$candidate")
+    fi
+  done
+
   if is_noninteractive; then
-    if [[ " ${DETECTED_IDES[*]} " == *" opencode "* ]]; then
-      SELECTED_IDES=("opencode")
+    if [ "${#default_ides[@]}" -gt 0 ]; then
+      SELECTED_IDES=("${default_ides[@]}")
     else
       SELECTED_IDES=("${DETECTED_IDES[0]}")
     fi
-    echo -e "  ${BLUE}→${NC} Non-interactive: using ${SELECTED_IDES[0]}"
+    echo -e "  ${BLUE}→${NC} Non-interactive: using ${SELECTED_IDES[*]}"
     return 0
   fi
 
@@ -318,8 +327,13 @@ prompt_ide_select() {
     ide_descs+=("")
   done
 
-  # Pre-select OpenCode (index 0, always first)
-  local presel=(0)
+  # Pre-select OpenCode and Claude Code (by their index in DETECTED_IDES)
+  local presel=()
+  for (( i=0; i<${#DETECTED_IDES[@]}; i++ )); do
+    case "${DETECTED_IDES[$i]}" in
+      opencode|claude-code) presel+=("$i") ;;
+    esac
+  done
 
   # Populate _PTS_* globals for prompt_toggle_select
   _PTS_IDS=("${DETECTED_IDES[@]}")

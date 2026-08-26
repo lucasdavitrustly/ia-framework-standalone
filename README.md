@@ -117,7 +117,7 @@ The installer will:
 5. **Select an embedding model** — shows your locally available Ollama models (with `[embed]` hints for known embedding models), lets you pick one or enter a custom name, and auto-pulls it if needed
 6. Prompt for your **target project path**, **auto-detect your project's tech stack** (languages, frameworks, package manager, test runner), and create `.ia-framework/project.json` with the detected profile
 7. Start **Qdrant** (vector database) and the **monitoring dashboard** via Docker Compose
-8. **Configure MCPs (Step 5.1)** — detects your installed IDE(s) and lets you pick which MCPs to install (ia-framework, Context7, Sequential Thinking by default; PostgreSQL and Atlassian opt-in). Selecting **PostgreSQL** prompts for the DB connection and writes `.ia-framework/db.json` (creating the folder if missing).
+8. **Configure MCPs (Step 5.1)** — detects your installed IDE(s) and lets you pick which MCPs to install (ia-framework, Context7, Sequential Thinking, and Atlassian by default; PostgreSQL opt-in). Selecting **PostgreSQL** prompts for the DB connection and writes `.ia-framework/db.json` (creating the folder if missing).
 9. **Install skills** into the selected IDE(s)
 10. **Inject RAG tool guidance** into your designated target(s)' `AGENTS.md` / `CLAUDE.md` (opt-in via `injectAgents` / `agentInjectionTargets`; if none is set yet, the installer prompts you to choose and saves the choice)
 
@@ -679,8 +679,8 @@ Each folder under `mcps/` is a descriptor the installer can offer:
 | **ia-framework** (`ia-framework`)               | ✅ yes    | Codebase RAG            | Local `mcp-server` binary (`requires_build`)                       |
 | **Context7** (`context7`)                       | ✅ yes    | Documentation retrieval | `npx -y @upstash/context7-mcp@latest`                              |
 | **Sequential Thinking** (`sequential-thinking`) | ✅ yes    | Structured reasoning    | `npx -y @modelcontextprotocol/server-sequential-thinking`          |
+| **Atlassian** (`atlassian`)                     | ✅ yes    | Jira + Confluence       | `npx -y mcp-remote@latest https://mcp.atlassian.com/v1/mcp/authv2` |
 | **PostgreSQL** (`postgres`)                     | ❌ opt-in | Database context        | `npx -y @modelcontextprotocol/server-postgres <DSN>`               |
-| **Atlassian** (`atlassian`)                     | ❌ opt-in | Jira + Confluence       | `npx -y mcp-remote@latest https://mcp.atlassian.com/v1/mcp/authv2` |
 
 > Descriptors in the repo contain **placeholders only** — never real credentials. The PostgreSQL descriptor ships with a `{{POSTGRES_CONNECTION_STRING}}` token that the installer substitutes at install time.
 
@@ -730,8 +730,6 @@ The **Atlassian** MCP uses the hosted remote endpoint via `mcp-remote`; authenti
 }
 ```
 
-> This replaces the previous standalone Jira MCP. The `jira-feed` skill now depends on the `atlassian` MCP.
-
 ### Manually configuring MCP servers
 
 You can also edit OpenCode's config directly at `~/.config/opencode/opencode.jsonc` (or `opencode.json` for older versions). Each server runs as a separate process and its tools become available alongside ia-framework's tools:
@@ -763,6 +761,35 @@ You can also edit OpenCode's config directly at `~/.config/opencode/opencode.jso
 ```
 
 > **Note:** ia-framework also includes PostgreSQL support via the `db-context` package (`db configure`, `db index`, `query_database` MCP tool). The `postgres` MCP above is the general-purpose Postgres tool that complements ia-framework's schema-indexed approach — both read the same `.ia-framework/db.json` connection you set up during install.
+
+#### Claude Code CLI
+
+Claude Code reads MCP servers from `~/.claude.json`, not `~/.claude/settings.json` — that file only holds `hooks`/`env`/`model`/etc. and Claude Code silently ignores a `mcpServers` key placed there ([official docs](https://code.claude.com/docs/en/debug-your-config)). This installer registers MCPs at **user scope**: the top-level `mcpServers` key in `~/.claude.json`, active across every project for your user (equivalent to `claude mcp add --scope user`).
+
+To configure manually, add a `mcpServers` key at the top level of `~/.claude.json` (create the file with `{}` if it doesn't exist yet — be careful editing this file, Claude Code also stores session/cost state and per-project settings in it):
+
+```json
+{
+  "mcpServers": {
+    "ia-framework": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "node /path/to/ia-framework/packages/mcp-server/dist/bin.js 2>> /path/to/ia-framework/.ia-framework/logs/mcp-server.log"
+      ],
+      "env": {
+        "IA_FRAMEWORK_CONFIG": "/path/to/ia-framework/.ia-framework/project.json"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    }
+  }
+}
+```
+
+Restart Claude Code after editing. If you previously ran an older version of this installer, a stale `mcpServers` block may exist in `~/.claude/settings.json` — the installer now migrates those entries into `~/.claude.json` automatically the next time you configure MCPs for Claude Code, then removes the block from `settings.json` (`hooks`/`env`/`model` in that file are left untouched).
 
 ### Pluggable Architecture
 

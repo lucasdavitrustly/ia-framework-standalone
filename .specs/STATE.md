@@ -81,6 +81,36 @@ constraint that later designs must either conform to or explicitly supersede.
 - **Consequence**: Adding a new retrieval or expansion path requires threading the filter; it
   cannot compile otherwise.
 
+### AD-006 — Distributable skills are governed by a closed allowlist
+
+- **Status**: active
+- **Decided**: 2026-08-21 (DEV-306771, Tasks)
+- **Decision**: A directory in `skills/` is not distributed unless its `skill.json` `.name` field
+  appears in `OFFICIAL_SKILLS`. Adding a skill is a deliberate two-place edit.
+- **Rationale**: Before this, `scan_skills()` distributed anything with a `skill.json` present in
+  `skills/`, so dropping a new directory into the repo silently shipped it. A closed allowlist
+  makes "what ships" a single, reviewable array rather than an implicit consequence of directory
+  layout.
+- **Consequence**: Constrains every future skill: a `skill.json` alone is not sufficient for
+  distribution — its name must also be added to `OFFICIAL_SKILLS` in `scripts/install-skills.sh`.
+
+### AD-007 — Removing a shipped asset requires a permanent hardcoded manifest entry
+
+- **Status**: active
+- **Decided**: 2026-08-21 (DEV-306771, Tasks)
+- **Decision**: Cleanup of a removed skill's assets must never glob the source tree for files
+  whose source is being deleted — the manifest of what to remove is a permanent, hardcoded,
+  history-derived entry. Unattended (`is_noninteractive`) runs must never delete a `copied`/real
+  directory.
+- **Rationale**: Once a skill's source directory is deleted, a glob-based cleanup path finds
+  nothing and silently leaves stale links and live hook registrations behind. A hardcoded manifest
+  survives the deletion of its own source. The non-interactive carve-out prevents unattended CI
+  runs from destroying unversioned local work that happens to occupy a former skill's directory
+  name.
+- **Consequence**: Constrains every future rename or deprecation, alongside
+  `LEGACY_SKILL_RENAMES`: the asset list to remove must be recorded as a literal before or at the
+  moment the source is deleted, not derived from the tree at removal time.
+
 ---
 
 ## Handoff
